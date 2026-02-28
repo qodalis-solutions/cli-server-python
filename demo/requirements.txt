@@ -1,0 +1,1 @@
+qodalis-cli-server @ file:../
