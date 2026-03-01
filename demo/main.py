@@ -51,7 +51,7 @@ def main() -> None:
                 .add_processor(CliBase64CommandProcessor())
                 .add_processor(CliUuidCommandProcessor())
                 .add_module(WeatherModule())
-                .add_filesystem(FileSystemOptions(allowed_paths=["/tmp"]))
+                .add_filesystem(FileSystemOptions(allowed_paths=["/tmp", "/app", "/home"]))
             ),
         )
     )
