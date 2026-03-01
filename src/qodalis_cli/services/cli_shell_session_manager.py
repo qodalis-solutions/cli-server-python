@@ -111,8 +111,10 @@ class CliShellSessionManager:
                 data = await loop.run_in_executor(
                     None, self._blocking_read, master_fd
                 )
-                if not data:
+                if data is None:
                     break
+                if data == "":
+                    continue
                 await websocket.send_text(json.dumps({
                     "type": "stdout",
                     "data": data,
@@ -176,6 +178,18 @@ class CliShellSessionManager:
             pass
 
     @staticmethod
+    def _detect_shell() -> str:
+        env_shell = os.environ.get("SHELL")
+        if env_shell and os.path.isfile(env_shell) and os.access(env_shell, os.X_OK):
+            return env_shell
+
+        for candidate in ["/bin/bash", "/usr/bin/bash", "/bin/sh"]:
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+
+        return "/bin/sh"
+
+    @staticmethod
     def _get_shell_info(
         command: str | None,
     ) -> tuple[str, list[str]]:
@@ -183,5 +197,5 @@ class CliShellSessionManager:
             shell = "powershell.exe"
             return (shell, ["-Command", command]) if command else (shell, [])
 
-        shell = "/bin/bash"
+        shell = CliShellSessionManager._detect_shell()
         return (shell, ["-c", command]) if command else (shell, [])

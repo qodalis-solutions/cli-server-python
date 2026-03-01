@@ -8,6 +8,7 @@ COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/
 RUN pip install --no-cache-dir .
 
+COPY plugins/ plugins/
 COPY demo/ demo/
 
 ENV PORT=8048
