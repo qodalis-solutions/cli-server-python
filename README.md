@@ -254,6 +254,101 @@ class MathProcessor(CliCommandProcessor):
         return "Usage: math add|multiply --a <number> --b <number>"
 ```
 
+## Modules
+
+Modules group related command processors into a reusable unit. Implement `ICliModule` (or extend the `CliModule` base class) to bundle processors under a single name and version.
+
+### Defining a Module
+
+```python
+from qodalis_cli import (
+    CliCommandProcessor,
+    CliModule,
+    CliProcessCommand,
+    ICliCommandProcessor,
+)
+
+
+class _WeatherCurrentProcessor(CliCommandProcessor):
+    @property
+    def command(self) -> str:
+        return "current"
+
+    @property
+    def description(self) -> str:
+        return "Shows current weather conditions"
+
+    async def handle_async(self, command: CliProcessCommand) -> str:
+        return "Weather: Sunny, 22°C"
+
+
+class _CliWeatherCommandProcessor(CliCommandProcessor):
+    @property
+    def command(self) -> str:
+        return "weather"
+
+    @property
+    def description(self) -> str:
+        return "Shows weather information for a location"
+
+    @property
+    def processors(self) -> list[ICliCommandProcessor]:
+        return [_WeatherCurrentProcessor()]
+
+    async def handle_async(self, command: CliProcessCommand) -> str:
+        return "Weather: Sunny, 22°C"
+
+
+class WeatherModule(CliModule):
+    @property
+    def name(self) -> str:
+        return "weather"
+
+    @property
+    def version(self) -> str:
+        return "1.0.0"
+
+    @property
+    def description(self) -> str:
+        return "Provides weather information commands"
+
+    @property
+    def processors(self) -> list[ICliCommandProcessor]:
+        return [_CliWeatherCommandProcessor()]
+```
+
+### Registering a Module
+
+```python
+result = create_cli_server(
+    CliServerOptions(
+        configure=lambda builder: builder.add_module(WeatherModule()),
+    )
+)
+```
+
+`add_module()` iterates over the module's `processors` and registers each one, just like calling `add_processor()` for each individually.
+
+### ICliModule Interface
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | `str` | Unique module identifier |
+| `version` | `str` | Module version |
+| `description` | `str` | Short description |
+| `author` | `ICliCommandAuthor` | Author metadata (defaults to library author) |
+| `processors` | `Sequence[ICliCommandProcessor]` | Command processors provided by the module |
+
+### Example: Weather Module
+
+The repository includes a weather module under `plugins/weather/` as a reference implementation. It registers a `weather` command with `current` and `forecast` sub-commands, using the [wttr.in](https://wttr.in) API:
+
+```
+weather                    # Shows current weather (default: London)
+weather current London     # Current conditions for London
+weather forecast --location Paris  # 3-day forecast for Paris
+```
+
 ## Command Input
 
 Every processor receives a `CliProcessCommand` with the parsed command input:
@@ -348,7 +443,7 @@ class CliServerResult:
 All types are exported from the `qodalis_cli` package root:
 
 ```python
-# Abstractions (for creating custom processors)
+# Abstractions (for creating custom processors and modules)
 from qodalis_cli import (
     ICliCommandProcessor,
     CliCommandProcessor,
@@ -357,6 +452,8 @@ from qodalis_cli import (
     CliProcessCommand,
     ICliCommandAuthor,
     CliCommandAuthor,
+    ICliModule,
+    CliModule,
 )
 
 # Models
@@ -429,9 +526,12 @@ packages/
   abstractions/                       # qodalis-cli-server-abstractions (zero-dep)
     src/qodalis_cli_server_abstractions/
       cli_command_processor.py        # ICliCommandProcessor ABC & base class
+      cli_module.py                   # ICliModule ABC & base class
       cli_process_command.py          # Command input dataclass
       cli_command_parameter_descriptor.py  # Parameter declaration
       cli_command_author.py           # Author metadata
+plugins/
+  weather/                            # Weather module (example plugin)
 src/qodalis_cli/
   abstractions/                       # Re-exports from qodalis_cli_server_abstractions
   models/
@@ -448,7 +548,7 @@ src/qodalis_cli/
     cli_controller_v2.py              # V2 REST API (/api/v2/cli)
     cli_version_controller.py         # Version discovery (/api/cli/versions)
   extensions/
-    cli_builder.py                    # Fluent registration API
+    cli_builder.py                    # Fluent registration API (add_processor, add_module)
   processors/                         # Built-in processors
   create_cli_server.py               # Factory function
   server.py                          # Standalone CLI entry point

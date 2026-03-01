@@ -7,6 +7,8 @@ from qodalis_cli_server_abstractions import (
     CliCommandParameterDescriptor,
     ICliCommandProcessor,
     CliCommandProcessor,
+    ICliModule,
+    CliModule,
 )
 
 __all__ = [
@@ -18,4 +20,6 @@ __all__ = [
     "CliCommandParameterDescriptor",
     "ICliCommandProcessor",
     "CliCommandProcessor",
+    "ICliModule",
+    "CliModule",
 ]

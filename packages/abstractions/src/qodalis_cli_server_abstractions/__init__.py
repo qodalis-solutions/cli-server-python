@@ -5,6 +5,7 @@ from .cli_command_parameter_descriptor import (
     CliCommandParameterDescriptor,
 )
 from .cli_command_processor import ICliCommandProcessor, CliCommandProcessor
+from .cli_module import ICliModule, CliModule
 
 __all__ = [
     "ICliCommandAuthor",
@@ -15,4 +16,6 @@ __all__ = [
     "CliCommandParameterDescriptor",
     "ICliCommandProcessor",
     "CliCommandProcessor",
+    "ICliModule",
+    "CliModule",
 ]
