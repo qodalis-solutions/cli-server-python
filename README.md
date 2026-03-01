@@ -1,12 +1,16 @@
 # Qodalis CLI Server (Python)
 
-A Python CLI server framework for the [Qodalis CLI](https://github.com/qodalis-solutions/angular-web-cli) ecosystem. Built with FastAPI.
+A Python CLI server framework for the [Qodalis CLI](https://github.com/qodalis-solutions/angular-web-cli) ecosystem. Build custom server-side commands that integrate with the Qodalis web terminal.
 
 ## Installation
 
 ```bash
 pip install qodalis-cli-server
 ```
+
+The package exports all types, base classes, and built-in processors. Full type hints included.
+
+Requires Python 3.10+.
 
 ## Quick Start
 
@@ -22,7 +26,7 @@ from qodalis_cli import (
 import uvicorn
 
 
-class MyCommandProcessor(CliCommandProcessor):
+class GreetProcessor(CliCommandProcessor):
     @property
     def command(self) -> str:
         return "greet"
@@ -32,12 +36,13 @@ class MyCommandProcessor(CliCommandProcessor):
         return "Says hello"
 
     async def handle_async(self, command: CliProcessCommand) -> str:
-        return "Hello from my server!"
+        name = command.value or "World"
+        return f"Hello, {name}!"
 
 
 result = create_cli_server(
     CliServerOptions(
-        configure=lambda builder: builder.add_processor(MyCommandProcessor()),
+        configure=lambda builder: builder.add_processor(GreetProcessor()),
     )
 )
 
@@ -58,16 +63,46 @@ Or with environment variables:
 PORT=9000 HOST=127.0.0.1 qodalis-cli-server
 ```
 
-## API Endpoints
+## Creating Custom Command Processors
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/cli/version` | Server version |
-| GET | `/api/cli/commands` | List available commands |
-| POST | `/api/cli/execute` | Execute a command |
-| WS | `/ws/cli/events` | WebSocket event channel |
+### Simple Command
 
-## Creating Command Processors
+Extend `CliCommandProcessor` and implement `command`, `description`, and `handle_async`:
+
+```python
+from qodalis_cli import CliCommandProcessor, CliProcessCommand
+
+
+class EchoProcessor(CliCommandProcessor):
+    @property
+    def command(self) -> str:
+        return "echo"
+
+    @property
+    def description(self) -> str:
+        return "Echoes input text back"
+
+    async def handle_async(self, command: CliProcessCommand) -> str:
+        return command.value or "Usage: echo <text>"
+```
+
+Register it during server creation:
+
+```python
+result = create_cli_server(
+    CliServerOptions(
+        configure=lambda builder: (
+            builder
+            .add_processor(EchoProcessor())
+            .add_processor(AnotherProcessor())  # fluent chaining
+        ),
+    )
+)
+```
+
+### Command with Parameters
+
+Declare parameters with names, types, aliases, and defaults. The CLI client uses this metadata for autocompletion and validation.
 
 ```python
 from qodalis_cli import (
@@ -78,7 +113,7 @@ from qodalis_cli import (
 )
 
 
-class TimeCommandProcessor(CliCommandProcessor):
+class TimeProcessor(CliCommandProcessor):
     @property
     def command(self) -> str:
         return "time"
@@ -114,10 +149,81 @@ class TimeCommandProcessor(CliCommandProcessor):
         return f"{label}: {now.strftime(fmt)}"
 ```
 
+Parameter types: `"string"`, `"number"`, `"boolean"`.
+
 ### Sub-commands
 
+Nest processors to create command hierarchies like `math add --a 5 --b 3`:
+
 ```python
-class MathCommandProcessor(CliCommandProcessor):
+from qodalis_cli import (
+    CliCommandParameterDescriptor,
+    CliCommandProcessor,
+    CliProcessCommand,
+    ICliCommandParameterDescriptor,
+    ICliCommandProcessor,
+)
+
+
+class _MathAddProcessor(CliCommandProcessor):
+    @property
+    def command(self) -> str:
+        return "add"
+
+    @property
+    def description(self) -> str:
+        return "Adds two numbers"
+
+    @property
+    def parameters(self) -> list[ICliCommandParameterDescriptor]:
+        return [
+            CliCommandParameterDescriptor(
+                name="a", description="First number",
+                required=True, type="number",
+            ),
+            CliCommandParameterDescriptor(
+                name="b", description="Second number",
+                required=True, type="number",
+            ),
+        ]
+
+    async def handle_async(self, command: CliProcessCommand) -> str:
+        a = float(command.args.get("a", 0))
+        b = float(command.args.get("b", 0))
+        result = a + b
+        return f"{a} + {b} = {result}"
+
+
+class _MathMultiplyProcessor(CliCommandProcessor):
+    @property
+    def command(self) -> str:
+        return "multiply"
+
+    @property
+    def description(self) -> str:
+        return "Multiplies two numbers"
+
+    @property
+    def parameters(self) -> list[ICliCommandParameterDescriptor]:
+        return [
+            CliCommandParameterDescriptor(
+                name="a", description="First number",
+                required=True, type="number",
+            ),
+            CliCommandParameterDescriptor(
+                name="b", description="Second number",
+                required=True, type="number",
+            ),
+        ]
+
+    async def handle_async(self, command: CliProcessCommand) -> str:
+        a = float(command.args.get("a", 0))
+        b = float(command.args.get("b", 0))
+        result = a * b
+        return f"{a} * {b} = {result}"
+
+
+class MathProcessor(CliCommandProcessor):
     @property
     def command(self) -> str:
         return "math"
@@ -132,19 +238,161 @@ class MathCommandProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
-        return [MathAddProcessor(), MathMultiplyProcessor()]
+        return [_MathAddProcessor(), _MathMultiplyProcessor()]
 
     async def handle_async(self, command: CliProcessCommand) -> str:
         return "Usage: math add|multiply --a <number> --b <number>"
 ```
+
+## Command Input
+
+Every processor receives a `CliProcessCommand` with the parsed command input:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `command` | `str` | Command name (e.g., `"time"`) |
+| `value` | `str \| None` | Positional argument (e.g., `"hello"` in `echo hello`) |
+| `args` | `dict[str, Any]` | Named parameters (e.g., `--format "%H:%M"`) |
+| `chain_commands` | `list[str]` | Sub-command chain (e.g., `["add"]` in `math add`) |
+| `raw_command` | `str` | Original unprocessed input |
+| `data` | `Any` | Arbitrary data payload from the client |
+
+## API Versioning
+
+Processors declare which API version they target. The default is version 1.
+
+```python
+class DashboardProcessor(CliCommandProcessor):
+    @property
+    def command(self) -> str:
+        return "dashboard"
+
+    @property
+    def description(self) -> str:
+        return "Server dashboard (v2 only)"
+
+    @property
+    def api_version(self) -> int:
+        return 2
+
+    async def handle_async(self, command: CliProcessCommand) -> str:
+        return "Dashboard data..."
+```
+
+The server exposes versioned endpoints:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/cli/versions` | Version discovery (supported versions, preferred version) |
+| GET | `/api/v1/cli/version` | V1 server version |
+| GET | `/api/v1/cli/commands` | V1 commands (all processors) |
+| POST | `/api/v1/cli/execute` | V1 execute |
+| GET | `/api/v2/cli/version` | V2 server version |
+| GET | `/api/v2/cli/commands` | V2 commands (only `api_version >= 2`) |
+| POST | `/api/v2/cli/execute` | V2 execute |
+| WS | `/ws/cli/events` | WebSocket events (also `/ws/v1/cli/events`, `/ws/v2/cli/events`) |
+
+The Qodalis CLI client auto-negotiates the highest mutually supported version via the `/api/cli/versions` discovery endpoint.
+
+## Processor Base Class Reference
+
+`CliCommandProcessor` provides these overridable properties:
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `command` | `str` | (required) | Command name |
+| `description` | `str` | (required) | Help text shown to users |
+| `handle_async` | method | (required) | Execution logic |
+| `parameters` | `list[ICliCommandParameterDescriptor] \| None` | `None` | Declared parameters |
+| `processors` | `list[ICliCommandProcessor] \| None` | `None` | Sub-commands |
+| `allow_unlisted_commands` | `bool \| None` | `None` | Accept sub-commands not in `processors` |
+| `value_required` | `bool \| None` | `None` | Require a positional value |
+| `version` | `str` | `"1.0.0"` | Processor version string |
+| `api_version` | `int` | `1` | Target API version |
+| `author` | `ICliCommandAuthor` | default author | Author metadata (name, email) |
+
+## Server Options
+
+```python
+@dataclass
+class CliServerOptions:
+    base_path: str = "/api/cli"            # API base path
+    cors: bool = True                       # Enable CORS
+    cors_origins: list[str] = ["*"]         # Allowed origins
+    configure: Callable[[CliBuilder], None] | None = None  # Processor registration
+```
+
+`create_cli_server()` returns:
+
+```python
+@dataclass
+class CliServerResult:
+    app: FastAPI                            # Configured FastAPI app
+    registry: CliCommandRegistry            # Processor registry
+    builder: CliBuilder                     # Registration builder
+    event_socket_manager: CliEventSocketManager  # WebSocket manager
+```
+
+## Exported Types
+
+All types are exported from the `qodalis_cli` package root:
+
+```python
+# Abstractions (for creating custom processors)
+from qodalis_cli import (
+    ICliCommandProcessor,
+    CliCommandProcessor,
+    ICliCommandParameterDescriptor,
+    CliCommandParameterDescriptor,
+    CliProcessCommand,
+    ICliCommandAuthor,
+    CliCommandAuthor,
+)
+
+# Models
+from qodalis_cli import (
+    CliServerResponse,
+    CliServerOutput,
+    CliServerCommandDescriptor,
+)
+
+# Services (for advanced integration)
+from qodalis_cli import (
+    ICliCommandRegistry,
+    CliCommandRegistry,
+    ICliCommandExecutorService,
+    CliCommandExecutorService,
+    ICliResponseBuilder,
+    CliResponseBuilder,
+    CliEventSocketManager,
+)
+
+# Factory
+from qodalis_cli import (
+    create_cli_server,
+    CliServerOptions,
+)
+```
+
+## Built-in Processors
+
+These processors ship with the library and are included in the standalone server:
+
+| Command | Description |
+|---------|-------------|
+| `echo` | Echoes input text |
+| `status` | Server status (uptime, OS info) |
+| `system` | Detailed system information (hostname, CPU, memory) |
+| `http` | HTTP request operations |
+| `hash` | Hash computation (MD5, SHA1, SHA256, SHA512) |
+| `base64` | Base64 encode/decode (sub-commands) |
+| `uuid` | UUID generation |
 
 ## Docker
 
 ```bash
 docker run -p 8048:8048 ghcr.io/qodalis-solutions/cli-server-python
 ```
-
-The Docker image runs a demo server with sample processors (echo, status, time, hello, math).
 
 ## Demo
 
@@ -155,19 +403,45 @@ python main.py
 # Server starts on http://localhost:8048
 ```
 
+## Testing
+
+```bash
+pip install -e ".[test]"
+pytest              # Run test suite
+pytest -v           # Verbose output
+pytest --tb=short   # Short tracebacks
+```
+
 ## Project Structure
 
 ```
 src/qodalis_cli/
-  abstractions/     # ICliCommandProcessor, CliProcessCommand, parameter descriptors
-  models/           # CliServerOutput, CliServerResponse, command descriptors
-  services/         # Registry, executor, response builder, WebSocket manager
-  controllers/      # FastAPI router for /api/cli routes
-  extensions/       # CliBuilder fluent API
-  processors/       # Built-in echo and status processors
-  create_cli_server.py  # Factory function for standalone/library use
-  server.py         # Standalone entry point
-demo/               # Demo app with 5 sample processors
+  abstractions/
+    cli_command_processor.py          # ICliCommandProcessor ABC & base class
+    cli_process_command.py            # Command input dataclass
+    cli_command_parameter_descriptor.py  # Parameter declaration
+    cli_command_author.py             # Author metadata
+  models/
+    cli_server_response.py            # Response wrapper (exitCode + outputs)
+    cli_server_output.py              # Output types (text, table, list, json, key-value)
+    cli_server_command_descriptor.py  # Command metadata for /commands endpoint
+  services/
+    cli_command_registry.py           # Processor registry and lookup
+    cli_command_executor_service.py   # Command execution pipeline
+    cli_response_builder.py           # Structured output builder
+    cli_event_socket_manager.py       # WebSocket event broadcasting
+  controllers/
+    cli_controller.py                 # V1 REST API (/api/v1/cli)
+    cli_controller_v2.py              # V2 REST API (/api/v2/cli)
+    cli_version_controller.py         # Version discovery (/api/cli/versions)
+  extensions/
+    cli_builder.py                    # Fluent registration API
+  processors/                         # Built-in processors
+  create_cli_server.py               # Factory function
+  server.py                          # Standalone CLI entry point
+  __init__.py                        # Package exports
+demo/                                # Demo app with sample processors
+tests/                               # Test suite (pytest)
 ```
 
 ## License
