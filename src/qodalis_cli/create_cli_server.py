@@ -8,12 +8,13 @@ from typing import Callable
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router
+from .controllers import create_cli_router
 from .extensions import CliBuilder
 from .services import (
     CliCommandExecutorService,
     CliCommandRegistry,
     CliEventSocketManager,
+    CliShellSessionManager,
 )
 
 
@@ -37,6 +38,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     opts = options or CliServerOptions()
 
     event_socket_manager = CliEventSocketManager()
+    shell_session_manager = CliShellSessionManager()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -62,29 +64,38 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     executor = CliCommandExecutorService(registry)
     router = create_cli_router(registry, executor)
-    router_v2 = create_cli_router_v2(registry, executor)
-    version_router = create_cli_version_router()
 
-    app.include_router(version_router, prefix="/api/cli")
+    # API v1 routes
     app.include_router(router, prefix="/api/v1/cli")
-    app.include_router(router_v2, prefix="/api/v2/cli")
 
-    # Legacy (unversioned) route kept for backward compatibility
-    app.include_router(router, prefix=opts.base_path)
+    # Custom basePath fallback (when user overrides the default)
+    if opts.base_path != "/api/v1/cli":
+        app.include_router(router, prefix=opts.base_path)
 
-    # Legacy (unversioned) WebSocket endpoint
-    @app.websocket("/ws/cli/events")
-    async def websocket_events(websocket: WebSocket) -> None:
-        await event_socket_manager.handle_connection(websocket)
-
-    # Versioned WebSocket endpoints
+    # WebSocket event stream
     @app.websocket("/ws/v1/cli/events")
     async def websocket_events_v1(websocket: WebSocket) -> None:
         await event_socket_manager.handle_connection(websocket)
 
-    @app.websocket("/ws/v2/cli/events")
-    async def websocket_events_v2(websocket: WebSocket) -> None:
+    @app.websocket("/ws/cli/events")
+    async def websocket_events(websocket: WebSocket) -> None:
         await event_socket_manager.handle_connection(websocket)
+
+    # Shell WebSocket endpoints
+    async def _handle_shell(websocket: WebSocket) -> None:
+        await websocket.accept()
+        cols = int(websocket.query_params.get("cols", "80")) or 80
+        rows = int(websocket.query_params.get("rows", "24")) or 24
+        cmd = websocket.query_params.get("cmd") or None
+        await shell_session_manager.handle_session(websocket, cols, rows, cmd)
+
+    @app.websocket("/ws/v1/cli/shell")
+    async def websocket_shell_v1(websocket: WebSocket) -> None:
+        await _handle_shell(websocket)
+
+    @app.websocket("/ws/cli/shell")
+    async def websocket_shell(websocket: WebSocket) -> None:
+        await _handle_shell(websocket)
 
     return CliServerResult(
         app=app,

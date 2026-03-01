@@ -3,19 +3,18 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "qodalis-cli-server"
+name = "qodalis-cli-server-abstractions"
 version = "1.0.0b1"
-description = "A Python CLI server framework for the Qodalis CLI ecosystem"
+description = "Shared interfaces and base classes for Qodalis CLI command processors — zero framework dependencies"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
     { name = "Nicolae Lupei", email = "nicolae.lupei@qodalis.com" },
 ]
-keywords = ["cli", "server", "terminal", "qodalis"]
+keywords = ["cli", "qodalis", "terminal", "commands", "command-processor", "abstractions"]
 classifiers = [
     "Development Status :: 4 - Beta",
-    "Framework :: FastAPI",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -24,31 +23,11 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-dependencies = [
-    "qodalis-cli-server-abstractions",
-    "fastapi>=0.100.0",
-    "uvicorn[standard]>=0.23.0",
-    "websockets>=11.0",
-]
 
 [project.urls]
 Homepage = "https://github.com/qodalis-solutions/cli-server-python"
 Repository = "https://github.com/qodalis-solutions/cli-server-python"
 Issues = "https://github.com/qodalis-solutions/cli-server-python/issues"
 
-[project.scripts]
-qodalis-cli-server = "qodalis_cli.server:main"
-
-[project.optional-dependencies]
-test = [
-    "pytest>=7.0",
-    "pytest-asyncio>=0.21",
-    "httpx>=0.24",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-asyncio_mode = "auto"
-
 [tool.hatch.build.targets.wheel]
-packages = ["src/qodalis_cli"]
+packages = ["src/qodalis_cli_server_abstractions"]

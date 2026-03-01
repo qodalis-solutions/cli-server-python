@@ -12,6 +12,16 @@ The package exports all types, base classes, and built-in processors. Full type 
 
 Requires Python 3.10+.
 
+### Plugin Authors
+
+If you're building a command processor plugin and don't need the server runtime (FastAPI, uvicorn, websockets), install the abstractions package instead:
+
+```bash
+pip install qodalis-cli-server-abstractions
+```
+
+This gives you `CliCommandProcessor`, `CliProcessCommand`, `CliCommandParameterDescriptor`, and all other base types with **zero dependencies**. See [`qodalis-cli-server-abstractions`](https://pypi.org/project/qodalis-cli-server-abstractions/) for details.
+
 ## Quick Start
 
 ### As a Library
@@ -415,12 +425,15 @@ pytest --tb=short   # Short tracebacks
 ## Project Structure
 
 ```
+packages/
+  abstractions/                       # qodalis-cli-server-abstractions (zero-dep)
+    src/qodalis_cli_server_abstractions/
+      cli_command_processor.py        # ICliCommandProcessor ABC & base class
+      cli_process_command.py          # Command input dataclass
+      cli_command_parameter_descriptor.py  # Parameter declaration
+      cli_command_author.py           # Author metadata
 src/qodalis_cli/
-  abstractions/
-    cli_command_processor.py          # ICliCommandProcessor ABC & base class
-    cli_process_command.py            # Command input dataclass
-    cli_command_parameter_descriptor.py  # Parameter declaration
-    cli_command_author.py             # Author metadata
+  abstractions/                       # Re-exports from qodalis_cli_server_abstractions
   models/
     cli_server_response.py            # Response wrapper (exitCode + outputs)
     cli_server_output.py              # Output types (text, table, list, json, key-value)

@@ -24,6 +24,7 @@ from .services import (
     ICliCommandExecutorService,
     CliCommandExecutorService,
     CliEventSocketManager,
+    CliShellSessionManager,
 )
 from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router
 from .extensions import CliBuilder
@@ -58,6 +59,7 @@ __all__ = [
     "ICliCommandExecutorService",
     "CliCommandExecutorService",
     "CliEventSocketManager",
+    "CliShellSessionManager",
     "create_cli_router",
     "create_cli_router_v2",
     "create_cli_version_router",

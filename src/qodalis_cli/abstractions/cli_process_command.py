@@ -1,14 +1,3 @@
-from __future__ import annotations
+from qodalis_cli_server_abstractions.cli_process_command import CliProcessCommand
 
-from dataclasses import dataclass, field
-from typing import Any
-
-
-@dataclass
-class CliProcessCommand:
-    command: str = ""
-    raw_command: str = ""
-    value: str | None = None
-    args: dict[str, Any] = field(default_factory=dict)
-    chain_commands: list[str] = field(default_factory=list)
-    data: Any = None
+__all__ = ["CliProcessCommand"]
