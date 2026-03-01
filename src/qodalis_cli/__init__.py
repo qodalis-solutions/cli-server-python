@@ -9,6 +9,8 @@ from .abstractions import (
     CliCommandParameterDescriptor,
     ICliCommandProcessor,
     CliCommandProcessor,
+    ICliModule,
+    CliModule,
 )
 from .models import (
     CliServerOutput,
@@ -26,8 +28,9 @@ from .services import (
     CliEventSocketManager,
     CliShellSessionManager,
 )
-from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router
+from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router, create_filesystem_router
 from .extensions import CliBuilder
+from .filesystem import FileSystemOptions, FileSystemPathValidator
 from .processors import (
     CliEchoCommandProcessor,
     CliStatusCommandProcessor,
@@ -48,6 +51,8 @@ __all__ = [
     "CliCommandParameterDescriptor",
     "ICliCommandProcessor",
     "CliCommandProcessor",
+    "ICliModule",
+    "CliModule",
     "CliServerOutput",
     "CliServerResponse",
     "CliServerCommandDescriptor",
@@ -63,7 +68,10 @@ __all__ = [
     "create_cli_router",
     "create_cli_router_v2",
     "create_cli_version_router",
+    "create_filesystem_router",
     "CliBuilder",
+    "FileSystemOptions",
+    "FileSystemPathValidator",
     "CliEchoCommandProcessor",
     "CliStatusCommandProcessor",
     "CliSystemCommandProcessor",

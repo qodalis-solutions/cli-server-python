@@ -9,7 +9,9 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from .controllers import create_cli_router
+from .controllers.filesystem_controller import create_filesystem_router
 from .extensions import CliBuilder
+from .filesystem import FileSystemPathValidator
 from .services import (
     CliCommandExecutorService,
     CliCommandRegistry,
@@ -71,6 +73,14 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     # Custom basePath fallback (when user overrides the default)
     if opts.base_path != "/api/v1/cli":
         app.include_router(router, prefix=opts.base_path)
+
+    # Filesystem API (opt-in via builder.add_filesystem())
+    if builder.filesystem_options is not None:
+        fs_validator = FileSystemPathValidator(
+            builder.filesystem_options.allowed_paths
+        )
+        fs_router = create_filesystem_router(fs_validator)
+        app.include_router(fs_router, prefix="/api/cli/fs")
 
     # WebSocket event stream
     @app.websocket("/ws/v1/cli/events")
