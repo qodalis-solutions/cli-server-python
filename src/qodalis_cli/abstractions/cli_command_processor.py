@@ -36,6 +36,11 @@ class ICliCommandProcessor(abc.ABC):
         return None
 
     @property
+    def api_version(self) -> int:
+        """API version this processor targets. Default 1 for backward compat."""
+        return 1
+
+    @property
     def processors(self) -> list[ICliCommandProcessor] | None:
         return None
 

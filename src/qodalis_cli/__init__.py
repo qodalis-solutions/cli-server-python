@@ -25,7 +25,7 @@ from .services import (
     CliCommandExecutorService,
     CliEventSocketManager,
 )
-from .controllers import create_cli_router
+from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router
 from .extensions import CliBuilder
 from .processors import (
     CliEchoCommandProcessor,
@@ -59,6 +59,8 @@ __all__ = [
     "CliCommandExecutorService",
     "CliEventSocketManager",
     "create_cli_router",
+    "create_cli_router_v2",
+    "create_cli_version_router",
     "CliBuilder",
     "CliEchoCommandProcessor",
     "CliStatusCommandProcessor",
