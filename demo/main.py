@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import os
+import sys
 
 import uvicorn
+
+# Allow importing from the project root so ``plugins`` is accessible.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from qodalis_cli import (
     CliServerOptions,
@@ -14,6 +18,7 @@ from qodalis_cli import (
     CliHashCommandProcessor,
     CliBase64CommandProcessor,
     CliUuidCommandProcessor,
+    FileSystemOptions,
 )
 
 from processors import (
@@ -23,6 +28,8 @@ from processors import (
     CliStatusCommandProcessor,
     CliTimeCommandProcessor,
 )
+
+from plugins.weather import WeatherModule
 
 
 def main() -> None:
@@ -43,6 +50,8 @@ def main() -> None:
                 .add_processor(CliHashCommandProcessor())
                 .add_processor(CliBase64CommandProcessor())
                 .add_processor(CliUuidCommandProcessor())
+                .add_module(WeatherModule())
+                .add_filesystem(FileSystemOptions(allowed_paths=["/tmp"]))
             ),
         )
     )
