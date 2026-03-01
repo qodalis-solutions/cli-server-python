@@ -38,5 +38,16 @@ Issues = "https://github.com/qodalis-solutions/cli-server-python/issues"
 [project.scripts]
 qodalis-cli-server = "qodalis_cli.server:main"
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx>=0.24",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/qodalis_cli"]
