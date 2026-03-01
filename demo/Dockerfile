@@ -8,8 +8,10 @@ COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/
 RUN pip install --no-cache-dir .
 
+COPY demo/ demo/
+
 ENV PORT=8048
 ENV HOST=0.0.0.0
 EXPOSE 8048
 
-CMD ["qodalis-cli-server"]
+CMD ["python", "demo/main.py"]
