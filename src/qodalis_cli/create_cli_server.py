@@ -8,7 +8,7 @@ from typing import Callable
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from .controllers import create_cli_router
+from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router
 from .extensions import CliBuilder
 from .services import (
     CliCommandExecutorService,
@@ -62,10 +62,28 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     executor = CliCommandExecutorService(registry)
     router = create_cli_router(registry, executor)
+    router_v2 = create_cli_router_v2(registry, executor)
+    version_router = create_cli_version_router()
+
+    app.include_router(version_router, prefix="/api/cli")
+    app.include_router(router, prefix="/api/v1/cli")
+    app.include_router(router_v2, prefix="/api/v2/cli")
+
+    # Legacy (unversioned) route kept for backward compatibility
     app.include_router(router, prefix=opts.base_path)
 
+    # Legacy (unversioned) WebSocket endpoint
     @app.websocket("/ws/cli/events")
     async def websocket_events(websocket: WebSocket) -> None:
+        await event_socket_manager.handle_connection(websocket)
+
+    # Versioned WebSocket endpoints
+    @app.websocket("/ws/v1/cli/events")
+    async def websocket_events_v1(websocket: WebSocket) -> None:
+        await event_socket_manager.handle_connection(websocket)
+
+    @app.websocket("/ws/v2/cli/events")
+    async def websocket_events_v2(websocket: WebSocket) -> None:
         await event_socket_manager.handle_connection(websocket)
 
     return CliServerResult(
