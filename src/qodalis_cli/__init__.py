@@ -31,6 +31,23 @@ from .services import (
 from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router, create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemOptions, FileSystemPathValidator
+
+# Re-export filesystem plugin types for convenience
+from plugins.filesystem import (
+    FileEntry,
+    FileStat,
+    FileStorageExistsError,
+    FileStorageIsADirectoryError,
+    FileStorageNotADirectoryError,
+    FileStorageNotFoundError,
+    FileStoragePermissionError,
+    IFileStorageProvider,
+)
+from plugins.filesystem.providers import (
+    InMemoryFileStorageProvider,
+    OsFileStorageProvider,
+    OsProviderOptions,
+)
 from .processors import (
     CliEchoCommandProcessor,
     CliStatusCommandProcessor,
@@ -81,4 +98,15 @@ __all__ = [
     "CliUuidCommandProcessor",
     "create_cli_server",
     "CliServerOptions",
+    "FileEntry",
+    "FileStat",
+    "FileStorageExistsError",
+    "FileStorageIsADirectoryError",
+    "FileStorageNotADirectoryError",
+    "FileStorageNotFoundError",
+    "FileStoragePermissionError",
+    "IFileStorageProvider",
+    "InMemoryFileStorageProvider",
+    "OsFileStorageProvider",
+    "OsProviderOptions",
 ]
