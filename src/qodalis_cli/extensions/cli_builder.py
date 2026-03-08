@@ -7,7 +7,7 @@ from ..filesystem import FileSystemOptions
 from ..services.cli_command_registry import CliCommandRegistry
 
 if TYPE_CHECKING:
-    from plugins.filesystem import IFileStorageProvider
+    from qodalis_cli_filesystem import IFileStorageProvider
 
 
 class CliBuilder:

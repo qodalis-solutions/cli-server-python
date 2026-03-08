@@ -10,7 +10,7 @@ from typing import Any, Union
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
-from plugins.filesystem import (
+from qodalis_cli_filesystem import (
     FileStorageExistsError,
     FileStorageIsADirectoryError,
     FileStorageNotADirectoryError,

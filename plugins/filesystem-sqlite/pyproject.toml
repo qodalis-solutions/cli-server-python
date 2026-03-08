@@ -10,7 +10,7 @@ readme = { text = "", content-type = "text/plain" }
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
-    { name = "Nicolae Lupei" },
+    { name = "Nicolae Lupei", email = "nicolae.lupei@qodalis.com" },
 ]
 keywords = ["cli", "qodalis", "filesystem", "sqlite", "storage", "plugin"]
 classifiers = [

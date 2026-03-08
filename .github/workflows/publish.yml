@@ -16,8 +16,20 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install build tools
-        run: pip install build
+      - name: Install build and test tools
+        run: pip install build pytest pytest-asyncio httpx
+
+      - name: Install packages for testing
+        run: |
+          pip install ./packages/abstractions
+          pip install ./plugins/filesystem
+          pip install ./plugins/filesystem-json
+          pip install ./plugins/filesystem-sqlite
+          pip install ./plugins/weather
+          pip install -e ".[test]"
+
+      - name: Run tests
+        run: python -m pytest tests/ -v
 
       - name: Build abstractions package
         run: python -m build packages/abstractions/ --outdir dist-abstractions/
@@ -91,6 +103,7 @@ jobs:
           skip-existing: true
 
   docker:
+    needs: publish
     runs-on: ubuntu-latest
     permissions:
       contents: read
