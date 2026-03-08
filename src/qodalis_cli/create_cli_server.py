@@ -8,6 +8,8 @@ from typing import Callable
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
+from plugins.filesystem.providers.os_provider import OsFileStorageProvider, OsProviderOptions
+
 from .controllers import create_cli_router
 from .controllers.filesystem_controller import create_filesystem_router
 from .extensions import CliBuilder
@@ -74,12 +76,19 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     if opts.base_path != "/api/v1/cli":
         app.include_router(router, prefix=opts.base_path)
 
-    # Filesystem API (opt-in via builder.add_filesystem())
-    if builder.filesystem_options is not None:
-        fs_validator = FileSystemPathValidator(
-            builder.filesystem_options.allowed_paths
+    # Filesystem API (opt-in via builder.set_file_storage_provider() or
+    # legacy builder.add_filesystem())
+    if builder.file_storage_provider is not None:
+        fs_router = create_filesystem_router(builder.file_storage_provider)
+        app.include_router(fs_router, prefix="/api/cli/fs")
+    elif builder.filesystem_options is not None:
+        # Legacy path: create an OsFileStorageProvider from the options
+        os_provider = OsFileStorageProvider(
+            OsProviderOptions(
+                allowed_paths=builder.filesystem_options.allowed_paths
+            )
         )
-        fs_router = create_filesystem_router(fs_validator)
+        fs_router = create_filesystem_router(os_provider)
         app.include_router(fs_router, prefix="/api/cli/fs")
 
     # WebSocket event stream
