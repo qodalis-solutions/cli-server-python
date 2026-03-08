@@ -33,7 +33,7 @@ from .extensions import CliBuilder
 from .filesystem import FileSystemOptions, FileSystemPathValidator
 
 # Re-export filesystem plugin types for convenience
-from plugins.filesystem import (
+from qodalis_cli_filesystem import (
     FileEntry,
     FileStat,
     FileStorageExistsError,
@@ -43,7 +43,7 @@ from plugins.filesystem import (
     FileStoragePermissionError,
     IFileStorageProvider,
 )
-from plugins.filesystem.providers import (
+from qodalis_cli_filesystem.providers import (
     InMemoryFileStorageProvider,
     OsFileStorageProvider,
     OsProviderOptions,

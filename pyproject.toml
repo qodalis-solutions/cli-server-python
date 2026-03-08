@@ -26,6 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "qodalis-cli-server-abstractions",
+    "qodalis-cli-server-plugin-filesystem",
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.23.0",
     "websockets>=11.0",

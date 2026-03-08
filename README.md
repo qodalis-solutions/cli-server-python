@@ -501,10 +501,10 @@ The server includes a pluggable file storage system exposed at `/api/cli/fs/*`. 
 
 ```python
 from qodalis_cli import create_cli_server, CliServerOptions
-from qodalis_cli.filesystem import InMemoryProvider, OsProvider
-from qodalis_cli.filesystem_json import JsonFileStorageProvider, JsonFileProviderOptions
-from qodalis_cli.filesystem_sqlite import SqliteFileStorageProvider, SqliteProviderOptions
-from qodalis_cli.filesystem_s3 import S3FileStorageProvider, S3ProviderOptions
+from qodalis_cli_filesystem import InMemoryFileStorageProvider, OsFileStorageProvider
+from qodalis_cli_filesystem_json import JsonFileStorageProvider, JsonFileProviderOptions
+from qodalis_cli_filesystem_sqlite import SqliteFileStorageProvider, SqliteProviderOptions
+from qodalis_cli_filesystem_s3 import S3FileStorageProvider, S3ProviderOptions
 
 result = create_cli_server(
     CliServerOptions(
@@ -549,7 +549,7 @@ result = create_cli_server(
 Implement `IFileStorageProvider` to add your own backend:
 
 ```python
-from qodalis_cli.filesystem import IFileStorageProvider, FileEntry, FileStat
+from qodalis_cli_filesystem import IFileStorageProvider, FileEntry, FileStat
 
 class MyProvider(IFileStorageProvider):
     @property

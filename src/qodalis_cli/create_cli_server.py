@@ -8,7 +8,7 @@ from typing import Callable
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from plugins.filesystem.providers.os_provider import OsFileStorageProvider, OsProviderOptions
+from qodalis_cli_filesystem.providers.os_provider import OsFileStorageProvider, OsProviderOptions
 
 from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router
 from .controllers.filesystem_controller import create_filesystem_router
