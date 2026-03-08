@@ -1,4 +1,10 @@
-"""Demo CLI server with sample processors."""
+"""Demo CLI server with sample processors.
+
+This demo showcases core CLI commands, the weather plugin, and the
+pluggable file-storage provider system.  By default the server uses an
+in-memory file store, but you can switch to any of the available
+providers by uncommenting the relevant section below.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +25,9 @@ from qodalis_cli import (
     CliBase64CommandProcessor,
     CliUuidCommandProcessor,
     FileSystemOptions,
+    InMemoryFileStorageProvider,
+    OsFileStorageProvider,
+    OsProviderOptions,
 )
 
 from processors import (
@@ -30,6 +39,52 @@ from processors import (
 )
 
 from plugins.weather import WeatherModule
+
+# ---------------------------------------------------------------------------
+# File storage providers
+# ---------------------------------------------------------------------------
+# The CLI server ships with a pluggable IFileStorageProvider system.  Pick one
+# of the providers below and pass it to ``builder.set_file_storage_provider()``
+# inside the configure callback.
+#
+# 1) In-memory (default — files are lost when the server restarts):
+#
+#    provider = InMemoryFileStorageProvider()
+#
+# 2) OS / local filesystem (reads & writes real files; paths must be
+#    explicitly allowed):
+#
+#    provider = OsFileStorageProvider(
+#        OsProviderOptions(allowed_paths=["/tmp", "/app/data"])
+#    )
+#
+# 3) JSON file (all files serialised into a single JSON file):
+#
+#    import importlib
+#    _json_mod = importlib.import_module("plugins.filesystem-json")
+#    provider = _json_mod.JsonFileStorageProvider(
+#        _json_mod.JsonFileProviderOptions(file_path="./data.json")
+#    )
+#
+# 4) SQLite (files stored in a local SQLite database):
+#
+#    import importlib
+#    _sqlite_mod = importlib.import_module("plugins.filesystem-sqlite")
+#    provider = _sqlite_mod.SqliteFileStorageProvider(
+#        _sqlite_mod.SqliteProviderOptions(db_path="./files.db")
+#    )
+#
+# 5) AWS S3 (files stored in an S3 bucket — requires boto3):
+#
+#    import importlib
+#    _s3_mod = importlib.import_module("plugins.filesystem-s3")
+#    provider = _s3_mod.S3FileStorageProvider(
+#        _s3_mod.S3ProviderOptions(bucket="my-cli-files", region="us-east-1")
+#    )
+# ---------------------------------------------------------------------------
+
+# Choose a provider (default: in-memory).
+file_storage_provider = InMemoryFileStorageProvider()
 
 
 def main() -> None:
@@ -51,6 +106,7 @@ def main() -> None:
                 .add_processor(CliBase64CommandProcessor())
                 .add_processor(CliUuidCommandProcessor())
                 .add_module(WeatherModule())
+                .set_file_storage_provider(file_storage_provider)
                 .add_filesystem(FileSystemOptions(allowed_paths=["/tmp", "/app", "/home"]))
             ),
         )
@@ -59,6 +115,7 @@ def main() -> None:
     print(f"Qodalis CLI Demo Server (Python) running on http://{host}:{port}")
     print(f"  API: http://{host}:{port}/api/cli")
     print(f"  WebSocket: ws://{host}:{port}/ws/cli/events")
+    print(f"  File storage: {type(file_storage_provider).__name__}")
 
     uvicorn.run(result.app, host=host, port=port)
 
