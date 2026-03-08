@@ -1,6 +1,6 @@
 # Qodalis CLI Server (Python)
 
-A Python CLI server framework for the [Qodalis CLI](https://github.com/qodalis-solutions/angular-web-cli) ecosystem. Build custom server-side commands that integrate with the Qodalis web terminal.
+A Python CLI server framework for the [Qodalis CLI](https://github.com/qodalis-solutions/web-cli) ecosystem. Build custom server-side commands that integrate with the Qodalis web terminal.
 
 ## Installation
 
@@ -481,6 +481,96 @@ from qodalis_cli import (
 )
 ```
 
+## File Storage
+
+The server includes a pluggable file storage system exposed at `/api/cli/fs/*`. Enable it with `set_file_storage_provider()` and choose a storage backend.
+
+### Filesystem API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/cli/fs/ls?path=/` | List directory contents |
+| GET | `/api/cli/fs/cat?path=/file.txt` | Read file content |
+| GET | `/api/cli/fs/stat?path=/file.txt` | File/directory metadata |
+| GET | `/api/cli/fs/download?path=/file.txt` | Download file |
+| POST | `/api/cli/fs/upload` | Upload file (multipart) |
+| POST | `/api/cli/fs/mkdir` | Create directory |
+| DELETE | `/api/cli/fs/rm?path=/file.txt` | Delete file or directory |
+
+### Storage Providers
+
+```python
+from qodalis_cli import create_cli_server, CliServerOptions
+from qodalis_cli.filesystem import InMemoryProvider, OsProvider
+from qodalis_cli.filesystem_json import JsonFileStorageProvider, JsonFileProviderOptions
+from qodalis_cli.filesystem_sqlite import SqliteFileStorageProvider, SqliteProviderOptions
+from qodalis_cli.filesystem_s3 import S3FileStorageProvider, S3ProviderOptions
+
+result = create_cli_server(
+    CliServerOptions(
+        configure=lambda builder: (
+            # In-memory (default) — files lost on restart
+            builder.set_file_storage_provider(InMemoryProvider())
+
+            # OS filesystem
+            # builder.set_file_storage_provider(OsProvider())
+
+            # JSON file — persists to a single JSON file
+            # builder.set_file_storage_provider(
+            #     JsonFileStorageProvider(JsonFileProviderOptions(
+            #         file_path='./data/files.json',
+            #     ))
+            # )
+
+            # SQLite — persists to a SQLite database
+            # builder.set_file_storage_provider(
+            #     SqliteFileStorageProvider(SqliteProviderOptions(
+            #         db_path='./data/files.db',
+            #     ))
+            # )
+
+            # Amazon S3
+            # builder.set_file_storage_provider(
+            #     S3FileStorageProvider(S3ProviderOptions(
+            #         bucket='my-cli-files',
+            #         region='us-east-1',
+            #         prefix='uploads/',
+            #         aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+            #         aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+            #     ))
+            # )
+        ),
+    )
+)
+```
+
+### Custom Provider
+
+Implement `IFileStorageProvider` to add your own backend:
+
+```python
+from qodalis_cli.filesystem import IFileStorageProvider, FileEntry, FileStat
+
+class MyProvider(IFileStorageProvider):
+    @property
+    def name(self) -> str:
+        return "my-provider"
+
+    async def list(self, path: str) -> list[FileEntry]: ...
+    async def read_file(self, path: str) -> str: ...
+    async def write_file(self, path: str, content: str | bytes) -> None: ...
+    async def stat(self, path: str) -> FileStat: ...
+    async def mkdir(self, path: str, recursive: bool = False) -> None: ...
+    async def remove(self, path: str, recursive: bool = False) -> None: ...
+    async def copy(self, src: str, dest: str) -> None: ...
+    async def move(self, src: str, dest: str) -> None: ...
+    async def exists(self, path: str) -> bool: ...
+    async def get_download_stream(self, path: str) -> AsyncIterator[bytes]: ...
+    async def upload_file(self, path: str, content: bytes) -> None: ...
+
+builder.set_file_storage_provider(MyProvider())
+```
+
 ## Built-in Processors
 
 These processors ship with the library and are included in the standalone server:
@@ -531,6 +621,10 @@ packages/
       cli_command_parameter_descriptor.py  # Parameter declaration
       cli_command_author.py           # Author metadata
 plugins/
+  filesystem/                         # Core file storage abstraction (IFileStorageProvider, InMemory, OS)
+  filesystem-json/                    # JSON file persistence provider
+  filesystem-sqlite/                  # SQLite persistence provider (stdlib sqlite3)
+  filesystem-s3/                      # Amazon S3 storage provider (boto3)
   weather/                            # Weather module (example plugin)
 src/qodalis_cli/
   abstractions/                       # Re-exports from qodalis_cli_server_abstractions
