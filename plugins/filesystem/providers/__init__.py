@@ -1,9 +1,15 @@
-"""File storage provider implementations."""
+"""File storage provider implementations.
+
+Re-exports from ``qodalis_cli_filesystem.providers`` for backward compatibility.
+"""
 
 from __future__ import annotations
 
-from .in_memory_provider import InMemoryFileStorageProvider
-from .os_provider import OsFileStorageProvider, OsProviderOptions
+from qodalis_cli_filesystem.providers import (
+    InMemoryFileStorageProvider,
+    OsFileStorageProvider,
+    OsProviderOptions,
+)
 
 __all__ = [
     "InMemoryFileStorageProvider",

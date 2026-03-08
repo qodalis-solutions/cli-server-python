@@ -1,22 +1,16 @@
-"""Qodalis CLI filesystem plugin — interfaces, models, errors, and providers.
-
-This module re-exports everything from the ``qodalis_cli_filesystem`` package
-so that existing ``from plugins.filesystem import ...`` imports continue to
-work when the package is installed (``pip install -e plugins/filesystem/``).
-"""
+"""Qodalis CLI filesystem plugin — interfaces, models, errors, and providers."""
 
 from __future__ import annotations
 
-from qodalis_cli_filesystem import (
-    FileEntry,
-    FileStat,
+from .errors import (
     FileStorageExistsError,
     FileStorageIsADirectoryError,
     FileStorageNotADirectoryError,
     FileStorageNotFoundError,
     FileStoragePermissionError,
-    IFileStorageProvider,
 )
+from .i_file_storage_provider import IFileStorageProvider
+from .models import FileEntry, FileStat
 
 __all__ = [
     "FileEntry",

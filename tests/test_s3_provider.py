@@ -1,22 +1,19 @@
 from __future__ import annotations
 
-import importlib
 from datetime import datetime, timezone
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from plugins.filesystem.errors import (
+from qodalis_cli_filesystem import (
     FileStorageIsADirectoryError,
     FileStorageNotADirectoryError,
     FileStorageNotFoundError,
 )
 
-_mod = importlib.import_module("plugins.filesystem-s3")
-_s3_mod = importlib.import_module("plugins.filesystem-s3.s3_provider")
-S3ProviderOptions = _mod.S3ProviderOptions
-S3FileStorageProvider = _mod.S3FileStorageProvider
+import qodalis_cli_filesystem_s3.s3_provider as _s3_mod
+from qodalis_cli_filesystem_s3 import S3ProviderOptions, S3FileStorageProvider
 
 
 BUCKET = "test-bucket"
