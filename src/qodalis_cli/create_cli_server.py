@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from plugins.filesystem.providers.os_provider import OsFileStorageProvider, OsProviderOptions
 
-from .controllers import create_cli_router
+from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router
 from .controllers.filesystem_controller import create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemPathValidator
@@ -68,9 +68,17 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     executor = CliCommandExecutorService(registry)
     router = create_cli_router(registry, executor)
+    router_v2 = create_cli_router_v2(registry, executor)
+    version_router = create_cli_version_router()
 
     # API v1 routes
     app.include_router(router, prefix="/api/v1/cli")
+
+    # API v2 routes
+    app.include_router(router_v2, prefix="/api/v2/cli")
+
+    # Version discovery routes
+    app.include_router(version_router, prefix="/api/cli")
 
     # Custom basePath fallback (when user overrides the default)
     if opts.base_path != "/api/v1/cli":
