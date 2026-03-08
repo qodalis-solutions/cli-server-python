@@ -4,11 +4,17 @@ WORKDIR /app
 COPY packages/abstractions/ packages/abstractions/
 RUN pip install --no-cache-dir ./packages/abstractions
 
+COPY plugins/ plugins/
+RUN pip install --no-cache-dir ./plugins/filesystem \
+    && pip install --no-cache-dir ./plugins/filesystem-json \
+    && pip install --no-cache-dir ./plugins/filesystem-sqlite \
+    && (pip install --no-cache-dir ./plugins/filesystem-s3 || true) \
+    && pip install --no-cache-dir ./plugins/weather
+
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/
 RUN pip install --no-cache-dir .
 
-COPY plugins/ plugins/
 COPY demo/ demo/
 
 ENV PORT=8048
