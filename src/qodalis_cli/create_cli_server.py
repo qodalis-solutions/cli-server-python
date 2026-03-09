@@ -58,6 +58,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         yield
         await event_socket_manager.broadcast_disconnect()
         await log_socket_manager.broadcast_disconnect()
+        logging.getLogger().removeHandler(log_handler)
 
     app = FastAPI(title="Qodalis CLI Server", lifespan=lifespan)
 
