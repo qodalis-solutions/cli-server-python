@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -18,7 +19,9 @@ from .services import (
     CliCommandExecutorService,
     CliCommandRegistry,
     CliEventSocketManager,
+    CliLogSocketManager,
     CliShellSessionManager,
+    WebSocketLogHandler,
 )
 
 
@@ -36,18 +39,25 @@ class CliServerResult:
     registry: CliCommandRegistry
     builder: CliBuilder
     event_socket_manager: CliEventSocketManager
+    log_socket_manager: CliLogSocketManager
 
 
 def create_cli_server(options: CliServerOptions | None = None) -> CliServerResult:
     opts = options or CliServerOptions()
 
     event_socket_manager = CliEventSocketManager()
+    log_socket_manager = CliLogSocketManager()
     shell_session_manager = CliShellSessionManager()
+
+    # Attach a log handler that forwards to WebSocket clients
+    log_handler = WebSocketLogHandler(log_socket_manager)
+    logging.getLogger().addHandler(log_handler)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
         await event_socket_manager.broadcast_disconnect()
+        await log_socket_manager.broadcast_disconnect()
 
     app = FastAPI(title="Qodalis CLI Server", lifespan=lifespan)
 
@@ -108,6 +118,19 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     async def websocket_events(websocket: WebSocket) -> None:
         await event_socket_manager.handle_connection(websocket)
 
+    # Log WebSocket endpoints
+    async def _handle_logs(websocket: WebSocket) -> None:
+        level_filter = websocket.query_params.get("level") or None
+        await log_socket_manager.handle_connection(websocket, level_filter)
+
+    @app.websocket("/ws/v1/cli/logs")
+    async def websocket_logs_v1(websocket: WebSocket) -> None:
+        await _handle_logs(websocket)
+
+    @app.websocket("/ws/cli/logs")
+    async def websocket_logs(websocket: WebSocket) -> None:
+        await _handle_logs(websocket)
+
     # Shell WebSocket endpoints
     async def _handle_shell(websocket: WebSocket) -> None:
         await websocket.accept()
@@ -129,4 +152,5 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         registry=registry,
         builder=builder,
         event_socket_manager=event_socket_manager,
+        log_socket_manager=log_socket_manager,
     )
