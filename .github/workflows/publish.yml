@@ -25,6 +25,7 @@ jobs:
           pip install ./plugins/filesystem
           pip install ./plugins/filesystem-json
           pip install ./plugins/filesystem-sqlite
+          pip install ./plugins/filesystem-s3
           pip install ./plugins/weather
           pip install -e ".[test]"
 
