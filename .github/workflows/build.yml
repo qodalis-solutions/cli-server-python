@@ -1,0 +1,31 @@
+name: Build & Test
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [develop]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -e packages/abstractions/
+          pip install -e plugins/filesystem/
+          pip install -e plugins/filesystem-json/
+          pip install -e plugins/filesystem-sqlite/
+          pip install -e "plugins/filesystem-s3/[test]" || pip install -e plugins/filesystem-s3/
+          pip install -e plugins/weather/
+          pip install -e ".[test]"
+
+      - name: Test
+        run: pytest tests/ -v

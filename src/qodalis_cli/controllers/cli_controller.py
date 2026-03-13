@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 from typing import Any
 
 from fastapi import APIRouter
@@ -11,6 +12,8 @@ from ..abstractions.cli_process_command import CliProcessCommand
 from ..models import CliServerCommandDescriptor, CliServerCommandParameterDescriptorDto, CliServerResponse
 from ..services.cli_command_executor_service import ICliCommandExecutorService
 from ..services.cli_command_registry import ICliCommandRegistry
+
+SERVER_VERSION = "1.0.0"
 
 
 class ExecuteRequest(BaseModel):
@@ -64,7 +67,29 @@ def create_cli_router(
 
     @router.get("/version")
     async def get_version() -> dict[str, str]:
-        return {"version": "1.0.0"}
+        return {"version": SERVER_VERSION}
+
+    @router.get("/capabilities")
+    async def get_capabilities() -> dict[str, Any]:
+        detected_os = (
+            "darwin" if platform.system() == "Darwin"
+            else "win32" if platform.system() == "Windows"
+            else "linux"
+        )
+
+        shell = "powershell" if platform.system() == "Windows" else "bash"
+        shell_path = (
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+            if platform.system() == "Windows"
+            else "/bin/bash"
+        )
+
+        return {
+            "shell": True,
+            "os": detected_os,
+            "shellPath": shell_path,
+            "version": SERVER_VERSION,
+        }
 
     @router.get("/commands")
     async def get_commands() -> list[dict[str, Any]]:

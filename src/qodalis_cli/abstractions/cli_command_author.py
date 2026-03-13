@@ -1,18 +1,7 @@
-from __future__ import annotations
+from qodalis_cli_server_abstractions.cli_command_author import (
+    ICliCommandAuthor,
+    CliCommandAuthor,
+    DEFAULT_LIBRARY_AUTHOR,
+)
 
-from typing import Protocol, runtime_checkable
-
-
-@runtime_checkable
-class ICliCommandAuthor(Protocol):
-    name: str
-    email: str
-
-
-class CliCommandAuthor:
-    def __init__(self, name: str, email: str) -> None:
-        self.name = name
-        self.email = email
-
-
-DEFAULT_LIBRARY_AUTHOR = CliCommandAuthor("Nicolae Lupei", "nicolae.lupei@qodalis.com")
+__all__ = ["ICliCommandAuthor", "CliCommandAuthor", "DEFAULT_LIBRARY_AUTHOR"]

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qodalis-cli-server-plugin-filesystem-s3"
+version = "1.0.0b1"
+description = "AWS S3-based storage provider for the Qodalis CLI filesystem plugin"
+readme = { text = "", content-type = "text/plain" }
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Nicolae Lupei", email = "nicolae.lupei@qodalis.com" },
+]
+keywords = ["cli", "qodalis", "filesystem", "s3", "aws", "storage", "plugin"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "qodalis-cli-server-plugin-filesystem",
+    "boto3>=1.26.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/qodalis-solutions/cli-server-python"
+Repository = "https://github.com/qodalis-solutions/cli-server-python"
+Issues = "https://github.com/qodalis-solutions/cli-server-python/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["qodalis_cli_filesystem_s3"]
+
+[tool.hatch.build.targets.sdist]
+include = ["qodalis_cli_filesystem_s3/**"]

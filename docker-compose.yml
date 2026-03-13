@@ -1,0 +1,12 @@
+services:
+  cli-server-python:
+    build:
+      context: .
+      dockerfile: demo/Dockerfile
+    container_name: cli-server-python
+    ports:
+      - "8048:8048"
+    environment:
+      - PORT=8048
+      - HOST=0.0.0.0
+    restart: unless-stopped

@@ -9,6 +9,8 @@ from .abstractions import (
     CliCommandParameterDescriptor,
     ICliCommandProcessor,
     CliCommandProcessor,
+    ICliModule,
+    CliModule,
 )
 from .models import (
     CliServerOutput,
@@ -24,9 +26,28 @@ from .services import (
     ICliCommandExecutorService,
     CliCommandExecutorService,
     CliEventSocketManager,
+    CliShellSessionManager,
 )
-from .controllers import create_cli_router
+from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router, create_filesystem_router
 from .extensions import CliBuilder
+from .filesystem import FileSystemOptions, FileSystemPathValidator
+
+# Re-export filesystem plugin types for convenience
+from qodalis_cli_filesystem import (
+    FileEntry,
+    FileStat,
+    FileStorageExistsError,
+    FileStorageIsADirectoryError,
+    FileStorageNotADirectoryError,
+    FileStorageNotFoundError,
+    FileStoragePermissionError,
+    IFileStorageProvider,
+)
+from qodalis_cli_filesystem.providers import (
+    InMemoryFileStorageProvider,
+    OsFileStorageProvider,
+    OsProviderOptions,
+)
 from .processors import (
     CliEchoCommandProcessor,
     CliStatusCommandProcessor,
@@ -47,6 +68,8 @@ __all__ = [
     "CliCommandParameterDescriptor",
     "ICliCommandProcessor",
     "CliCommandProcessor",
+    "ICliModule",
+    "CliModule",
     "CliServerOutput",
     "CliServerResponse",
     "CliServerCommandDescriptor",
@@ -58,8 +81,14 @@ __all__ = [
     "ICliCommandExecutorService",
     "CliCommandExecutorService",
     "CliEventSocketManager",
+    "CliShellSessionManager",
     "create_cli_router",
+    "create_cli_router_v2",
+    "create_cli_version_router",
+    "create_filesystem_router",
     "CliBuilder",
+    "FileSystemOptions",
+    "FileSystemPathValidator",
     "CliEchoCommandProcessor",
     "CliStatusCommandProcessor",
     "CliSystemCommandProcessor",
@@ -69,4 +98,15 @@ __all__ = [
     "CliUuidCommandProcessor",
     "create_cli_server",
     "CliServerOptions",
+    "FileEntry",
+    "FileStat",
+    "FileStorageExistsError",
+    "FileStorageIsADirectoryError",
+    "FileStorageNotADirectoryError",
+    "FileStorageNotFoundError",
+    "FileStoragePermissionError",
+    "IFileStorageProvider",
+    "InMemoryFileStorageProvider",
+    "OsFileStorageProvider",
+    "OsProviderOptions",
 ]

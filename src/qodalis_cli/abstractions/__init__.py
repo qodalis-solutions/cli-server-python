@@ -1,10 +1,15 @@
-from .cli_command_author import ICliCommandAuthor, CliCommandAuthor, DEFAULT_LIBRARY_AUTHOR
-from .cli_process_command import CliProcessCommand
-from .cli_command_parameter_descriptor import (
+from qodalis_cli_server_abstractions import (
+    ICliCommandAuthor,
+    CliCommandAuthor,
+    DEFAULT_LIBRARY_AUTHOR,
+    CliProcessCommand,
     ICliCommandParameterDescriptor,
     CliCommandParameterDescriptor,
+    ICliCommandProcessor,
+    CliCommandProcessor,
+    ICliModule,
+    CliModule,
 )
-from .cli_command_processor import ICliCommandProcessor, CliCommandProcessor
 
 __all__ = [
     "ICliCommandAuthor",
@@ -15,4 +20,6 @@ __all__ = [
     "CliCommandParameterDescriptor",
     "ICliCommandProcessor",
     "CliCommandProcessor",
+    "ICliModule",
+    "CliModule",
 ]

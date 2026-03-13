@@ -25,9 +25,12 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+    "qodalis-cli-server-abstractions",
+    "qodalis-cli-server-plugin-filesystem",
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.23.0",
     "websockets>=11.0",
+    "python-multipart>=0.0.6",
 ]
 
 [project.urls]
@@ -37,6 +40,17 @@ Issues = "https://github.com/qodalis-solutions/cli-server-python/issues"
 
 [project.scripts]
 qodalis-cli-server = "qodalis_cli.server:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx>=0.24",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/qodalis_cli"]
