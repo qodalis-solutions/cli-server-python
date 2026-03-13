@@ -38,6 +38,7 @@ jobs:
       - name: Publish abstractions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-abstractions/
           skip-existing: true
           verbose: true
@@ -49,6 +50,7 @@ jobs:
       - name: Publish server to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          password: ${{ secrets.PYPI_TOKEN }}
           skip-existing: true
           verbose: true
           attestations: false
@@ -61,6 +63,7 @@ jobs:
       - name: Publish filesystem plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-filesystem/
           skip-existing: true
           verbose: true
@@ -72,6 +75,7 @@ jobs:
       - name: Publish filesystem-json plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-filesystem-json/
           skip-existing: true
           verbose: true
@@ -83,6 +87,7 @@ jobs:
       - name: Publish filesystem-sqlite plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-filesystem-sqlite/
           skip-existing: true
           verbose: true
@@ -94,6 +99,7 @@ jobs:
       - name: Publish filesystem-s3 plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-filesystem-s3/
           skip-existing: true
           verbose: true
@@ -105,6 +111,7 @@ jobs:
       - name: Publish weather plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-weather/
           skip-existing: true
           verbose: true
