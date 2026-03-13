@@ -38,9 +38,10 @@ jobs:
       - name: Publish abstractions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-abstractions/
           skip-existing: true
+          verbose: true
+          attestations: false
 
       - name: Build server package
         run: python -m build
@@ -48,8 +49,9 @@ jobs:
       - name: Publish server to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_TOKEN }}
           skip-existing: true
+          verbose: true
+          attestations: false
 
       # -- Plugin packages --
 
@@ -59,9 +61,10 @@ jobs:
       - name: Publish filesystem plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-filesystem/
           skip-existing: true
+          verbose: true
+          attestations: false
 
       - name: Build filesystem-json plugin
         run: python -m build plugins/filesystem-json/ --outdir dist-plugin-filesystem-json/
@@ -69,9 +72,10 @@ jobs:
       - name: Publish filesystem-json plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-filesystem-json/
           skip-existing: true
+          verbose: true
+          attestations: false
 
       - name: Build filesystem-sqlite plugin
         run: python -m build plugins/filesystem-sqlite/ --outdir dist-plugin-filesystem-sqlite/
@@ -79,9 +83,10 @@ jobs:
       - name: Publish filesystem-sqlite plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-filesystem-sqlite/
           skip-existing: true
+          verbose: true
+          attestations: false
 
       - name: Build filesystem-s3 plugin
         run: python -m build plugins/filesystem-s3/ --outdir dist-plugin-filesystem-s3/
@@ -89,9 +94,10 @@ jobs:
       - name: Publish filesystem-s3 plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-filesystem-s3/
           skip-existing: true
+          verbose: true
+          attestations: false
 
       - name: Build weather plugin
         run: python -m build plugins/weather/ --outdir dist-plugin-weather/
@@ -99,9 +105,10 @@ jobs:
       - name: Publish weather plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-weather/
           skip-existing: true
+          verbose: true
+          attestations: false
 
   docker:
     needs: publish
