@@ -13,6 +13,8 @@ class CliJobOptions:
     schedule: str | None = None  # cron expression
     interval: str | None = None  # e.g. "30s", "5m", "1h", "1d"
     enabled: bool = True
-    max_retries: int = 0
+    max_retries: int = 1
+    retry_delay: str = "5s"  # delay before first retry
+    retry_strategy: str = "exponential"  # 'fixed' | 'linear' | 'exponential'
     timeout: str | None = None  # e.g. "5m"
     overlap_policy: str = "skip"  # 'skip' | 'queue' | 'cancel'

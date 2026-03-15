@@ -24,6 +24,8 @@ class UpdateJobRequest(BaseModel):
     schedule: str | None = None
     interval: str | None = None
     max_retries: int | None = Field(None, alias="maxRetries")
+    retry_delay: str | None = Field(None, alias="retryDelay")
+    retry_strategy: str | None = Field(None, alias="retryStrategy")
     timeout: str | None = None
     overlap_policy: str | None = Field(None, alias="overlapPolicy")
 
@@ -47,6 +49,8 @@ def _job_dto(reg: Any) -> dict[str, Any]:
         "interval": reg.options.interval,
         "enabled": reg.status != "stopped",
         "maxRetries": reg.options.max_retries,
+        "retryDelay": reg.options.retry_delay,
+        "retryStrategy": reg.options.retry_strategy,
         "timeout": reg.options.timeout,
         "overlapPolicy": reg.options.overlap_policy,
         "currentExecutionId": reg.current_execution_id,
@@ -175,6 +179,8 @@ def create_cli_jobs_router(
                 schedule=body.schedule,
                 interval=body.interval,
                 max_retries=body.max_retries,
+                retry_delay=body.retry_delay,
+                retry_strategy=body.retry_strategy,
                 timeout=body.timeout,
                 overlap_policy=body.overlap_policy,
             )

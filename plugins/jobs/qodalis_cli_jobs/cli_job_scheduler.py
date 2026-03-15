@@ -195,6 +195,8 @@ class CliJobScheduler:
         schedule: str | None = None,
         interval: str | None = None,
         max_retries: int | None = None,
+        retry_delay: str | None = None,
+        retry_strategy: str | None = None,
         timeout: str | None = None,
         overlap_policy: str | None = None,
     ) -> None:
@@ -218,6 +220,13 @@ class CliJobScheduler:
             opts.schedule = None
         if max_retries is not None:
             opts.max_retries = max_retries
+        if retry_delay is not None:
+            parse_interval(retry_delay)  # validate
+            opts.retry_delay = retry_delay
+        if retry_strategy is not None:
+            if retry_strategy not in ("fixed", "linear", "exponential"):
+                raise ValueError(f"Invalid retry strategy: {retry_strategy!r}")
+            opts.retry_strategy = retry_strategy
         if timeout is not None:
             parse_interval(timeout)  # validate
             opts.timeout = timeout
@@ -373,7 +382,7 @@ class CliJobScheduler:
         # Finalize
         end_time = datetime.datetime.now(datetime.UTC)
         execution.completed_at = end_time
-        execution.duration = (end_time - execution.started_at).total_seconds() * 1000
+        execution.duration = round((end_time - execution.started_at).total_seconds() * 1000)
         execution.logs = list(ctx.log_entries)
         await self._storage.save_execution(execution)
 
@@ -393,12 +402,30 @@ class CliJobScheduler:
 
         # Retry on failure
         if execution.status == "failed" and retry_attempt < reg.options.max_retries:
+            base_delay = parse_interval(reg.options.retry_delay) if reg.options.retry_delay else 5.0
+            strategy = reg.options.retry_strategy or "exponential"
+            if strategy == "fixed":
+                delay = base_delay
+            elif strategy == "linear":
+                delay = base_delay * (retry_attempt + 1)
+            else:  # exponential
+                delay = base_delay * (2 ** retry_attempt)
             logger.info(
-                "Retrying job %s (attempt %d/%d)",
+                "Retrying job %s in %.1fs (attempt %d/%d)",
                 reg.options.name,
+                delay,
                 retry_attempt + 1,
                 reg.options.max_retries,
             )
+            await self._broadcast({
+                "type": "job:retrying",
+                "jobId": reg.id,
+                "executionId": exec_id,
+                "attempt": retry_attempt + 1,
+                "maxRetries": reg.options.max_retries,
+                "delayMs": round(delay * 1000),
+            })
+            await asyncio.sleep(delay)
             asyncio.create_task(self._execute_job(reg, retry_attempt + 1))
             return
 
