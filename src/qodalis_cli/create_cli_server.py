@@ -13,8 +13,10 @@ from qodalis_cli_filesystem.providers.os_provider import OsFileStorageProvider, 
 
 from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router
 from .controllers.filesystem_controller import create_filesystem_router
+from .controllers.cli_jobs_controller import create_cli_jobs_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemPathValidator
+from .jobs import CliJobScheduler, InMemoryJobStorageProvider
 from .services import (
     CliCommandExecutorService,
     CliCommandRegistry,
@@ -40,6 +42,7 @@ class CliServerResult:
     builder: CliBuilder
     event_socket_manager: CliEventSocketManager
     log_socket_manager: CliLogSocketManager
+    job_scheduler: CliJobScheduler
 
 
 def create_cli_server(options: CliServerOptions | None = None) -> CliServerResult:
@@ -53,9 +56,16 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     log_handler = WebSocketLogHandler(log_socket_manager)
     logging.getLogger().addHandler(log_handler)
 
+    # Will be set after builder configuration
+    job_scheduler: CliJobScheduler | None = None
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if job_scheduler is not None:
+            await job_scheduler.start()
         yield
+        if job_scheduler is not None:
+            await job_scheduler.stop()
         await event_socket_manager.broadcast_disconnect()
         await log_socket_manager.broadcast_disconnect()
         logging.getLogger().removeHandler(log_handler)
@@ -110,6 +120,18 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         fs_router = create_filesystem_router(os_provider)
         app.include_router(fs_router, prefix="/api/qcli/fs")
 
+    # ------------------------------------------------------------------
+    # Jobs system
+    # ------------------------------------------------------------------
+    job_storage = builder.job_storage_provider or InMemoryJobStorageProvider()
+    job_scheduler = CliJobScheduler(job_storage, event_socket_manager)
+
+    for job, job_opts in builder.job_registrations:
+        job_scheduler.register(job, job_opts)
+
+    jobs_router = create_cli_jobs_router(job_scheduler, job_storage)
+    app.include_router(jobs_router, prefix="/api/v1/qcli/jobs")
+
     # WebSocket event stream
     @app.websocket("/ws/v1/qcli/events")
     async def websocket_events_v1(websocket: WebSocket) -> None:
@@ -154,4 +176,5 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         builder=builder,
         event_socket_manager=event_socket_manager,
         log_socket_manager=log_socket_manager,
+        job_scheduler=job_scheduler,
     )

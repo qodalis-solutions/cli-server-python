@@ -29,6 +29,7 @@ from qodalis_cli import (
     OsFileStorageProvider,
     OsProviderOptions,
 )
+from qodalis_cli_server_abstractions.jobs import CliJobOptions
 
 from processors import (
     CliEchoCommandProcessor,
@@ -39,6 +40,7 @@ from processors import (
 )
 
 from plugins.weather import WeatherModule
+from jobs import SampleHealthCheckJob
 
 # ---------------------------------------------------------------------------
 # File storage providers
@@ -108,6 +110,11 @@ def main() -> None:
                 .add_module(WeatherModule())
                 .set_file_storage_provider(file_storage_provider)
                 .add_filesystem(FileSystemOptions(allowed_paths=["/tmp", "/app", "/home"]))
+                .add_job(SampleHealthCheckJob(), CliJobOptions(
+                    name="health-check",
+                    description="Periodic health check",
+                    interval="30s",
+                ))
             ),
         )
     )
