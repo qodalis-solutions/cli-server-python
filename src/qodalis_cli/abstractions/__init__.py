@@ -9,6 +9,14 @@ from qodalis_cli_server_abstractions import (
     CliCommandProcessor,
     ICliModule,
     CliModule,
+    ICliJob,
+    ICliJobExecutionContext,
+    ICliJobLogger,
+    CliJobOptions,
+    ICliJobStorageProvider,
+    JobExecution,
+    JobState,
+    JobLogEntry,
 )
 
 __all__ = [
@@ -22,4 +30,12 @@ __all__ = [
     "CliCommandProcessor",
     "ICliModule",
     "CliModule",
+    "ICliJob",
+    "ICliJobExecutionContext",
+    "ICliJobLogger",
+    "CliJobOptions",
+    "ICliJobStorageProvider",
+    "JobExecution",
+    "JobState",
+    "JobLogEntry",
 ]
