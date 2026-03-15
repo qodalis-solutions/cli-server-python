@@ -34,20 +34,20 @@ def client() -> TestClient:
 
 class TestVersionEndpoints:
     def test_get_versions_returns_supported(self, client: TestClient) -> None:
-        resp = client.get("/api/cli/versions")
+        resp = client.get("/api/qcli/versions")
         assert resp.status_code == 200
         data = resp.json()
         assert data["supportedVersions"] == [1, 2]
         assert data["preferredVersion"] == 2
 
     def test_v1_version(self, client: TestClient) -> None:
-        resp = client.get("/api/v1/cli/version")
+        resp = client.get("/api/v1/qcli/version")
         assert resp.status_code == 200
         data = resp.json()
         assert data["version"] == "1.0.0"
 
     def test_v2_version(self, client: TestClient) -> None:
-        resp = client.get("/api/v2/cli/version")
+        resp = client.get("/api/v2/qcli/version")
         assert resp.status_code == 200
         data = resp.json()
         assert data["apiVersion"] == 2
@@ -61,7 +61,7 @@ class TestVersionEndpoints:
 
 class TestCommandsListing:
     def test_v1_commands_returns_all(self, client: TestClient) -> None:
-        resp = client.get("/api/v1/cli/commands")
+        resp = client.get("/api/v1/qcli/commands")
         assert resp.status_code == 200
         commands = resp.json()
         names = [c["command"] for c in commands]
@@ -70,7 +70,7 @@ class TestCommandsListing:
         assert "v2cmd" in names
 
     def test_v2_commands_returns_only_v2_plus(self, client: TestClient) -> None:
-        resp = client.get("/api/v2/cli/commands")
+        resp = client.get("/api/v2/qcli/commands")
         assert resp.status_code == 200
         commands = resp.json()
         names = [c["command"] for c in commands]
@@ -89,7 +89,7 @@ class TestCommandsListing:
 class TestCommandExecution:
     def test_v1_execute_known_command(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v1/cli/execute",
+            "/api/v1/qcli/execute",
             json={"command": "echo", "value": "hello world"},
         )
         assert resp.status_code == 200
@@ -99,7 +99,7 @@ class TestCommandExecution:
 
     def test_v1_execute_unknown_command(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v1/cli/execute",
+            "/api/v1/qcli/execute",
             json={"command": "nonexistent"},
         )
         assert resp.status_code == 200
@@ -109,7 +109,7 @@ class TestCommandExecution:
 
     def test_v1_execute_failing_command(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v1/cli/execute",
+            "/api/v1/qcli/execute",
             json={"command": "fail"},
         )
         assert resp.status_code == 200
@@ -119,7 +119,7 @@ class TestCommandExecution:
 
     def test_v2_execute_known_command(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v2/cli/execute",
+            "/api/v2/qcli/execute",
             json={"command": "v2cmd"},
         )
         assert resp.status_code == 200
@@ -127,9 +127,9 @@ class TestCommandExecution:
         assert data["exitCode"] == 0
 
     def test_legacy_route_still_works(self, client: TestClient) -> None:
-        """The unversioned /api/cli/execute route should still respond."""
+        """The unversioned /api/qcli/execute route should still respond."""
         resp = client.post(
-            "/api/cli/execute",
+            "/api/qcli/execute",
             json={"command": "echo", "value": "legacy"},
         )
         assert resp.status_code == 200

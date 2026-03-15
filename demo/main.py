@@ -1,15 +1,17 @@
 """Demo CLI server with sample processors.
 
-This demo showcases core CLI commands, the weather plugin, and the
-pluggable file-storage provider system.  By default the server uses an
-in-memory file store, but you can switch to any of the available
-providers by uncommenting the relevant section below.
+This demo showcases core CLI commands, the weather plugin, the jobs plugin,
+and the pluggable file-storage provider system.  By default the server uses an
+in-memory file store, but you can switch to any of the available providers by
+uncommenting the relevant section below.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import uvicorn
 
@@ -29,6 +31,9 @@ from qodalis_cli import (
     OsFileStorageProvider,
     OsProviderOptions,
 )
+from qodalis_cli_server_abstractions.jobs import CliJobOptions
+
+from qodalis_cli_jobs import CliJobsBuilder
 
 from processors import (
     CliEchoCommandProcessor,
@@ -39,6 +44,7 @@ from processors import (
 )
 
 from plugins.weather import WeatherModule
+from jobs import SampleHealthCheckJob
 
 # ---------------------------------------------------------------------------
 # File storage providers
@@ -112,9 +118,34 @@ def main() -> None:
         )
     )
 
+    # Build the jobs plugin
+    jobs_plugin = (
+        CliJobsBuilder()
+        .add_job(SampleHealthCheckJob(), CliJobOptions(
+            name="health-check",
+            description="Periodic health check",
+            interval="30s",
+        ))
+        .build(broadcast_fn=lambda msg: result.event_socket_manager.broadcast_message(msg))
+    )
+
+    result.app.include_router(jobs_plugin.router, prefix="/api/v1/qcli/jobs")
+
+    # Wire scheduler lifecycle into the app lifespan
+    original_lifespan = result.app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan_with_jobs(app: object) -> AsyncIterator[None]:
+        await jobs_plugin.scheduler.start()
+        async with original_lifespan(app) as state:  # type: ignore[arg-type]
+            yield state
+        await jobs_plugin.scheduler.stop()
+
+    result.app.router.lifespan_context = lifespan_with_jobs
+
     print(f"Qodalis CLI Demo Server (Python) running on http://{host}:{port}")
-    print(f"  API: http://{host}:{port}/api/cli")
-    print(f"  WebSocket: ws://{host}:{port}/ws/cli/events")
+    print(f"  API: http://{host}:{port}/api/qcli")
+    print(f"  WebSocket: ws://{host}:{port}/ws/qcli/events")
     print(f"  File storage: {type(file_storage_provider).__name__}")
 
     uvicorn.run(result.app, host=host, port=port)

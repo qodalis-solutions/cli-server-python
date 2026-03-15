@@ -9,7 +9,8 @@ RUN pip install --no-cache-dir ./plugins/filesystem \
     && pip install --no-cache-dir ./plugins/filesystem-json \
     && pip install --no-cache-dir ./plugins/filesystem-sqlite \
     && (pip install --no-cache-dir ./plugins/filesystem-s3 || true) \
-    && pip install --no-cache-dir ./plugins/weather
+    && pip install --no-cache-dir ./plugins/weather \
+    && pip install --no-cache-dir ./plugins/jobs
 
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/
