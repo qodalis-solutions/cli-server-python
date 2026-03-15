@@ -304,11 +304,11 @@ class TestCliJobScheduler:
     ) -> None:
         job = DummyJob(fail=True)
         job_id = scheduler.register(
-            job, CliJobOptions(name="t", interval="999s", max_retries=2, retry_delay="50ms", retry_strategy="fixed")
+            job, CliJobOptions(name="t", interval="999s", max_retries=2, retry_delay="1s", retry_strategy="fixed")
         )
         scheduler._running = True
         await scheduler.trigger(job_id)
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(3.0)
         assert job.call_count == 3  # 1 original + 2 retries
         items, total = await storage.get_executions(job_id)
         assert total == 3
