@@ -1,9 +1,9 @@
 """Demo CLI server with sample processors.
 
 This demo showcases core CLI commands, the weather plugin, the jobs plugin,
-and the pluggable file-storage provider system.  By default the server uses an
-in-memory file store, but you can switch to any of the available providers by
-uncommenting the relevant section below.
+the admin dashboard plugin, and the pluggable file-storage provider system.
+By default the server uses an in-memory file store, but you can switch to any
+of the available providers by uncommenting the relevant section below.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from qodalis_cli import (
 from qodalis_cli_server_abstractions.jobs import CliJobOptions
 
 from qodalis_cli_jobs import CliJobsBuilder
+from qodalis_cli_admin import CliAdminBuilder, AdminBuildDeps
 
 from processors import (
     CliEchoCommandProcessor,
@@ -131,6 +132,19 @@ def main() -> None:
 
     result.app.include_router(jobs_plugin.router, prefix="/api/v1/qcli/jobs")
 
+    # Build the admin plugin
+    admin_plugin = (
+        CliAdminBuilder()
+        .build(AdminBuildDeps(
+            registry=result.registry,
+            event_socket_manager=result.event_socket_manager,
+            builder=result.builder,
+            broadcast_fn=lambda msg: result.event_socket_manager.broadcast_message(msg),
+        ))
+    )
+
+    result.app.include_router(admin_plugin.router, prefix="/api/v1/qcli/admin")
+
     # Wire scheduler lifecycle into the app lifespan
     original_lifespan = result.app.router.lifespan_context
 
@@ -145,6 +159,7 @@ def main() -> None:
 
     print(f"Qodalis CLI Demo Server (Python) running on http://{host}:{port}")
     print(f"  API: http://{host}:{port}/api/qcli")
+    print(f"  Admin: http://{host}:{port}/api/v1/qcli/admin")
     print(f"  WebSocket: ws://{host}:{port}/ws/qcli/events")
     print(f"  File storage: {type(file_storage_provider).__name__}")
 
