@@ -21,6 +21,15 @@ class LogEntry:
 
 BroadcastFn = Callable[[str], Awaitable[None]]
 
+_LEVEL_MAP = {
+    "WARNING": "WARN",
+}
+
+
+def _normalize_level(level: str) -> str:
+    """Normalize Python log level names to SPA-expected short forms."""
+    return _LEVEL_MAP.get(level.upper(), level.upper())
+
 
 class LogRingBuffer:
     """Fixed-size ring buffer that stores log entries.
@@ -57,7 +66,11 @@ class LogRingBuffer:
 
         if level:
             level_upper = level.upper()
-            entries = [e for e in entries if e.level == level_upper]
+            # Support filtering by SPA-form "WARN" matching Python's "WARNING"
+            match_levels = {level_upper}
+            if level_upper == "WARN":
+                match_levels.add("WARNING")
+            entries = [e for e in entries if e.level in match_levels]
 
         if search:
             search_lower = search.lower()
@@ -70,9 +83,9 @@ class LogRingBuffer:
             [
                 {
                     "timestamp": e.timestamp,
-                    "level": e.level,
+                    "level": _normalize_level(e.level),
                     "message": e.message,
-                    "loggerName": e.logger_name,
+                    "source": e.logger_name,
                 }
                 for e in page
             ],

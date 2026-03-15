@@ -6,6 +6,7 @@ import os
 import platform
 import sys
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -32,26 +33,27 @@ def create_status_router(
     ) -> dict[str, Any]:
         uptime_seconds = time.time() - start_time
 
-        memory: dict[str, Any] = {}
+        memory_usage_mb: float = 0.0
         if _HAS_PSUTIL:
             proc = psutil.Process(os.getpid())
             mem_info = proc.memory_info()
-            memory = {
-                "rss": mem_info.rss,
-                "heapUsed": mem_info.rss,
-                "heapTotal": mem_info.vms,
-            }
+            memory_usage_mb = mem_info.rss / (1024 * 1024)
+
+        started_at = datetime.fromtimestamp(
+            start_time, tz=timezone.utc
+        ).isoformat()
 
         return {
-            "uptime": uptime_seconds,
-            "memory": memory,
+            "uptimeSeconds": uptime_seconds,
+            "memoryUsageMb": round(memory_usage_mb, 2),
+            "startedAt": started_at,
             "platform": "python",
             "platformVersion": platform.python_version(),
             "os": f"{platform.system()} {platform.release()}",
-            "pid": os.getpid(),
-            "connections": {
-                "eventClients": len(event_socket_manager.get_clients()),
-            },
+            "activeWsConnections": len(event_socket_manager.get_clients()),
+            "activeShellSessions": 0,
+            "registeredCommands": 0,
+            "registeredJobs": 0,
         }
 
     return router

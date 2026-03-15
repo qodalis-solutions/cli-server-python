@@ -31,7 +31,7 @@ def create_logs_router(
             offset=offset,
         )
         return {
-            "items": items,
+            "entries": items,
             "total": total,
             "limit": limit,
             "offset": offset,
