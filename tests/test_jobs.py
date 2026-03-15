@@ -15,7 +15,7 @@ from qodalis_cli_server_abstractions.jobs import (
     JobState,
 )
 
-from qodalis_cli.jobs import (
+from qodalis_cli_jobs import (
     CliJobExecutionContext,
     CliJobLogger,
     CliJobScheduler,

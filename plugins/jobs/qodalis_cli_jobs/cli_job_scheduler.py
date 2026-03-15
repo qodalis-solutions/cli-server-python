@@ -7,7 +7,7 @@ import logging
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import Any, Callable, Awaitable
 
 from croniter import croniter
 
@@ -21,9 +21,6 @@ from qodalis_cli_server_abstractions.jobs import (
 
 from .cli_job_execution_context import CliJobExecutionContext
 from .interval_parser import parse_interval
-
-if TYPE_CHECKING:
-    from ..services.cli_event_socket_manager import CliEventSocketManager
 
 logger = logging.getLogger(__name__)
 
@@ -46,16 +43,20 @@ class _JobRegistration:
     queue: deque[int] = field(default_factory=deque)  # queued retry_attempt values
 
 
+# Type alias for the broadcast callback.
+BroadcastFn = Callable[[str], Awaitable[None]]
+
+
 class CliJobScheduler:
     """Background job scheduler using asyncio tasks."""
 
     def __init__(
         self,
         storage: ICliJobStorageProvider,
-        event_socket_manager: CliEventSocketManager | None = None,
+        broadcast_fn: BroadcastFn | None = None,
     ) -> None:
         self._storage = storage
-        self._event_socket_manager = event_socket_manager
+        self._broadcast_fn = broadcast_fn
         self._registrations: dict[str, _JobRegistration] = {}
         self._running = False
 
@@ -433,9 +434,9 @@ class CliJobScheduler:
         )
 
     async def _broadcast(self, message: dict[str, Any]) -> None:
-        if self._event_socket_manager is not None:
+        if self._broadcast_fn is not None:
             try:
-                await self._event_socket_manager.broadcast_message(json.dumps(message))
+                await self._broadcast_fn(json.dumps(message))
             except Exception:
                 logger.debug("Failed to broadcast job event", exc_info=True)
 

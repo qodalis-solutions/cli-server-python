@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 
 from qodalis_cli_server_abstractions.jobs import ICliJobStorageProvider
 
-from ..jobs.cli_job_scheduler import CliJobScheduler, InvalidOperationError
-from ..jobs.interval_parser import parse_interval
+from .cli_job_scheduler import CliJobScheduler, InvalidOperationError
+from .interval_parser import parse_interval
 
 
 # ---------------------------------------------------------------------------
