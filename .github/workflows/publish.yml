@@ -25,6 +25,7 @@ jobs:
           pip install ./plugins/filesystem-sqlite
           pip install ./plugins/filesystem-s3
           pip install ./plugins/weather
+          pip install ./plugins/jobs
           pip install -e ".[test]"
 
       - name: Run tests
@@ -111,6 +112,18 @@ jobs:
         with:
           password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-weather/
+          skip-existing: true
+          verbose: true
+          attestations: false
+
+      - name: Build jobs plugin
+        run: python -m build plugins/jobs/ --outdir dist-plugin-jobs/
+
+      - name: Publish jobs plugin to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+          packages-dir: dist-plugin-jobs/
           skip-existing: true
           verbose: true
           attestations: false
