@@ -29,6 +29,14 @@ class CliEventSocketManager:
         finally:
             self._clients.discard(websocket)
 
+    async def broadcast_message(self, message: str) -> None:
+        """Send a text message to all connected WebSocket clients."""
+        for client in list(self._clients):
+            try:
+                await client.send_text(message)
+            except Exception:
+                pass
+
     async def broadcast_disconnect(self) -> None:
         message = json.dumps({"type": "disconnect"})
         tasks = []
