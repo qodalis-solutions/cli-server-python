@@ -113,8 +113,8 @@ def main() -> None:
     )
 
     print(f"Qodalis CLI Demo Server (Python) running on http://{host}:{port}")
-    print(f"  API: http://{host}:{port}/api/cli")
-    print(f"  WebSocket: ws://{host}:{port}/ws/cli/events")
+    print(f"  API: http://{host}:{port}/api/qcli")
+    print(f"  WebSocket: ws://{host}:{port}/ws/qcli/events")
     print(f"  File storage: {type(file_storage_provider).__name__}")
 
     uvicorn.run(result.app, host=host, port=port)
