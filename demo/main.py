@@ -143,7 +143,7 @@ def main() -> None:
         ))
     )
 
-    result.app.include_router(admin_plugin.router, prefix="/api/v1/qcli/admin")
+    result.app.include_router(admin_plugin.router, prefix="/api/v1/qcli")
 
     # Mount the admin dashboard SPA (if the dist directory was found)
     if admin_plugin.dashboard_app:

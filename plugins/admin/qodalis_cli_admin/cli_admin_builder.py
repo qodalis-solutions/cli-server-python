@@ -9,6 +9,7 @@ from typing import Any, Callable, Awaitable
 
 from fastapi import APIRouter
 from starlette.responses import FileResponse
+from starlette.staticfiles import StaticFiles
 
 from .auth.jwt_service import JwtService
 from .auth.auth_middleware import create_auth_dependency
@@ -116,20 +117,7 @@ class CliAdminBuilder:
         dashboard_app = None
 
         if dashboard_dir:
-            async def spa_fallback(scope: dict, receive: Any, send: Any) -> None:
-                """ASGI app that serves static files with index.html fallback for SPA routing."""
-                if scope["type"] == "http":
-                    path = scope.get("path", "/").lstrip("/")
-                    file_path = os.path.join(dashboard_dir, path)
-
-                    if path and os.path.isfile(file_path):
-                        response = FileResponse(file_path)
-                        await response(scope, receive, send)
-                    else:
-                        response = FileResponse(os.path.join(dashboard_dir, "index.html"))
-                        await response(scope, receive, send)
-
-            dashboard_app = spa_fallback
+            dashboard_app = StaticFiles(directory=dashboard_dir, html=True)
 
         return CliAdminPlugin(
             router=router,
