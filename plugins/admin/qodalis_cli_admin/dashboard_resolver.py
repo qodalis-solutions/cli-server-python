@@ -8,14 +8,20 @@ def resolve_dashboard_dir(explicit_path: str | None = None) -> str | None:
     """
     Resolve the dashboard dist directory. Looks for:
     1. Explicitly configured path
-    2. node_modules/@qodalis/cli-server-dashboard/dist (npm package)
-    3. Relative development paths (sibling repo)
+    2. Bundled dashboard directory (embedded in this package)
+    3. node_modules/@qodalis/cli-server-dashboard/dist (npm package)
+    4. Relative development paths (sibling repo)
     """
     # 1. Explicit override
     if explicit_path and os.path.isdir(explicit_path):
         return os.path.abspath(explicit_path)
 
-    # 2. npm package — search upwards from cwd for node_modules
+    # 2. Bundled dashboard directory (embedded in this package)
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard')
+    if os.path.isdir(bundled):
+        return bundled
+
+    # 3. npm package — search upwards from cwd for node_modules
     current = os.getcwd()
     while current != os.path.dirname(current):
         candidate = os.path.join(
@@ -25,7 +31,7 @@ def resolve_dashboard_dir(explicit_path: str | None = None) -> str | None:
             return os.path.abspath(candidate)
         current = os.path.dirname(current)
 
-    # 3. Relative development paths
+    # 4. Relative development paths
     this_dir = os.path.dirname(os.path.abspath(__file__))
     dev_paths = [
         os.path.join(this_dir, "..", "..", "..", "..", "cli-server-dashboard", "dist"),
