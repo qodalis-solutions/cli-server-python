@@ -145,6 +145,10 @@ def main() -> None:
 
     result.app.include_router(admin_plugin.router, prefix="/api/v1/qcli/admin")
 
+    # Mount the admin dashboard SPA (if the dist directory was found)
+    if admin_plugin.dashboard_app:
+        result.app.mount("/qcli/admin", admin_plugin.dashboard_app)
+
     # Wire scheduler lifecycle into the app lifespan
     original_lifespan = result.app.router.lifespan_context
 
@@ -159,7 +163,9 @@ def main() -> None:
 
     print(f"Qodalis CLI Demo Server (Python) running on http://{host}:{port}")
     print(f"  API: http://{host}:{port}/api/qcli")
-    print(f"  Admin: http://{host}:{port}/api/v1/qcli/admin")
+    print(f"  Admin API: http://{host}:{port}/api/v1/qcli/admin")
+    if admin_plugin.dashboard_app:
+        print(f"  Admin Dashboard: http://{host}:{port}/qcli/admin")
     print(f"  WebSocket: ws://{host}:{port}/ws/qcli/events")
     print(f"  File storage: {type(file_storage_provider).__name__}")
 
