@@ -26,6 +26,7 @@ jobs:
           pip install -e "plugins/filesystem-s3/[test]" || pip install -e plugins/filesystem-s3/
           pip install -e plugins/weather/
           pip install -e plugins/jobs/
+          pip install -e plugins/admin/
           pip install -e ".[test]"
 
       - name: Test
