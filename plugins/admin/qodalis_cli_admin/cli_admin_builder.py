@@ -35,6 +35,7 @@ class AdminBuildDeps:
     event_socket_manager: Any  # CliEventSocketManager
     builder: Any  # CliBuilder
     broadcast_fn: BroadcastFn | None = None
+    enabled_features: list[str] | None = None
 
 
 @dataclass
@@ -95,8 +96,26 @@ class CliAdminBuilder:
         auth_router = create_auth_router(config, jwt_service, auth_dependency=auth_dep)
         router.include_router(auth_router, prefix="/auth")
 
+        # Detect enabled features
+        enabled_features: list[str] = list(deps.enabled_features or [])
+
+        if "filesystem" not in enabled_features and (
+            getattr(deps.builder, "file_storage_provider", None) is not None
+            or getattr(deps.builder, "filesystem_options", None) is not None
+        ):
+            enabled_features.append("filesystem")
+
+        if "jobs" not in enabled_features:
+            for mod in getattr(deps.builder, "modules", []):
+                mod_name = type(mod).__name__.lower()
+                if "job" in mod_name:
+                    enabled_features.append("jobs")
+                    break
+
         # Protected routes
-        status_router = create_status_router(start_time, deps.event_socket_manager, auth_dep)
+        status_router = create_status_router(
+            start_time, deps.event_socket_manager, auth_dep, enabled_features
+        )
         router.include_router(status_router)
 
         plugins_router = create_plugins_router(module_registry, auth_dep)

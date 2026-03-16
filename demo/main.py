@@ -140,6 +140,7 @@ def main() -> None:
             event_socket_manager=result.event_socket_manager,
             builder=result.builder,
             broadcast_fn=lambda msg: result.event_socket_manager.broadcast_message(msg),
+            enabled_features=["jobs"],
         ))
     )
 

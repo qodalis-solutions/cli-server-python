@@ -23,6 +23,7 @@ def create_status_router(
     start_time: float,
     event_socket_manager: Any,
     auth_dependency: Any,
+    enabled_features: list[str] | None = None,
 ) -> APIRouter:
     """Create a router that exposes ``GET /status``."""
     router = APIRouter()
@@ -54,6 +55,7 @@ def create_status_router(
             "activeShellSessions": 0,
             "registeredCommands": 0,
             "registeredJobs": 0,
+            "enabledFeatures": enabled_features or [],
         }
 
     return router
