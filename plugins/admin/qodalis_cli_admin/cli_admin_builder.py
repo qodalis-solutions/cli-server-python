@@ -8,8 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Awaitable
 
 from fastapi import APIRouter
-from starlette.responses import FileResponse
-from starlette.staticfiles import StaticFiles
+from .spa_static_files import SPAStaticFiles
 
 from .auth.jwt_service import JwtService
 from .auth.auth_middleware import create_auth_dependency
@@ -117,7 +116,7 @@ class CliAdminBuilder:
         dashboard_app = None
 
         if dashboard_dir:
-            dashboard_app = StaticFiles(directory=dashboard_dir, html=True)
+            dashboard_app = SPAStaticFiles(directory=dashboard_dir, html=True)
 
         return CliAdminPlugin(
             router=router,
