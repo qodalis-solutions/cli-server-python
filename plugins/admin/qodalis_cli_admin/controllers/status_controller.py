@@ -9,14 +9,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+import psutil
 from fastapi import APIRouter, Depends
-
-try:
-    import psutil
-
-    _HAS_PSUTIL = True
-except ImportError:
-    _HAS_PSUTIL = False
 
 
 def create_status_router(
@@ -24,6 +18,7 @@ def create_status_router(
     event_socket_manager: Any,
     auth_dependency: Any,
     enabled_features: list[str] | None = None,
+    registry: Any = None,
 ) -> APIRouter:
     """Create a router that exposes ``GET /status``."""
     router = APIRouter()
@@ -34,15 +29,15 @@ def create_status_router(
     ) -> dict[str, Any]:
         uptime_seconds = time.time() - start_time
 
-        memory_usage_mb: float = 0.0
-        if _HAS_PSUTIL:
-            proc = psutil.Process(os.getpid())
-            mem_info = proc.memory_info()
-            memory_usage_mb = mem_info.rss / (1024 * 1024)
+        proc = psutil.Process(os.getpid())
+        mem_info = proc.memory_info()
+        memory_usage_mb = mem_info.rss / (1024 * 1024)
 
         started_at = datetime.fromtimestamp(
             start_time, tz=timezone.utc
         ).isoformat()
+
+        registered_commands = len(registry.processors) if registry is not None else 0
 
         return {
             "uptimeSeconds": uptime_seconds,
@@ -53,7 +48,7 @@ def create_status_router(
             "os": f"{platform.system()} {platform.release()}",
             "activeWsConnections": len(event_socket_manager.get_clients()),
             "activeShellSessions": 0,
-            "registeredCommands": 0,
+            "registeredCommands": registered_commands,
             "registeredJobs": 0,
             "enabledFeatures": enabled_features or [],
         }

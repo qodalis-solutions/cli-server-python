@@ -20,12 +20,13 @@ class ModuleRegistry:
         result: list[dict[str, Any]] = []
         for idx, module in enumerate(self._builder.modules):
             module_id = str(idx)
-            name = type(module).__name__
+            name = getattr(module, "name", type(module).__name__)
             result.append(
                 {
                     "id": module_id,
                     "name": name,
                     "processorCount": len(module.processors),
+                    "processors": [p.command for p in module.processors],
                     "enabled": module_id not in self._disabled,
                 }
             )
@@ -40,13 +41,24 @@ class ModuleRegistry:
 
         if module_id in self._disabled:
             self._disabled.discard(module_id)
+            enabled = True
         else:
             self._disabled.add(module_id)
+            enabled = False
 
         module = modules[idx]
-        return {
+        result: dict[str, Any] = {
             "id": module_id,
-            "name": type(module).__name__,
+            "name": getattr(module, "name", type(module).__name__),
             "processorCount": len(module.processors),
-            "enabled": module_id not in self._disabled,
+            "processors": [p.command for p in module.processors],
+            "enabled": enabled,
         }
+
+        if not enabled:
+            result["warning"] = (
+                "Module state tracked but command unregistration is not yet"
+                " supported. Processors remain active."
+            )
+
+        return result

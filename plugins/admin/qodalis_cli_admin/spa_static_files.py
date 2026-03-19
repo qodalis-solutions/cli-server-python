@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import FileResponse, Response
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
@@ -25,7 +26,9 @@ class SPAStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope: Scope) -> Response:
         try:
             return await super().get_response(path, scope)
-        except Exception:
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
             # File not found — serve index.html for SPA client-side routing
             index = os.path.join(self.directory, "index.html")  # type: ignore[arg-type]
             if os.path.isfile(index):

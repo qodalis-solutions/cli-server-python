@@ -114,7 +114,8 @@ class CliAdminBuilder:
 
         # Protected routes
         status_router = create_status_router(
-            start_time, deps.event_socket_manager, auth_dep, enabled_features
+            start_time, deps.event_socket_manager, auth_dep, enabled_features,
+            registry=deps.registry,
         )
         router.include_router(status_router)
 

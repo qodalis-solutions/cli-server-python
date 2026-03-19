@@ -269,7 +269,7 @@ class TestPlugins:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 2
-        assert data[0]["name"] == "_StubModule"
+        assert data[0]["name"] == "ModuleAlpha"
         assert data[0]["processorCount"] == 3
         assert data[0]["enabled"] is True
         assert data[1]["processorCount"] == 1
@@ -313,9 +313,10 @@ class TestConfig:
         data = resp.json()
         assert "sections" in data
         sections = data["sections"]
-        ids = {s["id"] for s in sections}
-        assert "auth" in ids
-        assert "runtime" in ids
+        names = {s["name"] for s in sections}
+        assert "auth" in names
+        assert "server" in names
+        assert "custom" in names
 
     async def test_update_settings(self, client: AsyncClient) -> None:
         token = await get_token(client)
@@ -328,9 +329,10 @@ class TestConfig:
         data = resp.json()
         assert data["message"] == "Configuration updated"
         # Verify settings persisted
-        runtime_section = next(s for s in data["sections"] if s["id"] == "runtime")
-        assert runtime_section["settings"]["logLevel"] == "DEBUG"
-        assert runtime_section["settings"]["maxConnections"] == 50
+        custom_section = next(s for s in data["sections"] if s["name"] == "custom")
+        custom_keys = {e["key"]: e["value"] for e in custom_section["settings"]}
+        assert custom_keys["logLevel"] == "DEBUG"
+        assert custom_keys["maxConnections"] == 50
 
 
 # ---------------------------------------------------------------------------
@@ -463,10 +465,11 @@ class TestAdminConfig:
     def test_get_config_sections(self) -> None:
         config = AdminConfig(username="admin", password="secret", jwt_secret="abc")
         sections = config.get_config_sections()
-        assert len(sections) == 2
-        auth_section = next(s for s in sections if s["id"] == "auth")
-        assert auth_section["settings"]["username"] == "admin"
-        assert auth_section["settings"]["jwtSecretConfigured"] is True
+        assert len(sections) == 3
+        auth_section = next(s for s in sections if s["name"] == "auth")
+        auth_keys = {e["key"]: e["value"] for e in auth_section["settings"]}
+        assert auth_keys["username"] == "admin"
+        assert auth_keys["jwtSecretConfigured"] is True
 
     def test_update_and_get_settings(self) -> None:
         config = AdminConfig(username="a", password="b")
@@ -477,8 +480,9 @@ class TestAdminConfig:
     def test_jwt_secret_not_configured(self) -> None:
         config = AdminConfig(username="a", password="b", jwt_secret="")
         sections = config.get_config_sections()
-        auth_section = next(s for s in sections if s["id"] == "auth")
-        assert auth_section["settings"]["jwtSecretConfigured"] is False
+        auth_section = next(s for s in sections if s["name"] == "auth")
+        auth_keys = {e["key"]: e["value"] for e in auth_section["settings"]}
+        assert auth_keys["jwtSecretConfigured"] is False
 
 
 class TestJwtService:
@@ -594,7 +598,7 @@ class TestModuleRegistry:
         reg = ModuleRegistry(builder)
         modules = reg.list()
         assert len(modules) == 2
-        assert modules[0]["name"] == "_StubModule"
+        assert modules[0]["name"] == "A"
         assert modules[0]["processorCount"] == 2
         assert modules[0]["enabled"] is True
         assert modules[1]["processorCount"] == 5

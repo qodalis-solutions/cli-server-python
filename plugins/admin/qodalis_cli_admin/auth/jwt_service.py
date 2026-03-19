@@ -40,7 +40,7 @@ class JwtService:
         expires_in:
             Lifetime in seconds.  Defaults to 24 hours.
         """
-        exp = int(time.time()) + (expires_in or self.DEFAULT_EXPIRY_SECONDS)
+        exp = int(time.time()) + (self.DEFAULT_EXPIRY_SECONDS if expires_in is None else expires_in)
         data = {**payload, "exp": exp, "iat": int(time.time())}
         return jwt.encode(data, self._secret, algorithm="HS256")
 

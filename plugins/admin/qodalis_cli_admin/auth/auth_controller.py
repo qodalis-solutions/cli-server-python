@@ -72,7 +72,12 @@ def create_auth_router(
 
     @router.post("/login", response_model=LoginResponse)
     async def login(body: LoginRequest, request: Request) -> Any:
-        client_ip = request.client.host if request.client else "unknown"
+        # Check X-Forwarded-For header for real client IP behind proxy
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            client_ip = forwarded_for.split(",")[0].strip()
+        else:
+            client_ip = request.client.host if request.client else "127.0.0.1"
         limiter.check(client_ip)
 
         if not admin_config.validate_credentials(body.username, body.password):

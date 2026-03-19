@@ -51,6 +51,7 @@ class LogRingBuffer:
 
     def add(self, entry: LogEntry) -> None:
         """Append a log entry to the buffer."""
+        entry.level = (entry.level or "INFO").upper()
         self._buffer.append(entry)
 
     def query(
