@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 class CliBuilder:
     def __init__(self, registry: CliCommandRegistry) -> None:
         self._registry = registry
+        self._modules: list[ICliModule] = []
         self._filesystem_options: FileSystemOptions | None = None
         self._file_storage_provider: IFileStorageProvider | None = None
 
@@ -21,9 +22,15 @@ class CliBuilder:
         return self
 
     def add_module(self, module: ICliModule) -> CliBuilder:
+        self._modules.append(module)
         for processor in module.processors:
             self._registry.register(processor)
         return self
+
+    @property
+    def modules(self) -> list[ICliModule]:
+        """Return a copy of all registered modules."""
+        return list(self._modules)
 
     def add_filesystem(self, options: FileSystemOptions) -> CliBuilder:
         """Enable the filesystem API with the given options (legacy)."""

@@ -41,3 +41,4 @@ TestResults/
 # System files
 .DS_Store
 Thumbs.db
+demo/node_modules/

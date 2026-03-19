@@ -26,6 +26,7 @@ jobs:
           pip install ./plugins/filesystem-s3
           pip install ./plugins/weather
           pip install ./plugins/jobs
+          pip install ./plugins/admin
           pip install -e ".[test]"
 
       - name: Run tests
@@ -124,6 +125,18 @@ jobs:
         with:
           password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-jobs/
+          skip-existing: true
+          verbose: true
+          attestations: false
+
+      - name: Build admin plugin
+        run: python -m build plugins/admin/ --outdir dist-plugin-admin/
+
+      - name: Publish admin plugin to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+          packages-dir: dist-plugin-admin/
           skip-existing: true
           verbose: true
           attestations: false

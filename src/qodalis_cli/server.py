@@ -14,7 +14,6 @@ from .processors import (
     CliHttpCommandProcessor,
     CliHashCommandProcessor,
     CliBase64CommandProcessor,
-    CliUuidCommandProcessor,
 )
 
 
@@ -32,7 +31,6 @@ def main() -> None:
                 .add_processor(CliHttpCommandProcessor())
                 .add_processor(CliHashCommandProcessor())
                 .add_processor(CliBase64CommandProcessor())
-                .add_processor(CliUuidCommandProcessor())
             ),
         )
     )

@@ -55,7 +55,6 @@ from .processors import (
     CliHttpCommandProcessor,
     CliHashCommandProcessor,
     CliBase64CommandProcessor,
-    CliUuidCommandProcessor,
 )
 from .create_cli_server import create_cli_server, CliServerOptions
 
@@ -95,7 +94,6 @@ __all__ = [
     "CliHttpCommandProcessor",
     "CliHashCommandProcessor",
     "CliBase64CommandProcessor",
-    "CliUuidCommandProcessor",
     "create_cli_server",
     "CliServerOptions",
     "FileEntry",

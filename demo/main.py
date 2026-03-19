@@ -1,9 +1,9 @@
 """Demo CLI server with sample processors.
 
 This demo showcases core CLI commands, the weather plugin, the jobs plugin,
-and the pluggable file-storage provider system.  By default the server uses an
-in-memory file store, but you can switch to any of the available providers by
-uncommenting the relevant section below.
+the admin dashboard plugin, and the pluggable file-storage provider system.
+By default the server uses an in-memory file store, but you can switch to any
+of the available providers by uncommenting the relevant section below.
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ from qodalis_cli import (
     CliHttpCommandProcessor,
     CliHashCommandProcessor,
     CliBase64CommandProcessor,
-    CliUuidCommandProcessor,
     FileSystemOptions,
     InMemoryFileStorageProvider,
     OsFileStorageProvider,
@@ -34,6 +33,7 @@ from qodalis_cli import (
 from qodalis_cli_server_abstractions.jobs import CliJobOptions
 
 from qodalis_cli_jobs import CliJobsBuilder
+from qodalis_cli_admin import CliAdminBuilder, AdminBuildDeps
 
 from processors import (
     CliEchoCommandProcessor,
@@ -110,7 +110,6 @@ def main() -> None:
                 .add_processor(CliHttpCommandProcessor())
                 .add_processor(CliHashCommandProcessor())
                 .add_processor(CliBase64CommandProcessor())
-                .add_processor(CliUuidCommandProcessor())
                 .add_module(WeatherModule())
                 .set_file_storage_provider(file_storage_provider)
                 .add_filesystem(FileSystemOptions(allowed_paths=["/tmp", "/app", "/home"]))
@@ -131,6 +130,24 @@ def main() -> None:
 
     result.app.include_router(jobs_plugin.router, prefix="/api/v1/qcli/jobs")
 
+    # Build the admin plugin
+    admin_plugin = (
+        CliAdminBuilder()
+        .build(AdminBuildDeps(
+            registry=result.registry,
+            event_socket_manager=result.event_socket_manager,
+            builder=result.builder,
+            broadcast_fn=lambda msg: result.event_socket_manager.broadcast_message(msg),
+            enabled_features=["jobs"],
+        ))
+    )
+
+    result.app.include_router(admin_plugin.router, prefix="/api/v1/qcli")
+
+    # Mount the admin dashboard SPA (if the dist directory was found)
+    if admin_plugin.dashboard_app:
+        result.app.mount("/qcli/admin", admin_plugin.dashboard_app)
+
     # Wire scheduler lifecycle into the app lifespan
     original_lifespan = result.app.router.lifespan_context
 
@@ -145,6 +162,9 @@ def main() -> None:
 
     print(f"Qodalis CLI Demo Server (Python) running on http://{host}:{port}")
     print(f"  API: http://{host}:{port}/api/qcli")
+    print(f"  Admin API: http://{host}:{port}/api/v1/qcli/admin")
+    if admin_plugin.dashboard_app:
+        print(f"  Admin Dashboard: http://{host}:{port}/qcli/admin")
     print(f"  WebSocket: ws://{host}:{port}/ws/qcli/events")
     print(f"  File storage: {type(file_storage_provider).__name__}")
 
