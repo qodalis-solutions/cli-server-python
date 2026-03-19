@@ -25,7 +25,6 @@ from qodalis_cli import (
     CliHttpCommandProcessor,
     CliHashCommandProcessor,
     CliBase64CommandProcessor,
-    CliUuidCommandProcessor,
     FileSystemOptions,
     InMemoryFileStorageProvider,
     OsFileStorageProvider,
@@ -111,7 +110,6 @@ def main() -> None:
                 .add_processor(CliHttpCommandProcessor())
                 .add_processor(CliHashCommandProcessor())
                 .add_processor(CliBase64CommandProcessor())
-                .add_processor(CliUuidCommandProcessor())
                 .add_module(WeatherModule())
                 .set_file_storage_provider(file_storage_provider)
                 .add_filesystem(FileSystemOptions(allowed_paths=["/tmp", "/app", "/home"]))
