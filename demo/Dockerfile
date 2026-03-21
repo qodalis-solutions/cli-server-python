@@ -23,6 +23,11 @@ RUN pip install --no-cache-dir ./plugins/filesystem \
     && pip install --no-cache-dir ./plugins/data-explorer \
     && pip install --no-cache-dir ./plugins/data-explorer-sql \
     && pip install --no-cache-dir ./plugins/data-explorer-mongo \
+    && pip install --no-cache-dir ./plugins/data-explorer-postgres \
+    && pip install --no-cache-dir ./plugins/data-explorer-mysql \
+    && pip install --no-cache-dir ./plugins/data-explorer-mssql \
+    && pip install --no-cache-dir ./plugins/data-explorer-redis \
+    && pip install --no-cache-dir ./plugins/data-explorer-elasticsearch \
     && pip install --no-cache-dir ./plugins/admin
 
 COPY pyproject.toml README.md LICENSE ./
