@@ -571,6 +571,113 @@ class MyProvider(IFileStorageProvider):
 builder.set_file_storage_provider(MyProvider())
 ```
 
+## Data Explorer
+
+The Data Explorer plugin provides interactive access to data sources through a provider-based API. Each data source type (SQL, MongoDB, etc.) is a separate plugin implementing `IDataExplorerProvider`.
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/qcli/data-explorer/sources` | List registered data sources with metadata |
+| POST | `/api/qcli/data-explorer/execute` | Execute a query against a named source |
+
+### SQL Provider
+
+```python
+from qodalis_cli_data_explorer_sql import SqlDataExplorerProvider
+from qodalis_cli_server_abstractions import (
+    DataExplorerProviderOptions,
+    DataExplorerLanguage,
+    DataExplorerOutputFormat,
+    DataExplorerTemplate,
+)
+
+result = create_cli_server(
+    CliServerOptions(
+        configure=lambda builder: builder.add_data_explorer_provider(
+            SqlDataExplorerProvider("app.db"),
+            DataExplorerProviderOptions(
+                name="app-database",
+                description="Application database",
+                language=DataExplorerLanguage.SQL,
+                default_output_format=DataExplorerOutputFormat.TABLE,
+                timeout=30000,
+                max_rows=1000,
+                templates=[
+                    DataExplorerTemplate(
+                        "list_tables",
+                        "SELECT name FROM sqlite_master WHERE type='table'",
+                        "List all tables",
+                    ),
+                ],
+            ),
+        ),
+    )
+)
+```
+
+### MongoDB Provider
+
+```python
+from qodalis_cli_data_explorer_mongo import MongoDataExplorerProvider
+
+builder.add_data_explorer_provider(
+    MongoDataExplorerProvider("mongodb://localhost:27017", "myapp"),
+    DataExplorerProviderOptions(
+        name="mongo-primary",
+        description="Primary MongoDB database",
+        language=DataExplorerLanguage.JSON,
+        default_output_format=DataExplorerOutputFormat.JSON,
+        templates=[
+            DataExplorerTemplate("show_collections", "show collections", "List all collections"),
+            DataExplorerTemplate("find_users", "db.users.find({})", "Find all users"),
+        ],
+    ),
+)
+```
+
+**Supported MongoDB operations:** `db.collection.find({...})`, `findOne`, `aggregate([...])`, `insertOne`, `insertMany`, `updateOne`, `updateMany`, `deleteOne`, `deleteMany`, `countDocuments`, `distinct`. Convenience commands: `show collections`, `show dbs`.
+
+### Custom Provider
+
+Implement `IDataExplorerProvider` to add your own data source:
+
+```python
+from qodalis_cli_server_abstractions import (
+    IDataExplorerProvider,
+    DataExplorerExecutionContext,
+    DataExplorerResult,
+)
+
+class MyProvider(IDataExplorerProvider):
+    async def execute_async(
+        self, context: DataExplorerExecutionContext
+    ) -> DataExplorerResult:
+        # context.query — the user's query string
+        # context.parameters — key-value parameters
+        # context.options — provider options (name, language, etc.)
+        return DataExplorerResult(
+            success=True,
+            source=context.options.name,
+            language=context.options.language,
+            default_output_format=context.options.default_output_format,
+            execution_time=0,
+            columns=["id", "name"],       # None for document-oriented results
+            rows=[[1, "Alice"], [2, "Bob"]],  # dicts when columns is None
+            row_count=2,
+            truncated=False,
+            error=None,
+        )
+
+builder.add_data_explorer_provider(
+    MyProvider(),
+    DataExplorerProviderOptions(name="custom", description="My custom source"),
+)
+```
+
+The same provider class can be registered multiple times with different configurations (e.g., two databases with different names).
+
 ## Built-in Processors
 
 These processors ship with the library and are included in the standalone server:
