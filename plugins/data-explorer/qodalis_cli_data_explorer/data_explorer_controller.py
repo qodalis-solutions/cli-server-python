@@ -18,12 +18,25 @@ def _to_camel(snake: str) -> str:
     return parts[0] + "".join(w.capitalize() for w in parts[1:])
 
 
-def _camel_keys(obj: Any) -> Any:
-    """Recursively convert all dict keys from snake_case to camelCase."""
+def _camel_keys(obj: Any, *, _depth: int = 0) -> Any:
+    """Convert dict keys from snake_case to camelCase.
+
+    Only converts structural keys (depth 0 = result envelope, depth 1 = source
+    info dicts).  Row/document data inside ``rows`` is left untouched so that
+    MongoDB fields like ``_id`` are preserved as-is.
+    """
     if isinstance(obj, dict):
-        return {_to_camel(k): _camel_keys(v) for k, v in obj.items()}
+        result: dict[str, Any] = {}
+        for k, v in obj.items():
+            new_key = _to_camel(k) if _depth < 2 else k
+            # Don't recurse into "rows" — that's user data
+            if new_key == "rows":
+                result[new_key] = v
+            else:
+                result[new_key] = _camel_keys(v, _depth=_depth + 1)
+        return result
     if isinstance(obj, list):
-        return [_camel_keys(item) for item in obj]
+        return [_camel_keys(item, _depth=_depth) for item in obj]
     return obj
 
 

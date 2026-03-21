@@ -46,6 +46,11 @@ from processors import (
 
 from plugins.weather import WeatherModule
 from qodalis_cli_data_explorer_sql import SqlDataExplorerProvider
+from qodalis_cli_server_abstractions import (
+    DataExplorerLanguage,
+    DataExplorerOutputFormat,
+    DataExplorerTemplate,
+)
 from jobs import SampleHealthCheckJob
 
 # ---------------------------------------------------------------------------
@@ -99,31 +104,50 @@ def main() -> None:
     port = int(os.environ.get("PORT", "8048"))
     host = os.environ.get("HOST", "0.0.0.0")
 
+    def configure(builder):  # noqa: ANN001
+        builder \
+            .add_processor(CliEchoCommandProcessor()) \
+            .add_processor(CliStatusCommandProcessor()) \
+            .add_processor(CliTimeCommandProcessor()) \
+            .add_processor(CliHelloCommandProcessor()) \
+            .add_processor(CliMathCommandProcessor()) \
+            .add_processor(CliSystemCommandProcessor()) \
+            .add_processor(CliHttpCommandProcessor()) \
+            .add_processor(CliHashCommandProcessor()) \
+            .add_processor(CliBase64CommandProcessor()) \
+            .add_module(WeatherModule()) \
+            .add_data_explorer_provider(
+                SqlDataExplorerProvider(":memory:"),
+                DataExplorerProviderOptions(
+                    name="sql",
+                    description="In-memory SQLite database for ad-hoc queries",
+                ),
+            ) \
+            .set_file_storage_provider(file_storage_provider) \
+            .add_filesystem(FileSystemOptions(allowed_paths=["/tmp", "/app", "/home"]))
+
+        # -----------------------------------------------------------
+        # Data Explorer — MongoDB Provider
+        # -----------------------------------------------------------
+        mongo_conn = os.environ.get("MONGO_CONNECTION_STRING")
+        if mongo_conn:
+            from qodalis_cli_data_explorer_mongo import MongoDataExplorerProvider
+            builder.add_data_explorer_provider(
+                MongoDataExplorerProvider(mongo_conn, "demo"),
+                DataExplorerProviderOptions(
+                    name="demo-mongo",
+                    description="Demo MongoDB database",
+                    language=DataExplorerLanguage.JSON,
+                    default_output_format=DataExplorerOutputFormat.JSON,
+                    templates=[
+                        DataExplorerTemplate("show_collections", "show collections", "List all collections"),
+                        DataExplorerTemplate("find_all", "db.users.find({})", "Find all documents in users collection"),
+                    ],
+                ),
+            )
+
     result = create_cli_server(
-        CliServerOptions(
-            configure=lambda builder: (
-                builder
-                .add_processor(CliEchoCommandProcessor())
-                .add_processor(CliStatusCommandProcessor())
-                .add_processor(CliTimeCommandProcessor())
-                .add_processor(CliHelloCommandProcessor())
-                .add_processor(CliMathCommandProcessor())
-                .add_processor(CliSystemCommandProcessor())
-                .add_processor(CliHttpCommandProcessor())
-                .add_processor(CliHashCommandProcessor())
-                .add_processor(CliBase64CommandProcessor())
-                .add_module(WeatherModule())
-                .add_data_explorer_provider(
-                    SqlDataExplorerProvider(":memory:"),
-                    DataExplorerProviderOptions(
-                        name="sql",
-                        description="In-memory SQLite database for ad-hoc queries",
-                    ),
-                )
-                .set_file_storage_provider(file_storage_provider)
-                .add_filesystem(FileSystemOptions(allowed_paths=["/tmp", "/app", "/home"]))
-            ),
-        )
+        CliServerOptions(configure=configure)
     )
 
     # Build the jobs plugin
