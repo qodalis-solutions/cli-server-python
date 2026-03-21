@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-data-explorer"
-version = "1.0.0b1"
+version = "1.0.0b2"
 description = "Data Explorer plugin for Qodalis CLI servers"
 readme = { text = "", content-type = "text/plain" }
 license = "MIT"
