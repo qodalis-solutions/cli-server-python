@@ -30,6 +30,7 @@ from qodalis_cli import (
     OsFileStorageProvider,
     OsProviderOptions,
 )
+from qodalis_cli_server_abstractions import DataExplorerProviderOptions
 from qodalis_cli_server_abstractions.jobs import CliJobOptions
 
 from qodalis_cli_jobs import CliJobsBuilder
@@ -44,6 +45,7 @@ from processors import (
 )
 
 from plugins.weather import WeatherModule
+from qodalis_cli_data_explorer_sql import SqlDataExplorerProvider
 from jobs import SampleHealthCheckJob
 
 # ---------------------------------------------------------------------------
@@ -111,6 +113,13 @@ def main() -> None:
                 .add_processor(CliHashCommandProcessor())
                 .add_processor(CliBase64CommandProcessor())
                 .add_module(WeatherModule())
+                .add_data_explorer_provider(
+                    SqlDataExplorerProvider(":memory:"),
+                    DataExplorerProviderOptions(
+                        name="sql",
+                        description="In-memory SQLite database for ad-hoc queries",
+                    ),
+                )
                 .set_file_storage_provider(file_storage_provider)
                 .add_filesystem(FileSystemOptions(allowed_paths=["/tmp", "/app", "/home"]))
             ),
