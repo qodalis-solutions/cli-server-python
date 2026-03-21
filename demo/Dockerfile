@@ -20,6 +20,8 @@ RUN pip install --no-cache-dir ./plugins/filesystem \
     && (pip install --no-cache-dir ./plugins/filesystem-s3 || true) \
     && pip install --no-cache-dir ./plugins/weather \
     && pip install --no-cache-dir ./plugins/jobs \
+    && pip install --no-cache-dir ./plugins/data-explorer \
+    && pip install --no-cache-dir ./plugins/data-explorer-sql \
     && pip install --no-cache-dir ./plugins/admin
 
 COPY pyproject.toml README.md LICENSE ./
