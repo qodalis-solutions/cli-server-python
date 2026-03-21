@@ -45,6 +45,7 @@ from processors import (
 )
 
 from plugins.weather import WeatherModule
+from plugins.aws.qodalis_cli_aws import AwsModule
 from qodalis_cli_data_explorer_sql import SqlDataExplorerProvider
 from qodalis_cli_data_explorer_postgres import PostgresDataExplorerProvider
 from qodalis_cli_data_explorer_mysql import MysqlDataExplorerProvider
@@ -121,6 +122,7 @@ def main() -> None:
             .add_processor(CliHashCommandProcessor()) \
             .add_processor(CliBase64CommandProcessor()) \
             .add_module(WeatherModule()) \
+            .add_module(AwsModule()) \
             .add_data_explorer_provider(
                 SqlDataExplorerProvider(":memory:"),
                 DataExplorerProviderOptions(
