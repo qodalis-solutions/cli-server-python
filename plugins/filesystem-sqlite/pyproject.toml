@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-filesystem-sqlite"
-version = "1.0.0b2"
+version = "1.0.0b5"
 description = "SQLite-based storage provider for the Qodalis CLI filesystem plugin"
 readme = { text = "", content-type = "text/plain" }
 license = "MIT"
