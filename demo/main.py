@@ -46,6 +46,11 @@ from processors import (
 
 from plugins.weather import WeatherModule
 from qodalis_cli_data_explorer_sql import SqlDataExplorerProvider
+from qodalis_cli_data_explorer_postgres import PostgresDataExplorerProvider
+from qodalis_cli_data_explorer_mysql import MysqlDataExplorerProvider
+from qodalis_cli_data_explorer_mssql import MssqlDataExplorerProvider
+from qodalis_cli_data_explorer_redis import RedisDataExplorerProvider
+from qodalis_cli_data_explorer_elasticsearch import ElasticsearchDataExplorerProvider
 from qodalis_cli_server_abstractions import (
     DataExplorerLanguage,
     DataExplorerOutputFormat,
@@ -143,6 +148,81 @@ def main() -> None:
                         DataExplorerTemplate("show_collections", "show collections", "List all collections"),
                         DataExplorerTemplate("find_all", "db.users.find({})", "Find all documents in users collection"),
                     ],
+                ),
+            )
+
+        # -----------------------------------------------------------
+        # Data Explorer — PostgreSQL Provider
+        # -----------------------------------------------------------
+        pg_conn = os.environ.get("POSTGRES_CONNECTION_STRING")
+        if pg_conn:
+            builder.add_data_explorer_provider(
+                PostgresDataExplorerProvider(pg_conn),
+                DataExplorerProviderOptions(
+                    name="demo-postgres",
+                    description="Demo PostgreSQL database",
+                    language=DataExplorerLanguage.SQL,
+                    default_output_format=DataExplorerOutputFormat.TABLE,
+                ),
+            )
+
+        # -----------------------------------------------------------
+        # Data Explorer — MySQL Provider
+        # -----------------------------------------------------------
+        mysql_conn = os.environ.get("MYSQL_CONNECTION_STRING")
+        if mysql_conn:
+            builder.add_data_explorer_provider(
+                MysqlDataExplorerProvider(mysql_conn),
+                DataExplorerProviderOptions(
+                    name="demo-mysql",
+                    description="Demo MySQL database",
+                    language=DataExplorerLanguage.SQL,
+                    default_output_format=DataExplorerOutputFormat.TABLE,
+                ),
+            )
+
+        # -----------------------------------------------------------
+        # Data Explorer — MS SQL Provider
+        # -----------------------------------------------------------
+        mssql_conn = os.environ.get("MSSQL_CONNECTION_STRING")
+        if mssql_conn:
+            builder.add_data_explorer_provider(
+                MssqlDataExplorerProvider(mssql_conn),
+                DataExplorerProviderOptions(
+                    name="demo-mssql",
+                    description="Demo MS SQL Server database",
+                    language=DataExplorerLanguage.SQL,
+                    default_output_format=DataExplorerOutputFormat.TABLE,
+                ),
+            )
+
+        # -----------------------------------------------------------
+        # Data Explorer — Redis Provider
+        # -----------------------------------------------------------
+        redis_conn = os.environ.get("REDIS_CONNECTION_STRING")
+        if redis_conn:
+            builder.add_data_explorer_provider(
+                RedisDataExplorerProvider(redis_conn),
+                DataExplorerProviderOptions(
+                    name="demo-redis",
+                    description="Demo Redis instance",
+                    language=DataExplorerLanguage.REDIS,
+                    default_output_format=DataExplorerOutputFormat.TABLE,
+                ),
+            )
+
+        # -----------------------------------------------------------
+        # Data Explorer — Elasticsearch Provider
+        # -----------------------------------------------------------
+        es_node = os.environ.get("ELASTICSEARCH_NODE")
+        if es_node:
+            builder.add_data_explorer_provider(
+                ElasticsearchDataExplorerProvider(es_node),
+                DataExplorerProviderOptions(
+                    name="demo-elasticsearch",
+                    description="Demo Elasticsearch cluster",
+                    language=DataExplorerLanguage.ELASTICSEARCH,
+                    default_output_format=DataExplorerOutputFormat.TABLE,
                 ),
             )
 
