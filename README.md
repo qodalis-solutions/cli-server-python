@@ -678,6 +678,49 @@ builder.add_data_explorer_provider(
 
 The same provider class can be registered multiple times with different configurations (e.g., two databases with different names).
 
+## AWS Cloud Services
+
+The AWS plugin adds commands for managing AWS resources (S3, EC2, Lambda, CloudWatch, SNS, SQS, IAM, DynamoDB, ECS) directly from the CLI. It uses boto3 and supports the full credential chain.
+
+```python
+from plugins.aws.qodalis_cli_aws import AwsModule
+
+result = create_cli_server(
+    CliServerOptions(configure=lambda builder: builder.add_module(AwsModule()))
+)
+```
+
+### Authentication
+
+The plugin resolves credentials in this order:
+
+1. **CLI configure**: `aws configure set --key <KEY> --secret <SECRET> --region <REGION>`
+2. **Environment variables**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
+3. **AWS profiles**: `aws configure set --profile <name>`
+4. **IAM roles**: Automatic on EC2/ECS/Lambda
+
+Verify connectivity with `aws status`.
+
+### Available Commands
+
+| Service | Commands |
+|---------|----------|
+| **configure** | `aws configure set`, `aws configure get`, `aws configure profiles` |
+| **status** | `aws status` — STS GetCallerIdentity connectivity check |
+| **S3** | `aws s3 ls`, `aws s3 cp`, `aws s3 rm`, `aws s3 mb`, `aws s3 rb`, `aws s3 presign` |
+| **EC2** | `aws ec2 list`, `aws ec2 describe`, `aws ec2 start`, `aws ec2 stop`, `aws ec2 reboot`, `aws ec2 sg list` |
+| **Lambda** | `aws lambda list`, `aws lambda invoke`, `aws lambda logs` |
+| **CloudWatch** | `aws cloudwatch alarms`, `aws cloudwatch logs`, `aws cloudwatch metrics` |
+| **SNS** | `aws sns topics`, `aws sns publish`, `aws sns subscriptions` |
+| **SQS** | `aws sqs list`, `aws sqs send`, `aws sqs receive`, `aws sqs purge` |
+| **IAM** | `aws iam users`, `aws iam roles`, `aws iam policies` |
+| **DynamoDB** | `aws dynamodb tables`, `aws dynamodb describe`, `aws dynamodb scan`, `aws dynamodb query` |
+| **ECS** | `aws ecs clusters`, `aws ecs services`, `aws ecs tasks` |
+
+All commands support `--region` (`-r`) for region override and `--output` (`-o`) for format selection (`table`, `json`, `text`). Destructive commands support `--dry-run`.
+
+See [`plugins/aws/README.md`](plugins/aws/README.md) for the full command reference.
+
 ## Built-in Processors
 
 These processors ship with the library and are included in the standalone server:
