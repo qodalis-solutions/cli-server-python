@@ -222,7 +222,7 @@ def main() -> None:
                     name="demo-elasticsearch",
                     description="Demo Elasticsearch cluster",
                     language=DataExplorerLanguage.ELASTICSEARCH,
-                    default_output_format=DataExplorerOutputFormat.TABLE,
+                    default_output_format=DataExplorerOutputFormat.JSON,
                 ),
             )
 
