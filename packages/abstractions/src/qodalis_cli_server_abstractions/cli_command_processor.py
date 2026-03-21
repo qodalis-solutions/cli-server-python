@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import abc
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .cli_command_author import DEFAULT_LIBRARY_AUTHOR, ICliCommandAuthor
 
@@ -50,6 +50,14 @@ class ICliCommandProcessor(abc.ABC):
 
     @abc.abstractmethod
     async def handle_async(self, command: CliProcessCommand) -> str: ...
+
+    _STRUCTURED_NOT_IMPLEMENTED = object()  # sentinel
+
+    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Optional structured response handler. Return a CliServerResponse
+        to bypass the default text wrapping. Return _STRUCTURED_NOT_IMPLEMENTED
+        sentinel to fall back to handle_async."""
+        return self._STRUCTURED_NOT_IMPLEMENTED
 
 
 class CliCommandProcessor(ICliCommandProcessor):

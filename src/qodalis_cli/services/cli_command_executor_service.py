@@ -43,6 +43,10 @@ class CliCommandExecutorService(ICliCommandExecutorService):
             )
 
         try:
+            structured = await processor.handle_structured_async(command)
+            if structured is not processor._STRUCTURED_NOT_IMPLEMENTED:
+                logger.info("Command completed (structured): %s", full_command)
+                return structured
             result = await processor.handle_async(command)
             logger.info("Command completed: %s", full_command)
             return CliServerResponse(
