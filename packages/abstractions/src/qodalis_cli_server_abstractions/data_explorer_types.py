@@ -12,6 +12,8 @@ class DataExplorerLanguage(str, Enum):
     JSON = "json"
     SHELL = "shell"
     GRAPHQL = "graphql"
+    REDIS = "redis"
+    ELASTICSEARCH = "elasticsearch"
 
 
 class DataExplorerOutputFormat(str, Enum):
