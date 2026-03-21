@@ -16,6 +16,16 @@ from .jobs import (
     JobState,
     JobLogEntry,
 )
+from .data_explorer_types import (
+    DataExplorerLanguage,
+    DataExplorerOutputFormat,
+    DataExplorerTemplate,
+    DataExplorerParameterDescriptor,
+    DataExplorerProviderOptions,
+    DataExplorerExecutionContext,
+    DataExplorerResult,
+)
+from .data_explorer_provider import IDataExplorerProvider
 
 __all__ = [
     "ICliCommandAuthor",
@@ -36,4 +46,12 @@ __all__ = [
     "JobExecution",
     "JobState",
     "JobLogEntry",
+    "DataExplorerLanguage",
+    "DataExplorerOutputFormat",
+    "DataExplorerTemplate",
+    "DataExplorerParameterDescriptor",
+    "DataExplorerProviderOptions",
+    "DataExplorerExecutionContext",
+    "DataExplorerResult",
+    "IDataExplorerProvider",
 ]
