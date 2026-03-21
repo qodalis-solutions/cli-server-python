@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from qodalis_cli_server_abstractions import (
+    DataExplorerProviderOptions,
+    IDataExplorerProvider,
+)
+
 from ..abstractions import ICliCommandProcessor, ICliModule
 from ..filesystem import FileSystemOptions
 from ..services.cli_command_registry import CliCommandRegistry
@@ -10,12 +15,27 @@ if TYPE_CHECKING:
     from qodalis_cli_filesystem import IFileStorageProvider
 
 
+class _DataExplorerRegistration:
+    """Internal holder for a provider + options pair."""
+
+    __slots__ = ("provider", "options")
+
+    def __init__(
+        self,
+        provider: IDataExplorerProvider,
+        options: DataExplorerProviderOptions,
+    ) -> None:
+        self.provider = provider
+        self.options = options
+
+
 class CliBuilder:
     def __init__(self, registry: CliCommandRegistry) -> None:
         self._registry = registry
         self._modules: list[ICliModule] = []
         self._filesystem_options: FileSystemOptions | None = None
         self._file_storage_provider: IFileStorageProvider | None = None
+        self._data_explorer_registrations: list[_DataExplorerRegistration] = []
 
     def add_processor(self, processor: ICliCommandProcessor) -> CliBuilder:
         self._registry.register(processor)
@@ -52,6 +72,22 @@ class CliBuilder:
     @property
     def filesystem_options(self) -> FileSystemOptions | None:
         return self._filesystem_options
+
+    def add_data_explorer_provider(
+        self,
+        provider: IDataExplorerProvider,
+        options: DataExplorerProviderOptions,
+    ) -> CliBuilder:
+        """Register a data explorer provider with its options."""
+        self._data_explorer_registrations.append(
+            _DataExplorerRegistration(provider, options)
+        )
+        return self
+
+    @property
+    def data_explorer_registrations(self) -> list[_DataExplorerRegistration]:
+        """Return all registered data explorer provider registrations."""
+        return list(self._data_explorer_registrations)
 
     @property
     def registry(self) -> CliCommandRegistry:

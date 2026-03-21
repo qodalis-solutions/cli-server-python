@@ -110,6 +110,23 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         fs_router = create_filesystem_router(os_provider)
         app.include_router(fs_router, prefix="/api/qcli/fs")
 
+    # Data Explorer API (opt-in via builder.add_data_explorer_provider())
+    if builder.data_explorer_registrations:
+        from qodalis_cli_data_explorer import (
+            DataExplorerRegistry,
+            DataExplorerExecutor,
+            create_data_explorer_router,
+        )
+
+        data_explorer_registry = DataExplorerRegistry()
+        for reg in builder.data_explorer_registrations:
+            data_explorer_registry.register(reg.provider, reg.options)
+        data_explorer_executor = DataExplorerExecutor(data_explorer_registry)
+        data_explorer_router = create_data_explorer_router(
+            data_explorer_registry, data_explorer_executor
+        )
+        app.include_router(data_explorer_router, prefix="/api/qcli/data-explorer")
+
     # WebSocket event stream
     @app.websocket("/ws/v1/qcli/events")
     async def websocket_events_v1(websocket: WebSocket) -> None:
