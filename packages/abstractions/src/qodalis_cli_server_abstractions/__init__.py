@@ -24,6 +24,9 @@ from .data_explorer_types import (
     DataExplorerProviderOptions,
     DataExplorerExecutionContext,
     DataExplorerResult,
+    DataExplorerSchemaColumn,
+    DataExplorerSchemaTable,
+    DataExplorerSchemaResult,
 )
 from .data_explorer_provider import IDataExplorerProvider
 
@@ -53,5 +56,8 @@ __all__ = [
     "DataExplorerProviderOptions",
     "DataExplorerExecutionContext",
     "DataExplorerResult",
+    "DataExplorerSchemaColumn",
+    "DataExplorerSchemaTable",
+    "DataExplorerSchemaResult",
     "IDataExplorerProvider",
 ]

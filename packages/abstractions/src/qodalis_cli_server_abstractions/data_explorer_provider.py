@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import abc
 
-from .data_explorer_types import DataExplorerExecutionContext, DataExplorerResult
+from .data_explorer_types import (
+    DataExplorerExecutionContext,
+    DataExplorerResult,
+    DataExplorerProviderOptions,
+    DataExplorerSchemaResult,
+)
 
 
 class IDataExplorerProvider(abc.ABC):
@@ -16,3 +21,9 @@ class IDataExplorerProvider(abc.ABC):
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:
         ...
+
+    async def get_schema_async(
+        self, options: DataExplorerProviderOptions
+    ) -> DataExplorerSchemaResult | None:
+        """Return schema information. Override to support schema introspection."""
+        return None

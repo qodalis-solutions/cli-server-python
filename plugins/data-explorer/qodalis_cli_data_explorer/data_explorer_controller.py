@@ -62,4 +62,19 @@ def create_data_explorer_router(
         result = await executor.execute_async(request.model_dump())
         return _camel_keys(asdict(result))
 
+    @router.get("/schema")
+    async def get_schema(source: str) -> dict[str, Any]:
+        entry = registry.get(source)
+        if entry is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail=f"Unknown data source: '{source}'")
+
+        provider, options = entry
+        schema = await provider.get_schema_async(options)
+        if schema is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Schema introspection is not supported by this data source.")
+
+        return _camel_keys(asdict(schema))
+
     return router

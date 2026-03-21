@@ -68,3 +68,24 @@ class DataExplorerResult:
     row_count: int
     truncated: bool
     error: str | None
+
+
+@dataclass
+class DataExplorerSchemaColumn:
+    name: str
+    type: str
+    nullable: bool = True
+    primary_key: bool = False
+
+
+@dataclass
+class DataExplorerSchemaTable:
+    name: str
+    type: str
+    columns: list[DataExplorerSchemaColumn] = field(default_factory=list)
+
+
+@dataclass
+class DataExplorerSchemaResult:
+    source: str
+    tables: list[DataExplorerSchemaTable] = field(default_factory=list)

@@ -12,7 +12,11 @@ from bson import ObjectId, json_util
 
 from qodalis_cli_server_abstractions import (
     DataExplorerExecutionContext,
+    DataExplorerProviderOptions,
     DataExplorerResult,
+    DataExplorerSchemaColumn,
+    DataExplorerSchemaResult,
+    DataExplorerSchemaTable,
     IDataExplorerProvider,
 )
 
@@ -159,6 +163,46 @@ class MongoDataExplorerProvider(IDataExplorerProvider):
 
         except Exception as exc:
             return self._error(context, start, str(exc))
+        finally:
+            if client is not None:
+                client.close()
+
+    async def get_schema_async(
+        self, options: DataExplorerProviderOptions
+    ) -> DataExplorerSchemaResult | None:
+        client: AsyncIOMotorClient | None = None
+        try:
+            client = AsyncIOMotorClient(self._connection_string)
+            db = client[self._database]
+            coll_names = await db.list_collection_names()
+
+            tables: list[DataExplorerSchemaTable] = []
+            for coll_name in sorted(coll_names):
+                sample = await db[coll_name].find_one()
+                columns: list[DataExplorerSchemaColumn] = []
+                if sample:
+                    for key, value in sample.items():
+                        if isinstance(value, list):
+                            col_type = "array"
+                        elif isinstance(value, dict):
+                            col_type = "object"
+                        elif value is None:
+                            col_type = "null"
+                        else:
+                            col_type = type(value).__name__
+                        columns.append(DataExplorerSchemaColumn(
+                            name=key,
+                            type=col_type,
+                            nullable=True,
+                            primary_key=key == "_id",
+                        ))
+                tables.append(DataExplorerSchemaTable(
+                    name=coll_name,
+                    type="collection",
+                    columns=columns,
+                ))
+
+            return DataExplorerSchemaResult(source=options.name, tables=tables)
         finally:
             if client is not None:
                 client.close()

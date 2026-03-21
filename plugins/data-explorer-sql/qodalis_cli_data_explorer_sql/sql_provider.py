@@ -7,7 +7,11 @@ import time
 
 from qodalis_cli_server_abstractions import (
     DataExplorerExecutionContext,
+    DataExplorerProviderOptions,
     DataExplorerResult,
+    DataExplorerSchemaColumn,
+    DataExplorerSchemaResult,
+    DataExplorerSchemaTable,
     IDataExplorerProvider,
 )
 
@@ -72,6 +76,45 @@ class SqlDataExplorerProvider(IDataExplorerProvider):
                 truncated=False,
                 error=str(exc),
             )
+        finally:
+            if conn is not None:
+                conn.close()
+
+    async def get_schema_async(
+        self, options: DataExplorerProviderOptions
+    ) -> DataExplorerSchemaResult | None:
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(self._filename)
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT name, type FROM sqlite_master "
+                "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
+                "ORDER BY name"
+            )
+            table_rows = cursor.fetchall()
+
+            tables: list[DataExplorerSchemaTable] = []
+            for table_name, table_type in table_rows:
+                cursor.execute(f'PRAGMA table_info("{table_name}")')
+                col_rows = cursor.fetchall()
+                columns = [
+                    DataExplorerSchemaColumn(
+                        name=row[1],
+                        type=row[2] or "TEXT",
+                        nullable=row[3] == 0,
+                        primary_key=row[5] > 0,
+                    )
+                    for row in col_rows
+                ]
+                tables.append(DataExplorerSchemaTable(
+                    name=table_name,
+                    type=table_type,
+                    columns=columns,
+                ))
+
+            return DataExplorerSchemaResult(source=options.name, tables=tables)
         finally:
             if conn is not None:
                 conn.close()
