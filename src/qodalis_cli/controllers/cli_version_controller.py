@@ -20,8 +20,8 @@ def create_cli_version_router() -> APIRouter:
     @router.get("/versions")
     async def get_versions() -> dict[str, Any]:
         return {
-            "supportedVersions": [1, 2],
-            "preferredVersion": 2,
+            "supportedVersions": [1],
+            "preferredVersion": 1,
             "serverVersion": SERVER_VERSION,
         }
 
