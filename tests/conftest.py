@@ -6,6 +6,7 @@ import pytest
 
 from qodalis_cli.abstractions import CliProcessCommand, ICliCommandProcessor
 from qodalis_cli.services import CliCommandRegistry, CliCommandExecutorService
+from qodalis_cli_server_abstractions import ICliStreamCommandProcessor
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +93,27 @@ class _ChildProcessor(ICliCommandProcessor):
 
     async def handle_async(self, command: CliProcessCommand) -> str:
         return "child result"
+
+
+class StreamProcessor(ICliCommandProcessor, ICliStreamCommandProcessor):
+    """Processor that emits three streaming output chunks."""
+
+    @property
+    def command(self) -> str:
+        return "stream-test"
+
+    @property
+    def description(self) -> str:
+        return "Streaming test processor"
+
+    async def handle_async(self, command: CliProcessCommand) -> str:
+        return "non-streaming fallback"
+
+    async def handle_stream_async(self, command, emit) -> int:
+        emit({"type": "text", "value": "chunk1"})
+        emit({"type": "text", "value": "chunk2"})
+        emit({"type": "text", "value": "chunk3"})
+        return 0
 
 
 class UnlistedParentProcessor(ICliCommandProcessor):

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from qodalis_cli.create_cli_server import create_cli_server, CliServerOptions
 
-from .conftest import EchoProcessor, FailingProcessor, V2OnlyProcessor
+from .conftest import EchoProcessor, FailingProcessor, StreamProcessor, V2OnlyProcessor
 
 
 def _make_client() -> TestClient:
@@ -17,6 +17,7 @@ def _make_client() -> TestClient:
         builder.add_processor(EchoProcessor())
         builder.add_processor(FailingProcessor())
         builder.add_processor(V2OnlyProcessor())
+        builder.add_processor(StreamProcessor())
 
     result = create_cli_server(CliServerOptions(configure=configure))
     return TestClient(result.app)
@@ -135,3 +136,83 @@ class TestCommandExecution:
         assert resp.status_code == 200
         data = resp.json()
         assert data["exitCode"] == 0
+
+
+# ---------------------------------------------------------------------------
+# SSE helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_sse(text: str) -> list[dict]:
+    import json
+
+    events = []
+    for block in text.split("\n\n"):
+        block = block.strip()
+        if not block:
+            continue
+        event_type = "message"
+        data = ""
+        for line in block.split("\n"):
+            if line.startswith("event: "):
+                event_type = line[7:]
+            elif line.startswith("data: "):
+                data = line[6:]
+        if data:
+            events.append({"event": event_type, "data": json.loads(data)})
+    return events
+
+
+# ---------------------------------------------------------------------------
+# Streaming execution
+# ---------------------------------------------------------------------------
+
+
+class TestStreamExecution:
+    def test_stream_known_command(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/v1/qcli/execute/stream",
+            json={"command": "echo", "value": "hello world"},
+        )
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers.get("content-type", "")
+        events = _parse_sse(resp.text)
+        output_events = [e for e in events if e["event"] == "output"]
+        assert any("hello world" in e["data"].get("value", "") for e in output_events), (
+            f"Expected 'hello world' in output events: {output_events}"
+        )
+        done_events = [e for e in events if e["event"] == "done"]
+        assert done_events, "Expected a 'done' event"
+        assert done_events[0]["data"]["exitCode"] == 0
+
+    def test_stream_unknown_command(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/v1/qcli/execute/stream",
+            json={"command": "nonexistent"},
+        )
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers.get("content-type", "")
+        events = _parse_sse(resp.text)
+        error_events = [e for e in events if e["event"] == "error"]
+        assert error_events, "Expected an 'error' event"
+        assert any(
+            "Unknown command" in e["data"].get("message", "") for e in error_events
+        ), f"Expected 'Unknown command' in error events: {error_events}"
+
+    def test_stream_capable_processor(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/v1/qcli/execute/stream",
+            json={"command": "stream-test"},
+        )
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers.get("content-type", "")
+        events = _parse_sse(resp.text)
+        output_events = [e for e in events if e["event"] == "output"]
+        assert len(output_events) == 3, (
+            f"Expected 3 output events, got {len(output_events)}: {output_events}"
+        )
+        values = [e["data"].get("value") for e in output_events]
+        assert values == ["chunk1", "chunk2", "chunk3"], f"Unexpected values: {values}"
+        done_events = [e for e in events if e["event"] == "done"]
+        assert done_events, "Expected a 'done' event"
+        assert done_events[0]["data"]["exitCode"] == 0
