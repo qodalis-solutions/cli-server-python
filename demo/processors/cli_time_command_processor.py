@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from datetime import datetime, timezone
 
 from qodalis_cli import (
@@ -38,7 +40,7 @@ class CliTimeCommandProcessor(CliCommandProcessor):
             ),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         use_utc = "utc" in command.args
         fmt = command.args.get("format", "%Y-%m-%d %H:%M:%S")
         now = datetime.now(timezone.utc) if use_utc else datetime.now()

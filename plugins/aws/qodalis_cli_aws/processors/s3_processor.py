@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import re
 from typing import Any
 
@@ -85,7 +87,7 @@ class _S3LsProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="output", description="Output format (table|json|text)", required=False, type="string", aliases=["-o"], default_value="table"),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -168,7 +170,7 @@ class _S3CpProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -230,7 +232,7 @@ class _S3RmProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -281,7 +283,7 @@ class _S3MbProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -326,7 +328,7 @@ class _S3RbProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -374,7 +376,7 @@ class _S3PresignProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -439,5 +441,5 @@ class AwsS3Processor(CliCommandProcessor):
         """Returns sub-processors for S3 operations."""
         return self._sub_processors
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""

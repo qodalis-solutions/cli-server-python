@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from typing import Any
 
 from qodalis_cli_server_abstractions import (
@@ -45,7 +47,7 @@ class _Ec2ListProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="output", description="Output format (table|json|text)", required=False, type="string", aliases=["-o"], default_value="table"),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -104,7 +106,7 @@ class _Ec2DescribeProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -177,7 +179,7 @@ class _Ec2StartProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -222,7 +224,7 @@ class _Ec2StopProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -270,7 +272,7 @@ class _Ec2RebootProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -314,7 +316,7 @@ class _Ec2SgListProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="output", description="Output format (table|json|text)", required=False, type="string", aliases=["-o"], default_value="table"),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -367,7 +369,7 @@ class _Ec2SgProcessor(CliCommandProcessor):
         """Returns sub-processors for security group operations."""
         return self._sub_processors
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
 
@@ -398,5 +400,5 @@ class AwsEc2Processor(CliCommandProcessor):
         """Returns sub-processors for EC2 operations."""
         return self._sub_processors
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""

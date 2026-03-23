@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from typing import Any
 
 from qodalis_cli_server_abstractions import (
@@ -42,7 +44,7 @@ class _IamUsersProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="output", description="Output format (table|json|text)", required=False, type="string", aliases=["-o"], default_value="table"),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -95,7 +97,7 @@ class _IamRolesProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="output", description="Output format (table|json|text)", required=False, type="string", aliases=["-o"], default_value="table"),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -148,7 +150,7 @@ class _IamPoliciesProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="output", description="Output format (table|json|text)", required=False, type="string", aliases=["-o"], default_value="table"),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -202,5 +204,5 @@ class AwsIamProcessor(CliCommandProcessor):
         """Returns sub-processors for IAM operations."""
         return self._sub_processors
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""

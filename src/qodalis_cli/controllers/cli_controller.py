@@ -125,7 +125,7 @@ def create_cli_router(
             chain_commands=request.chain_commands,
             data=request.data,
         )
-        result = await executor.execute_async(cmd)
+        result = await executor.execute_async(cmd, cancellation_event=None)
         return JSONResponse(result.model_dump(by_alias=True, exclude_none=True))
 
     @router.post("/execute/stream")
@@ -138,6 +138,8 @@ def create_cli_router(
             chain_commands=request.chain_commands,
             data=request.data,
         )
+
+        cancellation_event = asyncio.Event()
 
         async def event_generator():
             def sse_event(event_type: str, data: dict) -> str:
@@ -162,29 +164,39 @@ def create_cli_router(
                     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
                     def emit_to_queue(output: dict) -> None:
-                        queue.put_nowait(sse_event("output", output))
+                        if not cancellation_event.is_set():
+                            queue.put_nowait(sse_event("output", output))
 
                     task = asyncio.ensure_future(
-                        processor.handle_stream_async(command, emit_to_queue)
+                        processor.handle_stream_async(command, emit_to_queue, cancellation_event)
                     )
                     while not task.done() or not queue.empty():
+                        if cancellation_event.is_set():
+                            task.cancel()
+                            break
                         try:
                             chunk = queue.get_nowait()
                             yield chunk
                         except asyncio.QueueEmpty:
                             await asyncio.sleep(0)
-                    try:
-                        exit_code = task.result()
-                    except Exception as exc:
-                        yield sse_event("error", {"message": f"Error executing command: {exc}"})
+                    if not cancellation_event.is_set():
+                        try:
+                            exit_code = task.result()
+                        except Exception as exc:
+                            yield sse_event("error", {"message": f"Error executing command: {exc}"})
+                            return
+                    else:
+                        logger.debug("Stream cancelled for command: %s", command.command)
                         return
                 else:
-                    response = await executor.execute_async(command)
+                    response = await executor.execute_async(command, cancellation_event)
                     for output in response.outputs:
                         yield sse_event("output", output.model_dump(by_alias=True, exclude_none=True))
                     exit_code = response.exit_code
 
                 yield sse_event("done", {"exitCode": exit_code})
+            except asyncio.CancelledError:
+                logger.debug("Stream cancelled for command: %s", command.command)
             except Exception as exc:
                 yield sse_event("error", {"message": f"Error executing command: {exc}"})
 

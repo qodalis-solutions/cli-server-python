@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 
 from ..abstractions import (
@@ -35,7 +36,7 @@ class CliHashCommandProcessor(CliCommandProcessor):
             ),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         text = command.value
         if not text:
             return "Usage: hash <text> [--algorithm sha256]"

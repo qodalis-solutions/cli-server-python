@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from typing import Any
 
 from qodalis_cli_server_abstractions import (
@@ -44,7 +46,7 @@ class _DynamoDbTablesProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="output", description="Output format (list|json|text)", required=False, type="string", aliases=["-o"], default_value="list"),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -90,7 +92,7 @@ class _DynamoDbDescribeProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -157,7 +159,7 @@ class _DynamoDbScanProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -209,7 +211,7 @@ class _DynamoDbQueryProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="region", description="AWS region override", required=False, type="string", aliases=["-r"]),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -267,5 +269,5 @@ class AwsDynamoDbProcessor(CliCommandProcessor):
         """Returns sub-processors for DynamoDB operations."""
         return self._sub_processors
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""

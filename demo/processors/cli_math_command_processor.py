@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from qodalis_cli import (
     CliCommandParameterDescriptor,
     CliCommandProcessor,
@@ -25,7 +27,7 @@ class _CliMathAddProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="b", description="Second number", required=True, type="number"),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         a = float(command.args.get("a", 0))
         b = float(command.args.get("b", 0))
         result = a + b
@@ -48,7 +50,7 @@ class _CliMathMultiplyProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="b", description="Second number", required=True, type="number"),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         a = float(command.args.get("a", 0))
         b = float(command.args.get("b", 0))
         result = a * b
@@ -72,5 +74,5 @@ class CliMathCommandProcessor(CliCommandProcessor):
     def processors(self) -> list[ICliCommandProcessor]:
         return [_CliMathAddProcessor(), _CliMathMultiplyProcessor()]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return "Usage: math add|multiply --a <number> --b <number>"

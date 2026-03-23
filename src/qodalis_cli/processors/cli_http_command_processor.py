@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import urllib.request
 import urllib.error
@@ -36,18 +37,27 @@ class _HttpGetProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
             ),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(
+        self,
+        command: CliProcessCommand,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> str:
         url = command.value
         if not url:
             return "Usage: http get <url>"
         return _do_request(url, method="GET", show_headers="headers" in command.args)
 
-    async def handle_stream_async(self, command: CliProcessCommand, emit) -> int:
+    async def handle_stream_async(
+        self,
+        command: CliProcessCommand,
+        emit,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> int:
         url = command.value
         if not url:
             emit({"type": "text", "value": "Usage: http get <url>"})
             return 1
-        return await _do_stream_request(url, "GET", None, "headers" in command.args, emit)
+        return await _do_stream_request(url, "GET", None, "headers" in command.args, emit, cancellation_event)
 
 
 class _HttpPostProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
@@ -77,7 +87,11 @@ class _HttpPostProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
             ),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(
+        self,
+        command: CliProcessCommand,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> str:
         url = command.value
         if not url:
             return "Usage: http post <url> --body '{\"key\":\"value\"}'"
@@ -86,13 +100,18 @@ class _HttpPostProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
             url, method="POST", body=body, show_headers="headers" in command.args
         )
 
-    async def handle_stream_async(self, command: CliProcessCommand, emit) -> int:
+    async def handle_stream_async(
+        self,
+        command: CliProcessCommand,
+        emit,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> int:
         url = command.value
         if not url:
             emit({"type": "text", "value": "Usage: http post <url> --body '{\"key\":\"value\"}'"})
             return 1
         body = command.args.get("body")
-        return await _do_stream_request(url, "POST", body, "headers" in command.args, emit)
+        return await _do_stream_request(url, "POST", body, "headers" in command.args, emit, cancellation_event)
 
 
 async def _do_stream_request(
@@ -101,8 +120,11 @@ async def _do_stream_request(
     body: str | None,
     show_headers: bool,
     emit,
+    cancellation_event: asyncio.Event | None = None,
 ) -> int:
     try:
+        if cancellation_event and cancellation_event.is_set():
+            return 1
         emit({"type": "text", "value": f"Fetching {method} {url}...", "style": "info"})
 
         data = body.encode("utf-8") if body else None
@@ -222,5 +244,9 @@ class CliHttpCommandProcessor(CliCommandProcessor):
     def processors(self) -> list[ICliCommandProcessor]:
         return [_HttpGetProcessor(), _HttpPostProcessor()]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(
+        self,
+        command: CliProcessCommand,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> str:
         return "Usage: http get|post <url> [--body <json>] [--headers]"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 
 from ..abstractions import CliCommandProcessor, CliProcessCommand, ICliCommandProcessor
@@ -16,7 +17,7 @@ class _Base64EncodeProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "Encodes text to Base64"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         text = command.value
         if not text:
             return "Usage: base64 encode <text>"
@@ -34,7 +35,7 @@ class _Base64DecodeProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "Decodes Base64 to text"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         text = command.value
         if not text:
             return "Usage: base64 decode <base64string>"
@@ -63,5 +64,5 @@ class CliBase64CommandProcessor(CliCommandProcessor):
     def processors(self) -> list[ICliCommandProcessor]:
         return [_Base64EncodeProcessor(), _Base64DecodeProcessor()]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return "Usage: base64 encode|decode <text>"

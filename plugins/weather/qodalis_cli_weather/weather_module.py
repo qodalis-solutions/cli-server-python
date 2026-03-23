@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import urllib.parse
 import urllib.request
 import json
@@ -101,7 +103,7 @@ class _WeatherCurrentProcessor(CliCommandProcessor):
     def parameters(self) -> list[ICliCommandParameterDescriptor]:
         return [_location_param]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return _format_current(_get_location(command))
 
 
@@ -120,7 +122,7 @@ class _WeatherForecastProcessor(CliCommandProcessor):
     def parameters(self) -> list[ICliCommandParameterDescriptor]:
         return [_location_param]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return _format_forecast(_get_location(command))
 
 
@@ -143,7 +145,7 @@ class _CliWeatherCommandProcessor(CliCommandProcessor):
     def processors(self) -> list[ICliCommandProcessor]:
         return [_WeatherCurrentProcessor(), _WeatherForecastProcessor()]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return _format_current(_get_location(command))
 
 

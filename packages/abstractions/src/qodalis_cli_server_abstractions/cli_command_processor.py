@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from .cli_command_author import DEFAULT_LIBRARY_AUTHOR, ICliCommandAuthor
@@ -61,11 +62,19 @@ class ICliCommandProcessor(abc.ABC):
         return None
 
     @abc.abstractmethod
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(
+        self,
+        command: CliProcessCommand,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> str:
         """Execute the command and return a plain-text result.
 
         Args:
             command: The parsed command to execute.
+            cancellation_event: Optional event that is set when the caller
+                requests cancellation. Processors should check
+                ``cancellation_event.is_set()`` periodically for long-running
+                operations.
 
         Returns:
             A string containing the command output.
@@ -74,7 +83,11 @@ class ICliCommandProcessor(abc.ABC):
 
     _STRUCTURED_NOT_IMPLEMENTED = object()
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(
+        self,
+        command: CliProcessCommand,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> Any:
         """Execute the command and return a structured response.
 
         Override this to return a ``CliServerResponse`` directly, bypassing
@@ -83,6 +96,8 @@ class ICliCommandProcessor(abc.ABC):
 
         Args:
             command: The parsed command to execute.
+            cancellation_event: Optional cancellation event (forwarded to
+                ``handle_async`` when the default implementation falls back).
 
         Returns:
             A ``CliServerResponse`` or the sentinel to indicate fallback.

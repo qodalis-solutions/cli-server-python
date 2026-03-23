@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import os
 import re
 from pathlib import Path
@@ -59,7 +61,7 @@ class _AwsConfigureSetProcessor(CliCommandProcessor):
             CliCommandParameterDescriptor(name="profile", description="AWS profile name", required=False, type="string", aliases=["-p"], default_value="default"),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -104,7 +106,7 @@ class _AwsConfigureGetProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "Show current AWS configuration (secrets masked)"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -130,7 +132,7 @@ class _AwsConfigureProfilesProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "List available AWS profiles from ~/.aws/credentials and ~/.aws/config"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -196,7 +198,7 @@ class _AwsConfigureProcessor(CliCommandProcessor):
         """Returns sub-processors for set, get, and profiles commands."""
         return self._sub_processors
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
 
@@ -215,7 +217,7 @@ class _AwsStatusProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "Test AWS connectivity using STS GetCallerIdentity"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
@@ -291,5 +293,5 @@ class AwsCommandProcessor(CliCommandProcessor):
         """Returns the shared config service instance."""
         return self._config_service
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""

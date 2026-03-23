@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import platform
 import sys
 
@@ -17,7 +18,7 @@ class CliStatusCommandProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "Shows server status information"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return (
             f"Server: Qodalis CLI Server (Python)\n"
             f"Python: {sys.version.split()[0]}\n"

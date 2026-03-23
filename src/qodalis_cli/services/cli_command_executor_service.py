@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import asyncio
 import logging
 from typing import Sequence
 
@@ -16,11 +17,17 @@ class ICliCommandExecutorService(abc.ABC):
     """Interface for a service that executes parsed CLI commands."""
 
     @abc.abstractmethod
-    async def execute_async(self, command: CliProcessCommand) -> CliServerResponse:
+    async def execute_async(
+        self,
+        command: CliProcessCommand,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> CliServerResponse:
         """Execute a command and return a structured response.
 
         Args:
             command: The parsed command to execute.
+            cancellation_event: Optional event that is set when the caller
+                requests cancellation.
 
         Returns:
             A ``CliServerResponse`` containing outputs and an exit code.
@@ -56,7 +63,11 @@ class CliCommandExecutorService(ICliCommandExecutorService):
         """Return True if any filter blocks this processor."""
         return any(not f.is_allowed(processor) for f in self._filters)
 
-    async def execute_async(self, command: CliProcessCommand) -> CliServerResponse:
+    async def execute_async(
+        self,
+        command: CliProcessCommand,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> CliServerResponse:
         chain = command.chain_commands if command.chain_commands else None
         full_command = (
             f"{command.command} {' '.join(chain)}" if chain else command.command
@@ -93,11 +104,11 @@ class CliCommandExecutorService(ICliCommandExecutorService):
             )
 
         try:
-            structured = await processor.handle_structured_async(command)
+            structured = await processor.handle_structured_async(command, cancellation_event)
             if structured is not processor._STRUCTURED_NOT_IMPLEMENTED:
                 logger.info("Command completed (structured): %s", full_command)
                 return structured
-            result = await processor.handle_async(command)
+            result = await processor.handle_async(command, cancellation_event)
             logger.info("Command completed: %s", full_command)
             return CliServerResponse(
                 exitCode=0,

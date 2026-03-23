@@ -1,3 +1,4 @@
+import asyncio
 from qodalis_cli import CliCommandProcessor, CliProcessCommand
 
 
@@ -10,6 +11,6 @@ class CliEchoCommandProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "Echoes the input text back"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         text = command.value or ""
         return text if text else "Usage: echo <text>"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from qodalis_cli import (
     CliCommandParameterDescriptor,
     CliCommandProcessor,
@@ -30,6 +32,6 @@ class CliHelloCommandProcessor(CliCommandProcessor):
             ),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         name = command.args.get("name", command.value or "World")
         return f"Hello, {name}!"

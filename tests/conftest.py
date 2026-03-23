@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from qodalis_cli.abstractions import CliProcessCommand, ICliCommandProcessor
@@ -25,7 +27,7 @@ class EchoProcessor(ICliCommandProcessor):
     def description(self) -> str:
         return "Echoes input"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return command.value or ""
 
 
@@ -40,7 +42,7 @@ class FailingProcessor(ICliCommandProcessor):
     def description(self) -> str:
         return "Always fails"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         raise RuntimeError("boom")
 
 
@@ -59,7 +61,7 @@ class V2OnlyProcessor(ICliCommandProcessor):
     def api_version(self) -> int:
         return 2
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return "v2 result"
 
 
@@ -78,7 +80,7 @@ class ParentProcessor(ICliCommandProcessor):
     def processors(self) -> list[ICliCommandProcessor] | None:
         return [_ChildProcessor()]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return "parent result"
 
 
@@ -91,7 +93,7 @@ class _ChildProcessor(ICliCommandProcessor):
     def description(self) -> str:
         return "Child command"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return "child result"
 
 
@@ -106,10 +108,10 @@ class StreamProcessor(ICliCommandProcessor, ICliStreamCommandProcessor):
     def description(self) -> str:
         return "Streaming test processor"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return "non-streaming fallback"
 
-    async def handle_stream_async(self, command, emit) -> int:
+    async def handle_stream_async(self, command, emit, cancellation_event: asyncio.Event | None = None) -> int:
         emit({"type": "text", "value": "chunk1"})
         emit({"type": "text", "value": "chunk2"})
         emit({"type": "text", "value": "chunk3"})
@@ -135,7 +137,7 @@ class UnlistedParentProcessor(ICliCommandProcessor):
     def processors(self) -> list[ICliCommandProcessor] | None:
         return [_ChildProcessor()]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return "open result"
 
 
