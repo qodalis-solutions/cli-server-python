@@ -6,6 +6,7 @@ from .cli_command_parameter_descriptor import (
 )
 from .cli_command_processor import ICliCommandProcessor, CliCommandProcessor
 from .cli_module import ICliModule, CliModule
+from .cli_processor_filter import ICliProcessorFilter
 from .jobs import (
     ICliJob,
     ICliJobExecutionContext,
@@ -41,6 +42,7 @@ __all__ = [
     "CliCommandProcessor",
     "ICliModule",
     "CliModule",
+    "ICliProcessorFilter",
     "ICliJob",
     "ICliJobExecutionContext",
     "ICliJobLogger",

@@ -46,6 +46,7 @@ class CliAdminPlugin:
     auth_dependency: Any
     log_buffer: LogRingBuffer
     dashboard_app: Any  # ASGI app (SPA fallback) or None
+    module_registry: ModuleRegistry | None = None
 
 
 class CliAdminBuilder:
@@ -137,4 +138,5 @@ class CliAdminBuilder:
             auth_dependency=auth_dep,
             log_buffer=log_buffer,
             dashboard_app=dashboard_app,
+            module_registry=module_registry,
         )

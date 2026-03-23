@@ -46,6 +46,7 @@ class CliServerResult:
     builder: CliBuilder
     event_socket_manager: CliEventSocketManager
     log_socket_manager: CliLogSocketManager
+    executor: CliCommandExecutorService | None = None
 
 
 def create_cli_server(options: CliServerOptions | None = None) -> CliServerResult:
@@ -175,4 +176,5 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         builder=builder,
         event_socket_manager=event_socket_manager,
         log_socket_manager=log_socket_manager,
+        executor=executor,
     )

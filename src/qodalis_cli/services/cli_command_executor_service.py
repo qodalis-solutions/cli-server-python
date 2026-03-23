@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import abc
 import logging
+from typing import Sequence
 
-from ..abstractions import CliProcessCommand
+from ..abstractions import CliProcessCommand, ICliProcessorFilter
 from ..models.cli_server_output import CliServerTextOutput
 from ..models.cli_server_response import CliServerResponse
 from .cli_command_registry import ICliCommandRegistry
@@ -30,8 +31,21 @@ class ICliCommandExecutorService(abc.ABC):
 class CliCommandExecutorService(ICliCommandExecutorService):
     """Default executor that resolves processors from a registry and runs them."""
 
-    def __init__(self, registry: ICliCommandRegistry) -> None:
+    def __init__(
+        self,
+        registry: ICliCommandRegistry,
+        filters: Sequence[ICliProcessorFilter] | None = None,
+    ) -> None:
         self._registry = registry
+        self._filters: list[ICliProcessorFilter] = list(filters or [])
+
+    def add_filter(self, filter_: ICliProcessorFilter) -> None:
+        """Register an additional processor filter at runtime.
+
+        Args:
+            filter_: The filter to add.
+        """
+        self._filters.append(filter_)
 
     async def execute_async(self, command: CliProcessCommand) -> CliServerResponse:
         chain = command.chain_commands if command.chain_commands else None
@@ -50,6 +64,20 @@ class CliCommandExecutorService(ICliCommandExecutorService):
                 outputs=[
                     CliServerTextOutput(
                         value=f"Unknown command: {command.command}",
+                        style="error",
+                    )
+                ],
+            )
+
+        if any(not f.is_allowed(processor) for f in self._filters):
+            logger.warning(
+                "Command blocked by filter (plugin disabled): %s", full_command
+            )
+            return CliServerResponse(
+                exitCode=1,
+                outputs=[
+                    CliServerTextOutput(
+                        value=f"Command '{command.command}' is currently disabled.",
                         style="error",
                     )
                 ],

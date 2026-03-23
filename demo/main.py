@@ -266,6 +266,11 @@ def main() -> None:
 
     result.app.include_router(admin_plugin.router, prefix="/api/v1/qcli")
 
+    # Register the module registry as a processor filter so that toggling
+    # a plugin off in the admin dashboard actually blocks command execution.
+    if admin_plugin.module_registry and result.executor:
+        result.executor.add_filter(admin_plugin.module_registry)
+
     # Mount the admin dashboard SPA (if the dist directory was found)
     if admin_plugin.dashboard_app:
         result.app.mount("/qcli/admin", admin_plugin.dashboard_app)

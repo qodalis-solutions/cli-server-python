@@ -11,6 +11,7 @@ from .abstractions import (
     CliCommandProcessor,
     ICliModule,
     CliModule,
+    ICliProcessorFilter,
 )
 from .models import (
     CliServerOutput,
@@ -56,7 +57,7 @@ from .processors import (
     CliHashCommandProcessor,
     CliBase64CommandProcessor,
 )
-from .create_cli_server import create_cli_server, CliServerOptions
+from .create_cli_server import create_cli_server, CliServerOptions, CliServerResult
 
 __all__ = [
     "ICliCommandAuthor",
@@ -69,6 +70,7 @@ __all__ = [
     "CliCommandProcessor",
     "ICliModule",
     "CliModule",
+    "ICliProcessorFilter",
     "CliServerOutput",
     "CliServerResponse",
     "CliServerCommandDescriptor",
@@ -96,6 +98,7 @@ __all__ = [
     "CliBase64CommandProcessor",
     "create_cli_server",
     "CliServerOptions",
+    "CliServerResult",
     "FileEntry",
     "FileStat",
     "FileStorageExistsError",

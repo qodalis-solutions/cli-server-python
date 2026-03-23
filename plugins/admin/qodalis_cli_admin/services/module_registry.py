@@ -1,19 +1,54 @@
-"""Module registry — reads modules from CliBuilder and tracks enabled state."""
+"""Module registry — reads modules from CliBuilder and tracks enabled state.
+
+Implements :class:`ICliProcessorFilter` so that processors belonging to
+disabled modules are blocked at execution time.
+"""
 
 from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
+from qodalis_cli_server_abstractions import ICliProcessorFilter
+
 if TYPE_CHECKING:
+    from qodalis_cli_server_abstractions import ICliCommandProcessor
     from qodalis_cli.extensions.cli_builder import CliBuilder
 
 
-class ModuleRegistry:
-    """Provides a read/toggle view over modules registered in :class:`CliBuilder`."""
+class ModuleRegistry(ICliProcessorFilter):
+    """Provides a read/toggle view over modules registered in :class:`CliBuilder`.
+
+    Also acts as a processor filter: processors that belong to a disabled
+    module are reported as *not allowed*, causing the executor to reject
+    the command with a user-friendly error.
+    """
 
     def __init__(self, builder: CliBuilder) -> None:
         self._builder = builder
         self._disabled: set[str] = set()
+        # Map each processor instance to its module id for fast lookup.
+        self._processor_to_module: dict[int, str] = {}
+        self._rebuild_processor_map()
+
+    def _rebuild_processor_map(self) -> None:
+        """(Re-)build the processor-to-module-id mapping."""
+        self._processor_to_module.clear()
+        for idx, module in enumerate(self._builder.modules):
+            module_id = str(idx)
+            for processor in module.processors:
+                self._processor_to_module[id(processor)] = module_id
+
+    # -- ICliProcessorFilter ------------------------------------------------
+
+    def is_allowed(self, processor: ICliCommandProcessor) -> bool:
+        """Return ``False`` if the processor belongs to a disabled module."""
+        module_id = self._processor_to_module.get(id(processor))
+        if module_id is None:
+            # Processor not registered via a module — always allowed.
+            return True
+        return module_id not in self._disabled
+
+    # -- Public API ---------------------------------------------------------
 
     def list(self) -> list[dict[str, Any]]:
         """Return a list of all modules with their enabled/disabled state."""
@@ -54,11 +89,5 @@ class ModuleRegistry:
             "processors": [p.command for p in module.processors],
             "enabled": enabled,
         }
-
-        if not enabled:
-            result["warning"] = (
-                "Module state tracked but command unregistration is not yet"
-                " supported. Processors remain active."
-            )
 
         return result
