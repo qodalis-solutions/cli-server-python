@@ -80,12 +80,7 @@ def _decode(value: Any) -> Any:
 
 
 def _normalise_result(command: str, raw: Any) -> tuple[list[str], list[list[Any]]]:
-    """
-    Normalise a raw redis-py result into (columns, rows) table form.
-
-    The shapes mirror what the Node.js and .NET versions produce so that
-    the front-end can render them consistently.
-    """
+    """Normalise a raw redis-py result into (columns, rows) table form."""
     decoded = _decode(raw)
 
     if command in _PAIR_LIST_COMMANDS:
@@ -141,6 +136,7 @@ class RedisDataExplorerProvider(IDataExplorerProvider):
     async def execute_async(
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:
+        """Execute a Redis command against the server."""
         start = time.monotonic()
         client: aioredis.Redis | None = None
         try:
@@ -197,6 +193,7 @@ class RedisDataExplorerProvider(IDataExplorerProvider):
     async def get_schema_async(
         self, options: DataExplorerProviderOptions
     ) -> DataExplorerSchemaResult | None:
+        """Scan keys and group them by Redis type to form a schema."""
         client: aioredis.Redis | None = None
         try:
             client = aioredis.from_url(
@@ -204,7 +201,6 @@ class RedisDataExplorerProvider(IDataExplorerProvider):
                 decode_responses=True,
             )
 
-            # Collect up to 1 000 keys via non-blocking SCAN
             keys: list[str] = []
             cursor: int = 0
             max_keys = 1000
@@ -217,13 +213,11 @@ class RedisDataExplorerProvider(IDataExplorerProvider):
                     break
             keys = keys[:max_keys]
 
-            # Group keys by Redis type
             type_to_keys: dict[str, list[str]] = {}
             for key in keys:
                 key_type: str = await client.type(key)  # type: ignore[assignment]
                 type_to_keys.setdefault(key_type, []).append(key)
 
-            # Build one DataExplorerSchemaTable per type
             _TYPE_COLUMNS: dict[str, list[DataExplorerSchemaColumn]] = {
                 "string": [
                     DataExplorerSchemaColumn(name="key", type="string", nullable=False, primary_key=True),

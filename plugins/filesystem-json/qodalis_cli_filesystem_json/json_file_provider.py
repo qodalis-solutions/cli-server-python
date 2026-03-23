@@ -1,3 +1,5 @@
+"""JSON file-backed file storage provider."""
+
 from __future__ import annotations
 
 import json
@@ -126,8 +128,6 @@ class JsonFileStorageProvider(IFileStorageProvider):
         self._file_path = options.file_path
         self._root = self._load()
 
-    # -- Persistence -----------------------------------------------------------
-
     def _load(self) -> _FileNode:
         """Read the JSON file and deserialize the tree.
 
@@ -149,8 +149,6 @@ class JsonFileStorageProvider(IFileStorageProvider):
             os.makedirs(parent_dir, exist_ok=True)
         with open(self._file_path, "w", encoding="utf-8") as f:
             json.dump(self._root.to_dict(), f, indent=2)
-
-    # -- IFileStorageProvider interface ----------------------------------------
 
     @property
     def name(self) -> str:
@@ -326,8 +324,6 @@ class JsonFileStorageProvider(IFileStorageProvider):
 
     async def upload_file(self, path: str, content: bytes) -> None:
         await self.write_file(path, content)
-
-    # -- Private helpers -------------------------------------------------------
 
     def _resolve(self, norm_path: str) -> _FileNode | None:
         """Walk the tree and return the node at *norm_path*, or ``None``."""

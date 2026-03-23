@@ -47,8 +47,6 @@ class LogRingBuffer:
         self._broadcast_fn = broadcast_fn
         self._handler: _RingBufferHandler | None = None
 
-    # -- public API -----------------------------------------------------------
-
     def add(self, entry: LogEntry) -> None:
         """Append a log entry to the buffer."""
         entry.level = (entry.level or "INFO").upper()
@@ -93,8 +91,6 @@ class LogRingBuffer:
             total,
         )
 
-    # -- logging integration --------------------------------------------------
-
     def install_handler(self, logger_name: str = "") -> None:
         """Install a :class:`logging.Handler` that feeds into this buffer."""
         if self._handler is not None:
@@ -118,6 +114,7 @@ class _RingBufferHandler(logging.Handler):
         self._ring = ring
 
     def emit(self, record: logging.LogRecord) -> None:
+        """Convert a log record to a LogEntry and append it to the ring buffer."""
         entry = LogEntry(
             timestamp=datetime.now(timezone.utc).isoformat(),
             level=record.levelname,

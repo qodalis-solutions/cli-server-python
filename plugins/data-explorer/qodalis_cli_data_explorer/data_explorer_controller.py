@@ -19,12 +19,7 @@ def _to_camel(snake: str) -> str:
 
 
 def _camel_keys(obj: Any, *, _depth: int = 0) -> Any:
-    """Convert dict keys from snake_case to camelCase.
-
-    Only converts structural keys (depth 0 = result envelope, depth 1 = source
-    info dicts).  Row/document data inside ``rows`` is left untouched so that
-    MongoDB fields like ``_id`` are preserved as-is.
-    """
+    """Convert dict keys from snake_case to camelCase, preserving row data as-is."""
     if isinstance(obj, dict):
         result: dict[str, Any] = {}
         for k, v in obj.items():
@@ -41,6 +36,8 @@ def _camel_keys(obj: Any, *, _depth: int = 0) -> Any:
 
 
 class DataExplorerExecuteRequest(BaseModel):
+    """Request body for executing a data explorer query."""
+
     source: str
     query: str
     parameters: dict[str, Any] | None = None

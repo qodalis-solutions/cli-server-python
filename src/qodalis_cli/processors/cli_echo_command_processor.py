@@ -4,6 +4,8 @@ from ..abstractions import CliCommandProcessor, CliProcessCommand
 
 
 class CliEchoCommandProcessor(CliCommandProcessor):
+    """Command processor that echoes the input text back."""
+
     @property
     def command(self) -> str:
         return "echo"

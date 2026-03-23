@@ -32,6 +32,7 @@ class MysqlDataExplorerProvider(IDataExplorerProvider):
     async def execute_async(
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:
+        """Execute a SQL query against the MySQL database."""
         start = time.monotonic()
         conn: aiomysql.Connection | None = None
         try:
@@ -95,6 +96,7 @@ class MysqlDataExplorerProvider(IDataExplorerProvider):
     async def get_schema_async(
         self, options: DataExplorerProviderOptions
     ) -> DataExplorerSchemaResult | None:
+        """Return the database schema (tables, views, and their columns)."""
         conn: aiomysql.Connection | None = None
         try:
             conn = await aiomysql.connect(

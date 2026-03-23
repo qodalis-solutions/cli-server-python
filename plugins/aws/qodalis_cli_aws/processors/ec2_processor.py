@@ -23,11 +23,9 @@ from ..utils.output_helpers import (
 )
 
 
-# ---------------------------------------------------------------------------
-# ec2 list
-# ---------------------------------------------------------------------------
-
 class _Ec2ListProcessor(CliCommandProcessor):
+    """Lists all EC2 instances with key details."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -51,6 +49,7 @@ class _Ec2ListProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Describes all EC2 instances and returns a summary table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("ec2", region=str(region) if region else None)
 
@@ -80,11 +79,9 @@ class _Ec2ListProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list instances: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# ec2 describe
-# ---------------------------------------------------------------------------
-
 class _Ec2DescribeProcessor(CliCommandProcessor):
+    """Describes a single EC2 instance in detail."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -111,6 +108,7 @@ class _Ec2DescribeProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Returns detailed metadata for the specified EC2 instance."""
         instance_id = (command.value or "").strip()
         if not instance_id:
             return build_error_response("Instance ID is required. Usage: ec2 describe <instance-id>")
@@ -154,11 +152,9 @@ class _Ec2DescribeProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to describe instance: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# ec2 start
-# ---------------------------------------------------------------------------
-
 class _Ec2StartProcessor(CliCommandProcessor):
+    """Starts a stopped EC2 instance."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -185,6 +181,7 @@ class _Ec2StartProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Issues a start request for the specified EC2 instance."""
         instance_id = (command.value or "").strip()
         if not instance_id:
             return build_error_response("Instance ID is required. Usage: ec2 start <instance-id>")
@@ -199,11 +196,9 @@ class _Ec2StartProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to start instance: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# ec2 stop
-# ---------------------------------------------------------------------------
-
 class _Ec2StopProcessor(CliCommandProcessor):
+    """Stops a running EC2 instance."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -231,6 +226,7 @@ class _Ec2StopProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Stops the specified instance, or previews the action in dry-run mode."""
         instance_id = (command.value or "").strip()
         if not instance_id:
             return build_error_response("Instance ID is required. Usage: ec2 stop <instance-id>")
@@ -248,11 +244,9 @@ class _Ec2StopProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to stop instance: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# ec2 reboot
-# ---------------------------------------------------------------------------
-
 class _Ec2RebootProcessor(CliCommandProcessor):
+    """Reboots an EC2 instance."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -280,6 +274,7 @@ class _Ec2RebootProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Reboots the specified instance, or previews the action in dry-run mode."""
         instance_id = (command.value or "").strip()
         if not instance_id:
             return build_error_response("Instance ID is required. Usage: ec2 reboot <instance-id>")
@@ -297,11 +292,9 @@ class _Ec2RebootProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to reboot instance: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# ec2 sg list
-# ---------------------------------------------------------------------------
-
 class _Ec2SgListProcessor(CliCommandProcessor):
+    """Lists all EC2 security groups."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -325,6 +318,7 @@ class _Ec2SgListProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches and returns all EC2 security groups as a table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("ec2", region=str(region) if region else None)
 
@@ -351,11 +345,9 @@ class _Ec2SgListProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list security groups: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# ec2 sg (parent)
-# ---------------------------------------------------------------------------
-
 class _Ec2SgProcessor(CliCommandProcessor):
+    """Parent processor for EC2 security group sub-commands."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._sub_processors: list[ICliCommandProcessor] = [
@@ -372,17 +364,16 @@ class _Ec2SgProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns sub-processors for security group operations."""
         return self._sub_processors
 
     async def handle_async(self, command: CliProcessCommand) -> str:
         return ""
 
 
-# ---------------------------------------------------------------------------
-# ec2 (parent)
-# ---------------------------------------------------------------------------
-
 class AwsEc2Processor(CliCommandProcessor):
+    """Parent processor for EC2 sub-commands (list, describe, start, stop, reboot, sg)."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._sub_processors: list[ICliCommandProcessor] = [
@@ -404,6 +395,7 @@ class AwsEc2Processor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns sub-processors for EC2 operations."""
         return self._sub_processors
 
     async def handle_async(self, command: CliProcessCommand) -> str:

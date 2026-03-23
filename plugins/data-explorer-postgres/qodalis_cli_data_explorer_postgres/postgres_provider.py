@@ -26,6 +26,7 @@ class PostgresDataExplorerProvider(IDataExplorerProvider):
     async def execute_async(
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:
+        """Execute a SQL query against the PostgreSQL database."""
         start = time.monotonic()
         conn: asyncpg.Connection | None = None
         try:
@@ -51,7 +52,6 @@ class PostgresDataExplorerProvider(IDataExplorerProvider):
                 )
             else:
                 status = await conn.execute(context.query, *( context.parameters or []))
-                # status is a string like "INSERT 0 1" or "UPDATE 3"
                 try:
                     affected = int(status.split()[-1])
                 except (ValueError, IndexError):
@@ -88,6 +88,7 @@ class PostgresDataExplorerProvider(IDataExplorerProvider):
     async def get_schema_async(
         self, options: DataExplorerProviderOptions
     ) -> DataExplorerSchemaResult | None:
+        """Return the public schema (tables, views, and their columns)."""
         conn: asyncpg.Connection | None = None
         try:
             conn = await asyncpg.connect(self._connection_string)
@@ -111,7 +112,6 @@ class PostgresDataExplorerProvider(IDataExplorerProvider):
                     table_name,
                 )
 
-                # Fetch primary key columns for this table
                 pk_rows = await conn.fetch(
                     "SELECT kcu.column_name "
                     "FROM information_schema.table_constraints tc "

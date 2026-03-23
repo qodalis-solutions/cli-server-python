@@ -20,11 +20,9 @@ from ..utils.output_helpers import (
 )
 
 
-# ---------------------------------------------------------------------------
-# iam users
-# ---------------------------------------------------------------------------
-
 class _IamUsersProcessor(CliCommandProcessor):
+    """Lists all IAM users."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -48,6 +46,7 @@ class _IamUsersProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches and returns all IAM users as a table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("iam", region=str(region) if region else None)
 
@@ -74,11 +73,9 @@ class _IamUsersProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list IAM users: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# iam roles
-# ---------------------------------------------------------------------------
-
 class _IamRolesProcessor(CliCommandProcessor):
+    """Lists all IAM roles."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -102,6 +99,7 @@ class _IamRolesProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches and returns all IAM roles as a table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("iam", region=str(region) if region else None)
 
@@ -128,11 +126,9 @@ class _IamRolesProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list IAM roles: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# iam policies
-# ---------------------------------------------------------------------------
-
 class _IamPoliciesProcessor(CliCommandProcessor):
+    """Lists customer-managed IAM policies."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -156,6 +152,7 @@ class _IamPoliciesProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches and returns customer-managed IAM policies as a table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("iam", region=str(region) if region else None)
 
@@ -181,11 +178,9 @@ class _IamPoliciesProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list IAM policies: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# iam (parent)
-# ---------------------------------------------------------------------------
-
 class AwsIamProcessor(CliCommandProcessor):
+    """Parent processor for IAM sub-commands (users, roles, policies)."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._sub_processors: list[ICliCommandProcessor] = [
@@ -204,6 +199,7 @@ class AwsIamProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns sub-processors for IAM operations."""
         return self._sub_processors
 
     async def handle_async(self, command: CliProcessCommand) -> str:

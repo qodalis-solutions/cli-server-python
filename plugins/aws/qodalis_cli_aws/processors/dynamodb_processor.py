@@ -22,11 +22,9 @@ from ..utils.output_helpers import (
 )
 
 
-# ---------------------------------------------------------------------------
-# dynamodb tables
-# ---------------------------------------------------------------------------
-
 class _DynamoDbTablesProcessor(CliCommandProcessor):
+    """Lists all DynamoDB table names."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -50,6 +48,7 @@ class _DynamoDbTablesProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches and returns all DynamoDB table names."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("dynamodb", region=str(region) if region else None)
 
@@ -66,11 +65,9 @@ class _DynamoDbTablesProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list DynamoDB tables: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# dynamodb describe
-# ---------------------------------------------------------------------------
-
 class _DynamoDbDescribeProcessor(CliCommandProcessor):
+    """Describes a DynamoDB table's metadata and key schema."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -97,6 +94,7 @@ class _DynamoDbDescribeProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Returns key schema, status, and size details for the specified table."""
         table_name = (command.value or "").strip()
         if not table_name:
             return build_error_response("Table name is required. Usage: dynamodb describe <table-name>")
@@ -133,11 +131,9 @@ class _DynamoDbDescribeProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to describe DynamoDB table: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# dynamodb scan
-# ---------------------------------------------------------------------------
-
 class _DynamoDbScanProcessor(CliCommandProcessor):
+    """Scans items from a DynamoDB table."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -165,6 +161,7 @@ class _DynamoDbScanProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Performs a scan on the specified table and returns items as JSON."""
         table_name = (command.value or "").strip()
         if not table_name:
             return build_error_response("Table name is required. Usage: dynamodb scan <table-name>")
@@ -185,11 +182,9 @@ class _DynamoDbScanProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to scan DynamoDB table: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# dynamodb query
-# ---------------------------------------------------------------------------
-
 class _DynamoDbQueryProcessor(CliCommandProcessor):
+    """Queries items from a DynamoDB table using a key condition expression."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -218,6 +213,7 @@ class _DynamoDbQueryProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Executes a DynamoDB query with the provided key condition."""
         table_name = (command.value or "").strip()
         if not table_name:
             return build_error_response("Table name is required. Usage: dynamodb query <table-name> --key <expression>")
@@ -246,11 +242,9 @@ class _DynamoDbQueryProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to query DynamoDB table: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# dynamodb (parent)
-# ---------------------------------------------------------------------------
-
 class AwsDynamoDbProcessor(CliCommandProcessor):
+    """Parent processor for DynamoDB sub-commands (tables, describe, scan, query)."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._sub_processors: list[ICliCommandProcessor] = [
@@ -270,6 +264,7 @@ class AwsDynamoDbProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns sub-processors for DynamoDB operations."""
         return self._sub_processors
 
     async def handle_async(self, command: CliProcessCommand) -> str:

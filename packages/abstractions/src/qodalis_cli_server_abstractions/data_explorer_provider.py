@@ -20,6 +20,14 @@ class IDataExplorerProvider(abc.ABC):
     async def execute_async(
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:
+        """Execute a query against the data source.
+
+        Args:
+            context: The execution context containing the query and parameters.
+
+        Returns:
+            The query result including rows and metadata.
+        """
         ...
 
     async def get_schema_async(

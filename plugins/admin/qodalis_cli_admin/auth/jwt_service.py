@@ -33,12 +33,9 @@ class JwtService:
     ) -> str:
         """Create a signed JWT token.
 
-        Parameters
-        ----------
-        payload:
-            Claims to embed in the token.
-        expires_in:
-            Lifetime in seconds.  Defaults to 24 hours.
+        Args:
+            payload: Claims to embed in the token.
+            expires_in: Lifetime in seconds. Defaults to 24 hours.
         """
         exp = int(time.time()) + (self.DEFAULT_EXPIRY_SECONDS if expires_in is None else expires_in)
         data = {**payload, "exp": exp, "iat": int(time.time())}
@@ -47,9 +44,7 @@ class JwtService:
     def verify_token(self, token: str) -> dict[str, Any]:
         """Decode and verify a JWT token.
 
-        Raises
-        ------
-        jwt.InvalidTokenError
-            If the token is invalid or expired.
+        Raises:
+            jwt.InvalidTokenError: If the token is invalid or expired.
         """
         return jwt.decode(token, self._secret, algorithms=["HS256"])

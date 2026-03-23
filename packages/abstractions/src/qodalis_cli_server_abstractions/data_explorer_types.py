@@ -8,6 +8,8 @@ from typing import Any
 
 
 class DataExplorerLanguage(str, Enum):
+    """Supported query languages for data explorer providers."""
+
     SQL = "sql"
     JSON = "json"
     SHELL = "shell"
@@ -17,6 +19,8 @@ class DataExplorerLanguage(str, Enum):
 
 
 class DataExplorerOutputFormat(str, Enum):
+    """Output formats for data explorer query results."""
+
     TABLE = "table"
     JSON = "json"
     CSV = "csv"
@@ -25,6 +29,8 @@ class DataExplorerOutputFormat(str, Enum):
 
 @dataclass
 class DataExplorerTemplate:
+    """A predefined query template with optional parameters."""
+
     name: str
     query: str
     description: str | None = None
@@ -33,6 +39,8 @@ class DataExplorerTemplate:
 
 @dataclass
 class DataExplorerParameterDescriptor:
+    """Describes a parameter accepted by a data explorer provider."""
+
     name: str
     description: str | None = None
     required: bool = False
@@ -41,6 +49,8 @@ class DataExplorerParameterDescriptor:
 
 @dataclass
 class DataExplorerProviderOptions:
+    """Configuration options for a data explorer provider."""
+
     name: str
     description: str
     language: DataExplorerLanguage = DataExplorerLanguage.SQL
@@ -53,6 +63,8 @@ class DataExplorerProviderOptions:
 
 @dataclass
 class DataExplorerExecutionContext:
+    """Context passed to a data explorer provider when executing a query."""
+
     query: str
     parameters: dict[str, Any]
     options: DataExplorerProviderOptions
@@ -60,6 +72,8 @@ class DataExplorerExecutionContext:
 
 @dataclass
 class DataExplorerResult:
+    """Result returned from a data explorer query execution."""
+
     success: bool
     source: str
     language: DataExplorerLanguage
@@ -74,6 +88,8 @@ class DataExplorerResult:
 
 @dataclass
 class DataExplorerSchemaColumn:
+    """Describes a single column in a data explorer schema."""
+
     name: str
     type: str
     nullable: bool = True
@@ -82,6 +98,8 @@ class DataExplorerSchemaColumn:
 
 @dataclass
 class DataExplorerSchemaTable:
+    """Describes a table or collection in a data explorer schema."""
+
     name: str
     type: str
     columns: list[DataExplorerSchemaColumn] = field(default_factory=list)
@@ -89,5 +107,7 @@ class DataExplorerSchemaTable:
 
 @dataclass
 class DataExplorerSchemaResult:
+    """Schema introspection result from a data explorer provider."""
+
     source: str
     tables: list[DataExplorerSchemaTable] = field(default_factory=list)

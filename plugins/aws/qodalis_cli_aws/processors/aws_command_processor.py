@@ -34,11 +34,9 @@ from .dynamodb_processor import AwsDynamoDbProcessor
 from .ecs_processor import AwsEcsProcessor
 
 
-# ---------------------------------------------------------------------------
-# aws configure set
-# ---------------------------------------------------------------------------
-
 class _AwsConfigureSetProcessor(CliCommandProcessor):
+    """Handles ``aws configure set`` to update AWS credentials and region."""
+
     def __init__(self, config_service: AwsConfigService, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._config_service = config_service
@@ -65,6 +63,7 @@ class _AwsConfigureSetProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Applies credential, region, and profile updates from arguments."""
         key = command.args.get("key")
         secret = command.args.get("secret")
         region = command.args.get("region")
@@ -90,11 +89,9 @@ class _AwsConfigureSetProcessor(CliCommandProcessor):
         return build_success_response("AWS configuration updated.")
 
 
-# ---------------------------------------------------------------------------
-# aws configure get
-# ---------------------------------------------------------------------------
-
 class _AwsConfigureGetProcessor(CliCommandProcessor):
+    """Handles ``aws configure get`` to display current configuration."""
+
     def __init__(self, config_service: AwsConfigService) -> None:
         super().__init__()
         self._config_service = config_service
@@ -111,6 +108,7 @@ class _AwsConfigureGetProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Returns the current AWS config summary with secrets masked."""
         summary = self._config_service.get_config_summary()
         entries = {
             "Access Key ID": summary.get("access_key_id") or "(not set)",
@@ -121,11 +119,9 @@ class _AwsConfigureGetProcessor(CliCommandProcessor):
         return build_response([format_as_key_value(entries)])
 
 
-# ---------------------------------------------------------------------------
-# aws configure profiles
-# ---------------------------------------------------------------------------
-
 class _AwsConfigureProfilesProcessor(CliCommandProcessor):
+    """Handles ``aws configure profiles`` to list locally available AWS profiles."""
+
     @property
     def command(self) -> str:
         return "profiles"
@@ -138,6 +134,7 @@ class _AwsConfigureProfilesProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Parses AWS config files and returns discovered profile names."""
         profiles: set[str] = set()
 
         home = Path.home()
@@ -158,6 +155,13 @@ class _AwsConfigureProfilesProcessor(CliCommandProcessor):
 
     @staticmethod
     def _parse_profiles(file_path: Path, pattern: re.Pattern[str], profiles: set[str]) -> None:
+        """Extracts profile names from an AWS config or credentials file.
+
+        Args:
+            file_path: Path to the AWS config file.
+            pattern: Regex to match profile section headers.
+            profiles: Set to add discovered profile names to.
+        """
         try:
             content = file_path.read_text(encoding="utf-8")
             for line in content.splitlines():
@@ -168,11 +172,9 @@ class _AwsConfigureProfilesProcessor(CliCommandProcessor):
             pass
 
 
-# ---------------------------------------------------------------------------
-# aws configure (parent)
-# ---------------------------------------------------------------------------
-
 class _AwsConfigureProcessor(CliCommandProcessor):
+    """Parent processor for ``aws configure`` sub-commands."""
+
     def __init__(self, config_service: AwsConfigService, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._sub_processors: list[ICliCommandProcessor] = [
@@ -191,17 +193,16 @@ class _AwsConfigureProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns sub-processors for set, get, and profiles commands."""
         return self._sub_processors
 
     async def handle_async(self, command: CliProcessCommand) -> str:
         return ""
 
 
-# ---------------------------------------------------------------------------
-# aws status
-# ---------------------------------------------------------------------------
-
 class _AwsStatusProcessor(CliCommandProcessor):
+    """Handles ``aws status`` to verify AWS connectivity via STS."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -218,6 +219,7 @@ class _AwsStatusProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Calls STS GetCallerIdentity and returns account details."""
         try:
             client = self._credential_manager.get_client("sts")
             response = client.get_caller_identity()
@@ -243,11 +245,13 @@ class _AwsStatusProcessor(CliCommandProcessor):
             return build_error_response(f"AWS status check failed: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# aws (root processor)
-# ---------------------------------------------------------------------------
-
 class AwsCommandProcessor(CliCommandProcessor):
+    """Root processor for all ``aws`` commands.
+
+    Registers sub-processors for configure, status, and all AWS service
+    commands (S3, EC2, Lambda, CloudWatch, SNS, SQS, ECS, DynamoDB, IAM).
+    """
+
     def __init__(self) -> None:
         super().__init__()
         self._config_service = AwsConfigService()
@@ -276,12 +280,15 @@ class AwsCommandProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns all registered AWS service sub-processors."""
         return self._sub_processors
 
     def get_credential_manager(self) -> AwsCredentialManager:
+        """Returns the shared credential manager instance."""
         return self._credential_manager
 
     def get_config_service(self) -> AwsConfigService:
+        """Returns the shared config service instance."""
         return self._config_service
 
     async def handle_async(self, command: CliProcessCommand) -> str:

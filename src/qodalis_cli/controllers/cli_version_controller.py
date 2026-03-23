@@ -10,6 +10,11 @@ SERVER_VERSION = "1.0.0"
 
 
 def create_cli_version_router() -> APIRouter:
+    """Create a FastAPI router for version discovery and server capabilities.
+
+    Returns:
+        A configured ``APIRouter`` with ``/versions`` and ``/capabilities`` endpoints.
+    """
     router = APIRouter()
 
     @router.get("/versions")

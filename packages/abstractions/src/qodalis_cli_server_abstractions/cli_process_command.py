@@ -6,6 +6,8 @@ from typing import Any
 
 @dataclass
 class CliProcessCommand:
+    """Parsed representation of a CLI command submitted for execution."""
+
     command: str = ""
     raw_command: str = ""
     value: str | None = None

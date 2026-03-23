@@ -14,6 +14,8 @@ from ..abstractions import (
 
 
 class _HttpGetProcessor(CliCommandProcessor):
+    """Sub-processor that performs HTTP GET requests."""
+
     @property
     def command(self) -> str:
         return "get"
@@ -40,6 +42,8 @@ class _HttpGetProcessor(CliCommandProcessor):
 
 
 class _HttpPostProcessor(CliCommandProcessor):
+    """Sub-processor that performs HTTP POST requests."""
+
     @property
     def command(self) -> str:
         return "post"
@@ -80,6 +84,17 @@ def _do_request(
     body: str | None = None,
     show_headers: bool = False,
 ) -> str:
+    """Perform an HTTP request and return a formatted text summary.
+
+    Args:
+        url: The target URL.
+        method: HTTP method (GET or POST).
+        body: Optional request body as a JSON string.
+        show_headers: Whether to include response headers in the output.
+
+    Returns:
+        A formatted string containing the status, headers (if requested), and body.
+    """
     try:
         data = body.encode("utf-8") if body else None
         req = urllib.request.Request(url, data=data, method=method)
@@ -100,7 +115,6 @@ def _do_request(
 
             lines.append("")
 
-            # Try to pretty-print JSON
             if "json" in content_type:
                 try:
                     parsed = json.loads(resp_body)
@@ -123,6 +137,8 @@ def _do_request(
 
 
 class CliHttpCommandProcessor(CliCommandProcessor):
+    """Command processor for making HTTP requests from the server."""
+
     @property
     def command(self) -> str:
         return "http"

@@ -30,6 +30,8 @@ class _DataExplorerRegistration:
 
 
 class CliBuilder:
+    """Fluent builder for registering command processors, modules, and services."""
+
     def __init__(self, registry: CliCommandRegistry) -> None:
         self._registry = registry
         self._modules: list[ICliModule] = []
@@ -38,10 +40,26 @@ class CliBuilder:
         self._data_explorer_registrations: list[_DataExplorerRegistration] = []
 
     def add_processor(self, processor: ICliCommandProcessor) -> CliBuilder:
+        """Register a single command processor.
+
+        Args:
+            processor: The processor to register.
+
+        Returns:
+            This builder for chaining.
+        """
         self._registry.register(processor)
         return self
 
     def add_module(self, module: ICliModule) -> CliBuilder:
+        """Register a module and all of its processors.
+
+        Args:
+            module: The module whose processors will be registered.
+
+        Returns:
+            This builder for chaining.
+        """
         self._modules.append(module)
         for processor in module.processors:
             self._registry.register(processor)
@@ -71,6 +89,7 @@ class CliBuilder:
 
     @property
     def filesystem_options(self) -> FileSystemOptions | None:
+        """Return the legacy filesystem options, if configured."""
         return self._filesystem_options
 
     def add_data_explorer_provider(
@@ -91,4 +110,5 @@ class CliBuilder:
 
     @property
     def registry(self) -> CliCommandRegistry:
+        """Return the underlying command registry."""
         return self._registry

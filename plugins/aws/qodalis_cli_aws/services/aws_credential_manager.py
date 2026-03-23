@@ -9,14 +9,25 @@ from .aws_config_service import AwsConfigService
 
 
 class AwsCredentialManager:
-    """Creates boto3 clients using the stored AWS configuration."""
+    """Creates and caches boto3 clients using the stored AWS configuration."""
 
     def __init__(self, config: AwsConfigService) -> None:
         self._config = config
         self._client_cache: dict[str, Any] = {}
 
     def get_client(self, service_name: str, region: str | None = None) -> Any:
-        """Return a boto3 client for *service_name*, re-using cached clients."""
+        """Returns a boto3 client for the given service, reusing cached instances.
+
+        Credentials are resolved from the config service first, then from
+        environment variables.
+
+        Args:
+            service_name: AWS service name (e.g. ``"s3"``, ``"ec2"``).
+            region: Optional region override; falls back to config and env vars.
+
+        Returns:
+            A boto3 service client.
+        """
         effective_region = (
             region
             or self._config.get_region()
@@ -44,4 +55,5 @@ class AwsCredentialManager:
         return self._client_cache[cache_key]
 
     def clear_cache(self) -> None:
+        """Clears all cached boto3 clients, forcing re-creation on next access."""
         self._client_cache.clear()

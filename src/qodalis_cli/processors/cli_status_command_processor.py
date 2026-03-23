@@ -7,6 +7,8 @@ from ..abstractions import CliCommandProcessor, CliProcessCommand
 
 
 class CliStatusCommandProcessor(CliCommandProcessor):
+    """Command processor that reports server status information."""
+
     @property
     def command(self) -> str:
         return "status"

@@ -44,6 +44,7 @@ class MongoDataExplorerProvider(IDataExplorerProvider):
     async def execute_async(
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:
+        """Execute a MongoDB query or command."""
         start = time.monotonic()
         client: AsyncIOMotorClient | None = None
         try:
@@ -51,7 +52,6 @@ class MongoDataExplorerProvider(IDataExplorerProvider):
             db = client[self._database]
             query = context.query.strip()
 
-            # Convenience commands
             if query.lower() == "show collections":
                 names = await db.list_collection_names()
                 rows = [{"name": n} for n in sorted(names)]
@@ -67,7 +67,6 @@ class MongoDataExplorerProvider(IDataExplorerProvider):
                 ]
                 return self._success(context, start, None, rows, len(rows))
 
-            # Parse db.collection.operation(...)
             parsed = self._parse_query(query)
             if parsed is None:
                 return self._error(
@@ -170,6 +169,7 @@ class MongoDataExplorerProvider(IDataExplorerProvider):
     async def get_schema_async(
         self, options: DataExplorerProviderOptions
     ) -> DataExplorerSchemaResult | None:
+        """Return collection names and inferred field schemas from sample documents."""
         client: AsyncIOMotorClient | None = None
         try:
             client = AsyncIOMotorClient(self._connection_string)
@@ -227,7 +227,7 @@ class MongoDataExplorerProvider(IDataExplorerProvider):
             return None
 
     def _split_and_parse_args(self, args_str: str) -> list[Any]:
-        """Split top-level arguments and parse each as JSON."""
+        """Split comma-separated top-level arguments and parse each as JSON."""
         args: list[str] = []
         depth = 0
         current: list[str] = []
@@ -257,6 +257,7 @@ class MongoDataExplorerProvider(IDataExplorerProvider):
         row_count: int,
         truncated: bool = False,
     ) -> DataExplorerResult:
+        """Build a successful DataExplorerResult."""
         return DataExplorerResult(
             success=True,
             source=context.options.name,
@@ -276,6 +277,7 @@ class MongoDataExplorerProvider(IDataExplorerProvider):
         start: float,
         error: str,
     ) -> DataExplorerResult:
+        """Build a failed DataExplorerResult with the given error message."""
         return DataExplorerResult(
             success=False,
             source=context.options.name,

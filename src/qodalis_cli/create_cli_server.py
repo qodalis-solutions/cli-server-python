@@ -27,6 +27,8 @@ from .services import (
 
 @dataclass
 class CliServerOptions:
+    """Configuration options for creating a CLI server instance."""
+
     base_path: str = "/api/qcli"
     cors: bool = True
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
@@ -35,6 +37,8 @@ class CliServerOptions:
 
 @dataclass
 class CliServerResult:
+    """Return value from ``create_cli_server`` containing the app and services."""
+
     app: FastAPI
     registry: CliCommandRegistry
     builder: CliBuilder
@@ -43,13 +47,20 @@ class CliServerResult:
 
 
 def create_cli_server(options: CliServerOptions | None = None) -> CliServerResult:
+    """Create and configure a fully wired FastAPI CLI server.
+
+    Args:
+        options: Optional server configuration. Uses defaults if ``None``.
+
+    Returns:
+        A ``CliServerResult`` containing the FastAPI app and all services.
+    """
     opts = options or CliServerOptions()
 
     event_socket_manager = CliEventSocketManager()
     log_socket_manager = CliLogSocketManager()
     shell_session_manager = CliShellSessionManager()
 
-    # Attach a log handler that forwards to WebSocket clients
     log_handler = WebSocketLogHandler(log_socket_manager)
     logging.getLogger().addHandler(log_handler)
 
@@ -82,26 +93,17 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     router_v2 = create_cli_router_v2(registry, executor)
     version_router = create_cli_version_router()
 
-    # API v1 routes
     app.include_router(router, prefix="/api/v1/qcli")
-
-    # API v2 routes
     app.include_router(router_v2, prefix="/api/v2/qcli")
-
-    # Version discovery routes
     app.include_router(version_router, prefix="/api/qcli")
 
-    # Custom basePath fallback (when user overrides the default)
     if opts.base_path != "/api/v1/qcli":
         app.include_router(router, prefix=opts.base_path)
 
-    # Filesystem API (opt-in via builder.set_file_storage_provider() or
-    # legacy builder.add_filesystem())
     if builder.file_storage_provider is not None:
         fs_router = create_filesystem_router(builder.file_storage_provider)
         app.include_router(fs_router, prefix="/api/qcli/fs")
     elif builder.filesystem_options is not None:
-        # Legacy path: create an OsFileStorageProvider from the options
         os_provider = OsFileStorageProvider(
             OsProviderOptions(
                 allowed_paths=builder.filesystem_options.allowed_paths
@@ -110,7 +112,6 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         fs_router = create_filesystem_router(os_provider)
         app.include_router(fs_router, prefix="/api/qcli/fs")
 
-    # Data Explorer API (opt-in via builder.add_data_explorer_provider())
     if builder.data_explorer_registrations:
         from qodalis_cli_data_explorer import (
             DataExplorerRegistry,
@@ -127,7 +128,6 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         )
         app.include_router(data_explorer_router, prefix="/api/qcli/data-explorer")
 
-    # WebSocket event stream
     @app.websocket("/ws/v1/qcli/events")
     async def websocket_events_v1(websocket: WebSocket) -> None:
         await event_socket_manager.handle_connection(websocket)
@@ -136,7 +136,6 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     async def websocket_events(websocket: WebSocket) -> None:
         await event_socket_manager.handle_connection(websocket)
 
-    # Log WebSocket endpoints
     async def _handle_logs(websocket: WebSocket) -> None:
         level_filter = websocket.query_params.get("level") or None
         await log_socket_manager.handle_connection(websocket, level_filter)
@@ -149,7 +148,6 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     async def websocket_logs(websocket: WebSocket) -> None:
         await _handle_logs(websocket)
 
-    # Shell WebSocket endpoints
     async def _handle_shell(websocket: WebSocket) -> None:
         await websocket.accept()
         cols = int(websocket.query_params.get("cols", "80")) or 80

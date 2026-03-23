@@ -20,11 +20,9 @@ from ..utils.output_helpers import (
 )
 
 
-# ---------------------------------------------------------------------------
-# cloudwatch alarms
-# ---------------------------------------------------------------------------
-
 class _CloudWatchAlarmsProcessor(CliCommandProcessor):
+    """Lists CloudWatch metric alarms."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -48,6 +46,7 @@ class _CloudWatchAlarmsProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches and returns all CloudWatch metric alarms."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("cloudwatch", region=str(region) if region else None)
 
@@ -74,11 +73,9 @@ class _CloudWatchAlarmsProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list alarms: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# cloudwatch logs <log-group>
-# ---------------------------------------------------------------------------
-
 class _CloudWatchLogsProcessor(CliCommandProcessor):
+    """Fetches log events from a CloudWatch log group."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -107,6 +104,7 @@ class _CloudWatchLogsProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Retrieves and formats recent log events from the specified log group."""
         log_group_name = (command.value or "").strip()
         if not log_group_name:
             return build_error_response("Log group name is required. Usage: cloudwatch logs <log-group>")
@@ -149,11 +147,9 @@ class _CloudWatchLogsProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to fetch log events: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# cloudwatch metrics <namespace>
-# ---------------------------------------------------------------------------
-
 class _CloudWatchMetricsProcessor(CliCommandProcessor):
+    """Lists CloudWatch metrics for a given namespace."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -181,6 +177,7 @@ class _CloudWatchMetricsProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Queries metrics for the specified CloudWatch namespace."""
         namespace = (command.value or "").strip()
         if not namespace:
             return build_error_response("Namespace is required. Usage: cloudwatch metrics <namespace>")
@@ -209,11 +206,9 @@ class _CloudWatchMetricsProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list metrics: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# cloudwatch (parent)
-# ---------------------------------------------------------------------------
-
 class AwsCloudWatchProcessor(CliCommandProcessor):
+    """Parent processor for CloudWatch sub-commands (alarms, logs, metrics)."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._sub_processors: list[ICliCommandProcessor] = [
@@ -232,6 +227,7 @@ class AwsCloudWatchProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns sub-processors for alarms, logs, and metrics."""
         return self._sub_processors
 
     async def handle_async(self, command: CliProcessCommand) -> str:

@@ -35,11 +35,6 @@ def _map_provider_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail=str(exc))
 
 
-# ---------------------------------------------------------------------------
-# Provider-based router (new)
-# ---------------------------------------------------------------------------
-
-
 def create_filesystem_router(
     provider_or_validator: Union[IFileStorageProvider, FileSystemPathValidator],
 ) -> APIRouter:
@@ -159,11 +154,6 @@ def _create_provider_router(provider: IFileStorageProvider) -> APIRouter:
             raise _map_provider_error(exc) from exc
 
     return router
-
-
-# ---------------------------------------------------------------------------
-# Legacy validator-based router (backward compatible)
-# ---------------------------------------------------------------------------
 
 
 def _safe_validate(validator: FileSystemPathValidator, path: str) -> str:

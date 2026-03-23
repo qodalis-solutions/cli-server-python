@@ -1,3 +1,5 @@
+"""Job logger that captures log entries in-memory."""
+
 from __future__ import annotations
 
 import datetime
@@ -13,9 +15,11 @@ class CliJobLogger(ICliJobLogger):
 
     @property
     def entries(self) -> list[JobLogEntry]:
+        """Return the captured log entries."""
         return self._entries
 
     def debug(self, message: str) -> None:
+        """Append a debug-level log entry."""
         self._entries.append(
             JobLogEntry(
                 timestamp=datetime.datetime.now(datetime.UTC),
@@ -25,6 +29,7 @@ class CliJobLogger(ICliJobLogger):
         )
 
     def info(self, message: str) -> None:
+        """Append an info-level log entry."""
         self._entries.append(
             JobLogEntry(
                 timestamp=datetime.datetime.now(datetime.UTC),
@@ -34,6 +39,7 @@ class CliJobLogger(ICliJobLogger):
         )
 
     def warning(self, message: str) -> None:
+        """Append a warning-level log entry."""
         self._entries.append(
             JobLogEntry(
                 timestamp=datetime.datetime.now(datetime.UTC),
@@ -43,6 +49,7 @@ class CliJobLogger(ICliJobLogger):
         )
 
     def error(self, message: str) -> None:
+        """Append an error-level log entry."""
         self._entries.append(
             JobLogEntry(
                 timestamp=datetime.datetime.now(datetime.UTC),

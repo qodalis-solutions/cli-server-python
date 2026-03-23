@@ -15,16 +15,20 @@ class AwsModule(CliModule):
 
     @property
     def name(self) -> str:
+        """Returns the module name."""
         return "aws"
 
     @property
     def version(self) -> str:
+        """Returns the module version."""
         return "1.0.0"
 
     @property
     def description(self) -> str:
+        """Returns a human-readable description of the module."""
         return "Provides AWS cloud resource management commands"
 
     @property
     def processors(self) -> Sequence[ICliCommandProcessor]:
+        """Returns the command processors provided by this module."""
         return [AwsCommandProcessor()]

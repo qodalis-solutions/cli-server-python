@@ -22,11 +22,9 @@ from ..utils.output_helpers import (
 )
 
 
-# ---------------------------------------------------------------------------
-# sns topics
-# ---------------------------------------------------------------------------
-
 class _SnsTopicsProcessor(CliCommandProcessor):
+    """Lists all SNS topics."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -50,6 +48,7 @@ class _SnsTopicsProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches and returns all SNS topic ARNs."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("sns", region=str(region) if region else None)
 
@@ -67,11 +66,9 @@ class _SnsTopicsProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list SNS topics: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# sns publish
-# ---------------------------------------------------------------------------
-
 class _SnsPublishProcessor(CliCommandProcessor):
+    """Publishes a message to an SNS topic."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -99,6 +96,7 @@ class _SnsPublishProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Publishes the provided message to the specified SNS topic ARN."""
         topic_arn = (command.value or "").strip()
         if not topic_arn:
             return build_error_response("Topic ARN is required. Usage: sns publish <topic-arn> --message <message>")
@@ -117,11 +115,9 @@ class _SnsPublishProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to publish message: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# sns subscriptions
-# ---------------------------------------------------------------------------
-
 class _SnsSubscriptionsProcessor(CliCommandProcessor):
+    """Lists SNS subscriptions, optionally filtered by topic ARN."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -145,6 +141,7 @@ class _SnsSubscriptionsProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches subscriptions for a specific topic or all subscriptions."""
         topic_arn = (command.value or "").strip() or None
 
         region = command.args.get("region")
@@ -177,11 +174,9 @@ class _SnsSubscriptionsProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list SNS subscriptions: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# sns (parent)
-# ---------------------------------------------------------------------------
-
 class AwsSnsProcessor(CliCommandProcessor):
+    """Parent processor for SNS sub-commands (topics, publish, subscriptions)."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._sub_processors: list[ICliCommandProcessor] = [
@@ -200,6 +195,7 @@ class AwsSnsProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns sub-processors for SNS operations."""
         return self._sub_processors
 
     async def handle_async(self, command: CliProcessCommand) -> str:

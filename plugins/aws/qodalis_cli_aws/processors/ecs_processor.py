@@ -20,11 +20,9 @@ from ..utils.output_helpers import (
 )
 
 
-# ---------------------------------------------------------------------------
-# ecs clusters
-# ---------------------------------------------------------------------------
-
 class _EcsClustersProcessor(CliCommandProcessor):
+    """Lists all ECS clusters with status and task counts."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -48,6 +46,7 @@ class _EcsClustersProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches cluster ARNs and describes each cluster's status."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("ecs", region=str(region) if region else None)
 
@@ -77,11 +76,9 @@ class _EcsClustersProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list ECS clusters: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# ecs services
-# ---------------------------------------------------------------------------
-
 class _EcsServicesProcessor(CliCommandProcessor):
+    """Lists ECS services in a specified cluster."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -109,6 +106,7 @@ class _EcsServicesProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches and describes all services in the specified ECS cluster."""
         cluster = (command.value or "").strip()
         if not cluster:
             return build_error_response("Cluster name or ARN is required. Usage: ecs services <cluster>")
@@ -143,11 +141,9 @@ class _EcsServicesProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list ECS services: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# ecs tasks
-# ---------------------------------------------------------------------------
-
 class _EcsTasksProcessor(CliCommandProcessor):
+    """Lists ECS tasks in a specified cluster."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -175,6 +171,7 @@ class _EcsTasksProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches and describes all tasks running in the specified ECS cluster."""
         cluster = (command.value or "").strip()
         if not cluster:
             return build_error_response("Cluster name or ARN is required. Usage: ecs tasks <cluster>")
@@ -208,11 +205,9 @@ class _EcsTasksProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list ECS tasks: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# ecs (parent)
-# ---------------------------------------------------------------------------
-
 class AwsEcsProcessor(CliCommandProcessor):
+    """Parent processor for ECS sub-commands (clusters, services, tasks)."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._sub_processors: list[ICliCommandProcessor] = [
@@ -231,6 +226,7 @@ class AwsEcsProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns sub-processors for ECS operations."""
         return self._sub_processors
 
     async def handle_async(self, command: CliProcessCommand) -> str:

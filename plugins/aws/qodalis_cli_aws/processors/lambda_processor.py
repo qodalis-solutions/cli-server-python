@@ -22,11 +22,9 @@ from ..utils.output_helpers import (
 )
 
 
-# ---------------------------------------------------------------------------
-# lambda list
-# ---------------------------------------------------------------------------
-
 class _LambdaListProcessor(CliCommandProcessor):
+    """Lists all Lambda functions with runtime and memory details."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -50,6 +48,7 @@ class _LambdaListProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches and returns all Lambda functions as a table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("lambda", region=str(region) if region else None)
 
@@ -76,11 +75,9 @@ class _LambdaListProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list Lambda functions: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# lambda invoke
-# ---------------------------------------------------------------------------
-
 class _LambdaInvokeProcessor(CliCommandProcessor):
+    """Invokes a Lambda function and returns the result."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -108,6 +105,7 @@ class _LambdaInvokeProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Invokes the specified Lambda function with an optional JSON payload."""
         function_name = (command.value or "").strip()
         if not function_name:
             return build_error_response("Function name is required. Usage: lambda invoke <function-name>")
@@ -146,11 +144,9 @@ class _LambdaInvokeProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to invoke function: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# lambda logs
-# ---------------------------------------------------------------------------
-
 class _LambdaLogsProcessor(CliCommandProcessor):
+    """Fetches recent CloudWatch logs for a Lambda function."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -178,6 +174,7 @@ class _LambdaLogsProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Queries the ``/aws/lambda/<name>`` log group for recent events."""
         function_name = (command.value or "").strip()
         if not function_name:
             return build_error_response("Function name is required. Usage: lambda logs <function-name>")
@@ -219,11 +216,9 @@ class _LambdaLogsProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to fetch logs: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# lambda (parent)
-# ---------------------------------------------------------------------------
-
 class AwsLambdaProcessor(CliCommandProcessor):
+    """Parent processor for Lambda sub-commands (list, invoke, logs)."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._sub_processors: list[ICliCommandProcessor] = [
@@ -242,6 +237,7 @@ class AwsLambdaProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns sub-processors for Lambda operations."""
         return self._sub_processors
 
     async def handle_async(self, command: CliProcessCommand) -> str:

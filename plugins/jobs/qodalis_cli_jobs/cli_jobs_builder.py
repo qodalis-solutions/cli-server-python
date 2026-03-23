@@ -1,3 +1,5 @@
+"""Fluent builder for configuring and creating the jobs plugin."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

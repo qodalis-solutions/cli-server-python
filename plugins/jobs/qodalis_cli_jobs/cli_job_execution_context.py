@@ -1,3 +1,5 @@
+"""Concrete execution context for job runs."""
+
 from __future__ import annotations
 
 from qodalis_cli_server_abstractions.jobs import ICliJobExecutionContext, ICliJobLogger
@@ -13,6 +15,7 @@ class CliJobExecutionContext(ICliJobExecutionContext):
 
     @property
     def logger(self) -> ICliJobLogger:
+        """Return the logger for this execution."""
         return self._logger
 
     @property

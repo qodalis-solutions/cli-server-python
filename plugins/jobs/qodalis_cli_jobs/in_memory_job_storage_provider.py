@@ -1,3 +1,5 @@
+"""In-memory job storage provider."""
+
 from __future__ import annotations
 
 from qodalis_cli_server_abstractions.jobs import (
@@ -11,14 +13,12 @@ class InMemoryJobStorageProvider(ICliJobStorageProvider):
     """In-memory implementation — data is lost on server restart."""
 
     def __init__(self) -> None:
-        # job_id -> list of executions (newest first)
         self._executions: dict[str, list[JobExecution]] = {}
-        # execution_id -> execution
         self._executions_by_id: dict[str, JobExecution] = {}
-        # job_id -> JobState
         self._states: dict[str, JobState] = {}
 
     async def save_execution(self, execution: JobExecution) -> None:
+        """Persist or update a job execution record."""
         self._executions_by_id[execution.id] = execution
         job_list = self._executions.setdefault(execution.job_id, [])
         # Update if existing, else prepend
@@ -36,6 +36,7 @@ class InMemoryJobStorageProvider(ICliJobStorageProvider):
         offset: int = 0,
         status: str | None = None,
     ) -> tuple[list[JobExecution], int]:
+        """Return a paginated list of executions for a job and the total count."""
         all_items = self._executions.get(job_id, [])
         if status:
             all_items = [e for e in all_items if e.status == status]
@@ -44,13 +45,17 @@ class InMemoryJobStorageProvider(ICliJobStorageProvider):
         return items, total
 
     async def get_execution(self, execution_id: str) -> JobExecution | None:
+        """Return a single execution by ID, or ``None``."""
         return self._executions_by_id.get(execution_id)
 
     async def save_job_state(self, job_id: str, state: JobState) -> None:
+        """Persist the current state of a job."""
         self._states[job_id] = state
 
     async def get_job_state(self, job_id: str) -> JobState | None:
+        """Return the persisted state for a job, or ``None``."""
         return self._states.get(job_id)
 
     async def get_all_job_states(self) -> dict[str, JobState]:
+        """Return all persisted job states."""
         return dict(self._states)

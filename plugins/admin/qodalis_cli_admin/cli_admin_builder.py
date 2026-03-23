@@ -77,7 +77,6 @@ class CliAdminBuilder:
         """Build the plugin, returning the router, auth dependency, and log buffer."""
         start_time = time.time()
 
-        # Services
         config = AdminConfig(
             username=self._username,
             password=self._password,
@@ -89,14 +88,11 @@ class CliAdminBuilder:
         module_registry = ModuleRegistry(deps.builder)
         auth_dep = create_auth_dependency(jwt_service)
 
-        # Build the top-level router
         router = APIRouter()
 
-        # Auth routes (login is public, /me is protected)
         auth_router = create_auth_router(config, jwt_service, auth_dependency=auth_dep)
         router.include_router(auth_router, prefix="/auth")
 
-        # Detect enabled features
         enabled_features: list[str] = list(deps.enabled_features or [])
 
         if "filesystem" not in enabled_features and (
@@ -112,7 +108,6 @@ class CliAdminBuilder:
                     enabled_features.append("jobs")
                     break
 
-        # Protected routes
         status_router = create_status_router(
             start_time, deps.event_socket_manager, auth_dep, enabled_features,
             registry=deps.registry,
@@ -131,7 +126,6 @@ class CliAdminBuilder:
         ws_clients_router = create_ws_clients_router(deps.event_socket_manager, auth_dep)
         router.include_router(ws_clients_router)
 
-        # Resolve dashboard SPA
         dashboard_dir = resolve_dashboard_dir(self._dashboard_path)
         dashboard_app = None
 

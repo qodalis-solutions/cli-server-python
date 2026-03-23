@@ -9,7 +9,6 @@ from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
 
-# Level ordering from lowest to highest severity
 _LEVEL_ORDER = {
     "verbose": 0,
     "debug": 1,
@@ -30,6 +29,12 @@ class CliLogSocketManager:
     async def handle_connection(
         self, websocket: WebSocket, level_filter: str | None = None
     ) -> None:
+        """Accept a WebSocket connection for log streaming.
+
+        Args:
+            websocket: The incoming WebSocket connection.
+            level_filter: Optional minimum log level to send to this client.
+        """
         await websocket.accept()
         client_id = self._next_id
         self._next_id += 1
@@ -38,7 +43,6 @@ class CliLogSocketManager:
         try:
             await websocket.send_text(json.dumps({"type": "connected"}))
 
-            # Keep the connection open until the client disconnects
             while True:
                 try:
                     await websocket.receive_text()
@@ -134,6 +138,7 @@ class WebSocketLogHandler(logging.Handler):
         self.manager = manager
 
     def emit(self, record: logging.LogRecord) -> None:
+        """Format a log record and broadcast it via the socket manager."""
         level = self.map_log_level(record.levelno)
         category = record.name
         message = self.format(record) if self.formatter else record.getMessage()
@@ -141,6 +146,14 @@ class WebSocketLogHandler(logging.Handler):
 
     @staticmethod
     def map_log_level(levelno: int) -> str:
+        """Map a Python logging level number to a string level name.
+
+        Args:
+            levelno: The numeric logging level.
+
+        Returns:
+            A string level name (debug, information, warning, error, or fatal).
+        """
         if levelno <= logging.DEBUG:
             return "debug"
         elif levelno <= logging.INFO:

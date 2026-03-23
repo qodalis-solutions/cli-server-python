@@ -5,6 +5,8 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class ICliCommandParameterDescriptor(Protocol):
+    """Protocol describing a parameter accepted by a CLI command."""
+
     name: str
     description: str
     required: bool
@@ -14,6 +16,8 @@ class ICliCommandParameterDescriptor(Protocol):
 
 
 class CliCommandParameterDescriptor:
+    """Concrete implementation of a CLI command parameter descriptor."""
+
     def __init__(
         self,
         name: str,

@@ -6,6 +6,8 @@ from ..abstractions import CliCommandProcessor, CliProcessCommand, ICliCommandPr
 
 
 class _Base64EncodeProcessor(CliCommandProcessor):
+    """Sub-processor that encodes text to Base64."""
+
     @property
     def command(self) -> str:
         return "encode"
@@ -22,6 +24,8 @@ class _Base64EncodeProcessor(CliCommandProcessor):
 
 
 class _Base64DecodeProcessor(CliCommandProcessor):
+    """Sub-processor that decodes Base64 to text."""
+
     @property
     def command(self) -> str:
         return "decode"
@@ -41,6 +45,8 @@ class _Base64DecodeProcessor(CliCommandProcessor):
 
 
 class CliBase64CommandProcessor(CliCommandProcessor):
+    """Command processor for Base64 encoding and decoding."""
+
     @property
     def command(self) -> str:
         return "base64"

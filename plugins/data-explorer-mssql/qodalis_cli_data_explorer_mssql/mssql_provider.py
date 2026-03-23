@@ -18,8 +18,6 @@ from qodalis_cli_server_abstractions import (
     IDataExplorerProvider,
 )
 
-# Regex to parse ADO.NET-style connection strings.
-# Supports keys: Server, Database, User Id, Password, TrustServerCertificate, etc.
 _CS_RE = re.compile(r"(?P<key>[^=;]+)=(?P<value>[^;]*)", re.IGNORECASE)
 
 
@@ -46,7 +44,6 @@ class MssqlDataExplorerProvider(IDataExplorerProvider):
         params = _parse_connection_string(connection_string)
 
         server_raw = params.get("server", "localhost")
-        # Server may include a port as "host,port"
         if "," in server_raw:
             host_part, port_part = server_raw.split(",", 1)
             self._host = host_part.strip()
@@ -62,11 +59,8 @@ class MssqlDataExplorerProvider(IDataExplorerProvider):
         self._user = params.get("userid") or params.get("uid", "sa")
         self._password = params.get("password") or params.get("pwd", "")
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _connect(self) -> pymssql.Connection:
+        """Open a connection to the SQL Server instance."""
         return pymssql.connect(
             server=self._host,
             port=self._port,
@@ -78,6 +72,7 @@ class MssqlDataExplorerProvider(IDataExplorerProvider):
     def _execute_sync(
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:
+        """Synchronous query execution, called via ``asyncio.to_thread``."""
         start = time.monotonic()
         conn: pymssql.Connection | None = None
         try:
@@ -135,12 +130,12 @@ class MssqlDataExplorerProvider(IDataExplorerProvider):
     def _get_schema_sync(
         self, options: DataExplorerProviderOptions
     ) -> DataExplorerSchemaResult | None:
+        """Synchronous schema introspection, called via ``asyncio.to_thread``."""
         conn: pymssql.Connection | None = None
         try:
             conn = self._connect()
             cursor = conn.cursor()
 
-            # List all user tables and views in the dbo schema
             cursor.execute(
                 "SELECT TABLE_NAME, TABLE_TYPE "
                 "FROM INFORMATION_SCHEMA.TABLES "
@@ -160,7 +155,6 @@ class MssqlDataExplorerProvider(IDataExplorerProvider):
                 )
                 col_rows = cursor.fetchall()
 
-                # Determine primary key columns via INFORMATION_SCHEMA
                 cursor.execute(
                     "SELECT kcu.COLUMN_NAME "
                     "FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS tc "
@@ -186,7 +180,6 @@ class MssqlDataExplorerProvider(IDataExplorerProvider):
                     for col_name, data_type, is_nullable in col_rows
                 ]
 
-                # Normalise table_type to match SQLite plugin convention
                 normalised_type = (
                     "view" if table_type.strip().upper() == "VIEW" else "table"
                 )
@@ -203,16 +196,14 @@ class MssqlDataExplorerProvider(IDataExplorerProvider):
             if conn is not None:
                 conn.close()
 
-    # ------------------------------------------------------------------
-    # IDataExplorerProvider interface
-    # ------------------------------------------------------------------
-
     async def execute_async(
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:
+        """Execute a SQL query against the SQL Server database."""
         return await asyncio.to_thread(self._execute_sync, context)
 
     async def get_schema_async(
         self, options: DataExplorerProviderOptions
     ) -> DataExplorerSchemaResult | None:
+        """Return the dbo schema (tables, views, and their columns)."""
         return await asyncio.to_thread(self._get_schema_sync, options)

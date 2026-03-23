@@ -25,6 +25,7 @@ class SqlDataExplorerProvider(IDataExplorerProvider):
     async def execute_async(
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:
+        """Execute a SQL query against the SQLite database."""
         start = time.monotonic()
         conn: sqlite3.Connection | None = None
         try:
@@ -83,6 +84,7 @@ class SqlDataExplorerProvider(IDataExplorerProvider):
     async def get_schema_async(
         self, options: DataExplorerProviderOptions
     ) -> DataExplorerSchemaResult | None:
+        """Return the database schema (tables, views, and their columns)."""
         conn: sqlite3.Connection | None = None
         try:
             conn = sqlite3.connect(self._filename)

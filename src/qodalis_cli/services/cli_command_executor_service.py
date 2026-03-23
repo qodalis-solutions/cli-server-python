@@ -12,11 +12,24 @@ logger = logging.getLogger(__name__)
 
 
 class ICliCommandExecutorService(abc.ABC):
+    """Interface for a service that executes parsed CLI commands."""
+
     @abc.abstractmethod
-    async def execute_async(self, command: CliProcessCommand) -> CliServerResponse: ...
+    async def execute_async(self, command: CliProcessCommand) -> CliServerResponse:
+        """Execute a command and return a structured response.
+
+        Args:
+            command: The parsed command to execute.
+
+        Returns:
+            A ``CliServerResponse`` containing outputs and an exit code.
+        """
+        ...
 
 
 class CliCommandExecutorService(ICliCommandExecutorService):
+    """Default executor that resolves processors from a registry and runs them."""
+
     def __init__(self, registry: ICliCommandRegistry) -> None:
         self._registry = registry
 

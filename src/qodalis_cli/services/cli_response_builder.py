@@ -16,33 +16,51 @@ from ..models.cli_server_response import CliServerResponse
 
 
 class ICliResponseBuilder(abc.ABC):
+    """Interface for incrementally building a ``CliServerResponse``."""
+
     @abc.abstractmethod
     def write_text(
         self,
         text: str,
         style: str | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Append a text output."""
+        ...
 
     @abc.abstractmethod
-    def write_table(self, headers: list[str], rows: list[list[str]]) -> None: ...
+    def write_table(self, headers: list[str], rows: list[list[str]]) -> None:
+        """Append a table output."""
+        ...
 
     @abc.abstractmethod
-    def write_list(self, items: list[str], ordered: bool = False) -> None: ...
+    def write_list(self, items: list[str], ordered: bool = False) -> None:
+        """Append a list output."""
+        ...
 
     @abc.abstractmethod
-    def write_json(self, value: Any) -> None: ...
+    def write_json(self, value: Any) -> None:
+        """Append a JSON output."""
+        ...
 
     @abc.abstractmethod
-    def write_key_value(self, entries: dict[str, str]) -> None: ...
+    def write_key_value(self, entries: dict[str, str]) -> None:
+        """Append a key-value output."""
+        ...
 
     @abc.abstractmethod
-    def set_exit_code(self, code: int) -> None: ...
+    def set_exit_code(self, code: int) -> None:
+        """Set the response exit code."""
+        ...
 
     @abc.abstractmethod
-    def build(self) -> CliServerResponse: ...
+    def build(self) -> CliServerResponse:
+        """Build and return the final ``CliServerResponse``."""
+        ...
 
 
 class CliResponseBuilder(ICliResponseBuilder):
+    """Default builder that accumulates outputs and produces a ``CliServerResponse``."""
+
     def __init__(self) -> None:
         self._exit_code = 0
         self._outputs: list[CliServerOutput] = []

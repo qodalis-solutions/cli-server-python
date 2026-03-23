@@ -28,6 +28,7 @@ class ElasticsearchDataExplorerProvider(IDataExplorerProvider):
     async def execute_async(
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:
+        """Execute an HTTP request against the Elasticsearch cluster."""
         start = time.monotonic()
         es: AsyncElasticsearch | None = None
         try:
@@ -36,7 +37,6 @@ class ElasticsearchDataExplorerProvider(IDataExplorerProvider):
             query = (context.query or "").strip()
             lines = query.splitlines()
 
-            # Parse first line: "VERB /path" or just "/path"
             first_line = lines[0].strip() if lines else ""
             parts = first_line.split(None, 1)
 
@@ -46,18 +46,15 @@ class ElasticsearchDataExplorerProvider(IDataExplorerProvider):
                 method = parts[0].upper()
                 path = parts[1].strip()
             else:
-                # No verb — treat entire first line as path, default to GET
                 method = "GET"
                 path = first_line
 
-            # Remaining lines form the JSON body
             body_lines = lines[1:]
             body_text = "\n".join(body_lines).strip()
             body: Any = None
             if body_text:
                 body = json.loads(body_text)
 
-            # Append ?format=json for _cat endpoints that lack it
             if "/_cat/" in path or path.startswith("_cat/"):
                 if "format=json" not in path:
                     sep = "&" if "?" in path else "?"
@@ -71,7 +68,6 @@ class ElasticsearchDataExplorerProvider(IDataExplorerProvider):
 
             raw = response.body if hasattr(response, "body") else response
 
-            # Flatten _search hits into rows
             if isinstance(raw, dict) and "hits" in raw and isinstance(raw["hits"], dict):
                 hits = raw["hits"].get("hits", [])
                 if hits:
@@ -100,7 +96,6 @@ class ElasticsearchDataExplorerProvider(IDataExplorerProvider):
                         error=None,
                     )
 
-            # _cat or other list responses
             if isinstance(raw, list):
                 if raw:
                     columns = list(raw[0].keys()) if isinstance(raw[0], dict) else ["value"]
@@ -125,7 +120,6 @@ class ElasticsearchDataExplorerProvider(IDataExplorerProvider):
                     error=None,
                 )
 
-            # Generic dict response — serialize as single JSON column
             raw_json = json.dumps(raw, default=str)
             return DataExplorerResult(
                 success=True,
@@ -160,11 +154,11 @@ class ElasticsearchDataExplorerProvider(IDataExplorerProvider):
     async def get_schema_async(
         self, options: DataExplorerProviderOptions
     ) -> DataExplorerSchemaResult | None:
+        """Return index names and their field mappings."""
         es: AsyncElasticsearch | None = None
         try:
             es = AsyncElasticsearch(self._node)
 
-            # Fetch index list
             indices_response = await es.perform_request(
                 method="GET",
                 path="/_cat/indices?format=json",

@@ -1,3 +1,5 @@
+"""Background job scheduler using asyncio tasks."""
+
 from __future__ import annotations
 
 import asyncio
@@ -43,7 +45,6 @@ class _JobRegistration:
     queue: deque[int] = field(default_factory=deque)  # queued retry_attempt values
 
 
-# Type alias for the broadcast callback.
 BroadcastFn = Callable[[str], Awaitable[None]]
 
 
@@ -60,21 +61,15 @@ class CliJobScheduler:
         self._registrations: dict[str, _JobRegistration] = {}
         self._running = False
 
-    # ------------------------------------------------------------------
-    # Public properties
-    # ------------------------------------------------------------------
-
     @property
     def registrations(self) -> dict[str, _JobRegistration]:
+        """Return the map of job ID to registration state."""
         return self._registrations
 
     @property
     def storage(self) -> ICliJobStorageProvider:
+        """Return the storage provider used for job state persistence."""
         return self._storage
-
-    # ------------------------------------------------------------------
-    # Registration
-    # ------------------------------------------------------------------
 
     def register(self, job: ICliJob, options: CliJobOptions) -> str:
         """Register a job. Returns the job id."""
@@ -91,10 +86,6 @@ class CliJobScheduler:
         )
         self._registrations[job_id] = reg
         return job_id
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     async def start(self) -> None:
         """Load persisted states and start timers for active jobs."""
@@ -135,11 +126,8 @@ class CliJobScheduler:
                 ),
             )
 
-    # ------------------------------------------------------------------
-    # Control methods
-    # ------------------------------------------------------------------
-
     async def trigger(self, job_id: str) -> None:
+        """Manually trigger a job execution."""
         reg = self._get_registration(job_id)
         if reg.current_execution_id is not None:
             policy = reg.options.overlap_policy
@@ -154,6 +142,7 @@ class CliJobScheduler:
         asyncio.create_task(self._execute_job(reg, retry_attempt=0))
 
     async def pause(self, job_id: str) -> None:
+        """Pause a running job, cancelling its next scheduled execution."""
         reg = self._get_registration(job_id)
         if reg.status == "paused":
             raise InvalidOperationError("Job is already paused")
@@ -163,6 +152,7 @@ class CliJobScheduler:
         await self._broadcast({"type": "job:paused", "jobId": job_id})
 
     async def resume(self, job_id: str) -> None:
+        """Resume a paused job and reschedule its next execution."""
         reg = self._get_registration(job_id)
         if reg.status != "paused":
             raise InvalidOperationError("Job is not paused")
@@ -172,6 +162,7 @@ class CliJobScheduler:
         await self._broadcast({"type": "job:resumed", "jobId": job_id})
 
     async def stop_job(self, job_id: str) -> None:
+        """Stop a job permanently, cancelling any running execution."""
         reg = self._get_registration(job_id)
         reg.status = "stopped"
         self._cancel_timer(reg)
@@ -181,6 +172,7 @@ class CliJobScheduler:
         await self._broadcast({"type": "job:stopped", "jobId": job_id})
 
     async def cancel_current(self, job_id: str) -> None:
+        """Cancel the currently running execution for a job."""
         reg = self._get_registration(job_id)
         if reg.current_execution_id is None or reg.current_cancellation is None:
             raise InvalidOperationError("No execution is currently running")
@@ -200,6 +192,7 @@ class CliJobScheduler:
         timeout: str | None = None,
         overlap_policy: str | None = None,
     ) -> None:
+        """Update mutable options for a registered job and reschedule if active."""
         reg = self._get_registration(job_id)
         opts = reg.options
 
@@ -239,10 +232,6 @@ class CliJobScheduler:
         if reg.status == "active":
             self._cancel_timer(reg)
             self._schedule_next(reg)
-
-    # ------------------------------------------------------------------
-    # Internal scheduling
-    # ------------------------------------------------------------------
 
     def _schedule_next(self, reg: _JobRegistration) -> None:
         """Compute next run time and create timer task."""
@@ -296,10 +285,6 @@ class CliJobScheduler:
         # Reschedule
         if reg.status == "active":
             self._schedule_next(reg)
-
-    # ------------------------------------------------------------------
-    # Job execution
-    # ------------------------------------------------------------------
 
     async def _execute_job(self, reg: _JobRegistration, retry_attempt: int) -> None:
         exec_id = str(uuid.uuid4())
@@ -433,10 +418,6 @@ class CliJobScheduler:
         if reg.queue:
             queued_attempt = reg.queue.popleft()
             asyncio.create_task(self._execute_job(reg, queued_attempt))
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
 
     def _get_registration(self, job_id: str) -> _JobRegistration:
         reg = self._registrations.get(job_id)

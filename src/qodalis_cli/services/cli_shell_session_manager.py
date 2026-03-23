@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 class CliShellSessionManager:
+    """Manages interactive PTY shell sessions over WebSocket connections."""
+
     async def handle_session(
         self,
         websocket: WebSocket,
@@ -25,6 +27,14 @@ class CliShellSessionManager:
         rows: int,
         command: str | None = None,
     ) -> None:
+        """Run an interactive shell session, bridging PTY I/O with the WebSocket.
+
+        Args:
+            websocket: The accepted WebSocket connection.
+            cols: Initial terminal width in columns.
+            rows: Initial terminal height in rows.
+            command: Optional command to execute instead of an interactive shell.
+        """
         shell, args = self._get_shell_info(command)
         master_fd: int | None = None
         child_pid: int | None = None
@@ -105,6 +115,7 @@ class CliShellSessionManager:
     async def _read_pty_output(
         self, master_fd: int, websocket: WebSocket
     ) -> None:
+        """Read PTY output in a background thread and forward it over the WebSocket."""
         loop = asyncio.get_event_loop()
         try:
             while True:
@@ -123,6 +134,11 @@ class CliShellSessionManager:
             pass
 
     def _blocking_read(self, fd: int) -> str | None:
+        """Blocking read from a file descriptor with a short timeout.
+
+        Returns:
+            Decoded string data, empty string if no data ready, or ``None`` on EOF/error.
+        """
         try:
             ready, _, _ = select.select([fd], [], [], 0.1)
             if ready:
@@ -137,6 +153,7 @@ class CliShellSessionManager:
     async def _read_websocket_input(
         self, websocket: WebSocket, master_fd: int
     ) -> None:
+        """Read messages from the WebSocket and write stdin data or resize the PTY."""
         try:
             while True:
                 raw = await websocket.receive_text()
@@ -156,6 +173,7 @@ class CliShellSessionManager:
     async def _wait_for_exit(
         self, child_pid: int, websocket: WebSocket
     ) -> None:
+        """Wait for the child process to exit and send the exit code over the WebSocket."""
         loop = asyncio.get_event_loop()
         try:
             _, status = await loop.run_in_executor(
@@ -171,6 +189,7 @@ class CliShellSessionManager:
 
     @staticmethod
     def _set_pty_size(fd: int, cols: int, rows: int) -> None:
+        """Set the PTY window size via ioctl."""
         try:
             winsize = struct.pack("HHHH", rows, cols, 0, 0)
             fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
@@ -179,6 +198,11 @@ class CliShellSessionManager:
 
     @staticmethod
     def _detect_shell() -> str:
+        """Detect the best available shell on the system.
+
+        Returns:
+            Absolute path to the shell executable.
+        """
         env_shell = os.environ.get("SHELL")
         if env_shell and os.path.isfile(env_shell) and os.access(env_shell, os.X_OK):
             return env_shell
@@ -193,6 +217,14 @@ class CliShellSessionManager:
     def _get_shell_info(
         command: str | None,
     ) -> tuple[str, list[str]]:
+        """Return the shell executable and arguments for spawning a session.
+
+        Args:
+            command: Optional command to run instead of an interactive shell.
+
+        Returns:
+            A tuple of ``(shell_path, args)``.
+        """
         if platform.system() == "Windows":
             shell = "powershell.exe"
             return (shell, ["-Command", command]) if command else (shell, [])

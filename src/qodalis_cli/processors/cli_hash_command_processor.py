@@ -13,6 +13,8 @@ SUPPORTED_ALGORITHMS = ["md5", "sha1", "sha256", "sha512"]
 
 
 class CliHashCommandProcessor(CliCommandProcessor):
+    """Command processor that computes cryptographic hashes of input text."""
+
     @property
     def command(self) -> str:
         return "hash"

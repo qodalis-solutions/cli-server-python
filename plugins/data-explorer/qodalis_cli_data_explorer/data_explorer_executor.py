@@ -20,6 +20,7 @@ class DataExplorerExecutor:
         self._registry = registry
 
     async def execute_async(self, request: dict[str, Any]) -> DataExplorerResult:
+        """Execute a query against the appropriate provider with timeout enforcement."""
         source = request.get("source", "")
         query = request.get("query", "")
         parameters = request.get("parameters") or {}
@@ -80,7 +81,6 @@ class DataExplorerExecutor:
                 error=str(exc),
             )
 
-        # Truncate rows if necessary
         if result.row_count > options.max_rows:
             result.rows = result.rows[: options.max_rows]
             result.row_count = options.max_rows

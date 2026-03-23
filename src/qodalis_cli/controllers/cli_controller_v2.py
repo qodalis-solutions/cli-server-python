@@ -14,6 +14,8 @@ from ..services.cli_command_registry import ICliCommandRegistry
 
 
 class ExecuteRequestV2(BaseModel):
+    """Request body for the v2 command execution endpoint."""
+
     command: str = ""
     raw_command: str = Field(alias="rawCommand", default="")
     value: str | None = None
@@ -25,6 +27,7 @@ class ExecuteRequestV2(BaseModel):
 
 
 def _map_to_descriptor_v2(processor: ICliCommandProcessor) -> dict[str, Any]:
+    """Convert a command processor into a v2 JSON-serialisable descriptor dict."""
     params = None
     if processor.parameters:
         params = [
@@ -61,6 +64,15 @@ def create_cli_router_v2(
     registry: ICliCommandRegistry,
     executor: ICliCommandExecutorService,
 ) -> APIRouter:
+    """Create a FastAPI router for the v2 CLI API.
+
+    Args:
+        registry: The command registry to query for available processors.
+        executor: The executor service used to run commands.
+
+    Returns:
+        A configured ``APIRouter`` serving only processors with ``api_version >= 2``.
+    """
     router = APIRouter()
 
     @router.get("/version")

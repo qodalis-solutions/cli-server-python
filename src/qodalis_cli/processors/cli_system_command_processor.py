@@ -10,6 +10,8 @@ _start_time = time.time()
 
 
 class CliSystemCommandProcessor(CliCommandProcessor):
+    """Command processor that reports server system information."""
+
     @property
     def command(self) -> str:
         return "system"

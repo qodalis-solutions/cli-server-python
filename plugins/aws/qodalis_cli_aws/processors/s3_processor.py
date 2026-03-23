@@ -24,11 +24,15 @@ from ..utils.output_helpers import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _parse_s3_uri(uri: str) -> tuple[str, str] | None:
+    """Parses an S3 URI into a (bucket, key) tuple.
+
+    Args:
+        uri: An S3 URI in the form ``s3://bucket/key``.
+
+    Returns:
+        A tuple of ``(bucket, key)``, or ``None`` if the URI is invalid.
+    """
     match = re.match(r"^s3://([^/]+)/?(.*)$", uri)
     if not match:
         return None
@@ -36,6 +40,14 @@ def _parse_s3_uri(uri: str) -> tuple[str, str] | None:
 
 
 def _format_bytes(num_bytes: int) -> str:
+    """Formats a byte count into a human-readable string.
+
+    Args:
+        num_bytes: Number of bytes.
+
+    Returns:
+        Formatted string (e.g. ``"1.5 MB"``).
+    """
     if num_bytes == 0:
         return "0 B"
     units = ["B", "KB", "MB", "GB", "TB"]
@@ -47,11 +59,9 @@ def _format_bytes(num_bytes: int) -> str:
     return f"{value:.1f} {units[i]}"
 
 
-# ---------------------------------------------------------------------------
-# s3 ls
-# ---------------------------------------------------------------------------
-
 class _S3LsProcessor(CliCommandProcessor):
+    """Lists S3 buckets or objects within a bucket prefix."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -79,6 +89,7 @@ class _S3LsProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Lists buckets when no value is given, or objects at the specified S3 URI."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("s3", region=str(region) if region else None)
 
@@ -131,11 +142,9 @@ class _S3LsProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list objects: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# s3 cp
-# ---------------------------------------------------------------------------
-
 class _S3CpProcessor(CliCommandProcessor):
+    """Copies objects between S3 locations (S3-to-S3 only)."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -163,6 +172,7 @@ class _S3CpProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Copies an S3 object from the source URI to the destination URI."""
         source = (command.value or "").strip()
         dest = command.args.get("dest")
 
@@ -194,11 +204,9 @@ class _S3CpProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to copy object: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# s3 rm
-# ---------------------------------------------------------------------------
-
 class _S3RmProcessor(CliCommandProcessor):
+    """Deletes an S3 object."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -226,6 +234,7 @@ class _S3RmProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Deletes the specified S3 object, or previews the action in dry-run mode."""
         value = (command.value or "").strip()
         if not value:
             return build_error_response("S3 URI is required. Usage: s3 rm <s3://bucket/key>")
@@ -247,11 +256,9 @@ class _S3RmProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to delete object: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# s3 mb (make bucket)
-# ---------------------------------------------------------------------------
-
 class _S3MbProcessor(CliCommandProcessor):
+    """Creates a new S3 bucket."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -278,6 +285,7 @@ class _S3MbProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Creates a new S3 bucket with the specified name."""
         bucket_name = (command.value or "").strip()
         if not bucket_name:
             return build_error_response("Bucket name is required. Usage: s3 mb <bucket-name>")
@@ -292,11 +300,9 @@ class _S3MbProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to create bucket: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# s3 rb (remove bucket)
-# ---------------------------------------------------------------------------
-
 class _S3RbProcessor(CliCommandProcessor):
+    """Deletes an S3 bucket."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -324,6 +330,7 @@ class _S3RbProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Deletes the specified bucket, or previews the action in dry-run mode."""
         bucket_name = (command.value or "").strip()
         if not bucket_name:
             return build_error_response("Bucket name is required. Usage: s3 rb <bucket-name>")
@@ -341,11 +348,9 @@ class _S3RbProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to delete bucket: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# s3 presign
-# ---------------------------------------------------------------------------
-
 class _S3PresignProcessor(CliCommandProcessor):
+    """Generates a pre-signed URL for an S3 object."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -373,6 +378,7 @@ class _S3PresignProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Generates and returns a time-limited pre-signed URL for the S3 object."""
         value = (command.value or "").strip()
         if not value:
             return build_error_response("S3 URI is required. Usage: s3 presign <s3://bucket/key>")
@@ -406,11 +412,9 @@ class _S3PresignProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to generate pre-signed URL: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# s3 (parent)
-# ---------------------------------------------------------------------------
-
 class AwsS3Processor(CliCommandProcessor):
+    """Parent processor for S3 sub-commands (ls, cp, rm, mb, rb, presign)."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._sub_processors: list[ICliCommandProcessor] = [
@@ -432,6 +436,7 @@ class AwsS3Processor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns sub-processors for S3 operations."""
         return self._sub_processors
 
     async def handle_async(self, command: CliProcessCommand) -> str:

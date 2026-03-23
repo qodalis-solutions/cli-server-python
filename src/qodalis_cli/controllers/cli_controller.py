@@ -17,6 +17,8 @@ SERVER_VERSION = "1.0.0"
 
 
 class ExecuteRequest(BaseModel):
+    """Request body for the v1 command execution endpoint."""
+
     command: str = ""
     raw_command: str = Field(alias="rawCommand", default="")
     value: str | None = None
@@ -28,6 +30,7 @@ class ExecuteRequest(BaseModel):
 
 
 def _map_to_descriptor(processor: ICliCommandProcessor) -> dict[str, Any]:
+    """Convert a command processor into a JSON-serialisable descriptor dict."""
     params = None
     if processor.parameters:
         params = [
@@ -63,6 +66,15 @@ def create_cli_router(
     registry: ICliCommandRegistry,
     executor: ICliCommandExecutorService,
 ) -> APIRouter:
+    """Create a FastAPI router for the v1 CLI API.
+
+    Args:
+        registry: The command registry to query for available processors.
+        executor: The executor service used to run commands.
+
+    Returns:
+        A configured ``APIRouter``.
+    """
     router = APIRouter()
 
     @router.get("/version")

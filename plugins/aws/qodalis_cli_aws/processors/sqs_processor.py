@@ -23,11 +23,9 @@ from ..utils.output_helpers import (
 )
 
 
-# ---------------------------------------------------------------------------
-# sqs list
-# ---------------------------------------------------------------------------
-
 class _SqsListProcessor(CliCommandProcessor):
+    """Lists all SQS queue URLs."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -51,6 +49,7 @@ class _SqsListProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Fetches and returns all SQS queue URLs."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("sqs", region=str(region) if region else None)
 
@@ -67,11 +66,9 @@ class _SqsListProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to list SQS queues: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# sqs send
-# ---------------------------------------------------------------------------
-
 class _SqsSendProcessor(CliCommandProcessor):
+    """Sends a message to an SQS queue."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -99,6 +96,7 @@ class _SqsSendProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Sends the provided message body to the specified SQS queue."""
         queue_url = (command.value or "").strip()
         if not queue_url:
             return build_error_response("Queue URL is required. Usage: sqs send <queue-url> --message <body>")
@@ -117,11 +115,9 @@ class _SqsSendProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to send message: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# sqs receive
-# ---------------------------------------------------------------------------
-
 class _SqsReceiveProcessor(CliCommandProcessor):
+    """Receives messages from an SQS queue."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -149,6 +145,7 @@ class _SqsReceiveProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Polls the specified queue for up to ``--max`` messages."""
         queue_url = (command.value or "").strip()
         if not queue_url:
             return build_error_response("Queue URL is required. Usage: sqs receive <queue-url>")
@@ -173,11 +170,9 @@ class _SqsReceiveProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to receive messages: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# sqs purge
-# ---------------------------------------------------------------------------
-
 class _SqsPurgeProcessor(CliCommandProcessor):
+    """Purges all messages from an SQS queue."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
@@ -205,6 +200,7 @@ class _SqsPurgeProcessor(CliCommandProcessor):
         return ""
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+        """Purges the queue, or previews the action in dry-run mode."""
         queue_url = (command.value or "").strip()
         if not queue_url:
             return build_error_response("Queue URL is required. Usage: sqs purge <queue-url>")
@@ -222,11 +218,9 @@ class _SqsPurgeProcessor(CliCommandProcessor):
             return build_error_response(f"Failed to purge queue: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# sqs (parent)
-# ---------------------------------------------------------------------------
-
 class AwsSqsProcessor(CliCommandProcessor):
+    """Parent processor for SQS sub-commands (list, send, receive, purge)."""
+
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._sub_processors: list[ICliCommandProcessor] = [
@@ -246,6 +240,7 @@ class AwsSqsProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
+        """Returns sub-processors for SQS operations."""
         return self._sub_processors
 
     async def handle_async(self, command: CliProcessCommand) -> str:

@@ -1,3 +1,5 @@
+"""Abstract base class for file storage providers."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
