@@ -37,8 +37,8 @@ class TestVersionEndpoints:
         resp = client.get("/api/qcli/versions")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["supportedVersions"] == [1, 2]
-        assert data["preferredVersion"] == 2
+        assert data["supportedVersions"] == [1]
+        assert data["preferredVersion"] == 1
 
     def test_v1_version(self, client: TestClient) -> None:
         resp = client.get("/api/v1/qcli/version")
