@@ -118,6 +118,58 @@ class StreamProcessor(ICliCommandProcessor, ICliStreamCommandProcessor):
         return 0
 
 
+class SlowProcessor(ICliCommandProcessor):
+    """Processor that runs until cancelled, recording whether cancellation was observed."""
+
+    # Set by the test to inspect processor behaviour
+    cancellation_observed: bool = False
+
+    @property
+    def command(self) -> str:
+        return "slow"
+
+    @property
+    def description(self) -> str:
+        return "Runs forever until cancelled"
+
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
+        SlowProcessor.cancellation_observed = False
+        # Poll the cancellation event so the processor can exit early
+        for _ in range(1000):
+            if cancellation_event is not None and cancellation_event.is_set():
+                SlowProcessor.cancellation_observed = True
+                return "cancelled"
+            await asyncio.sleep(0.01)
+        return "finished"
+
+
+class SlowStreamProcessor(ICliCommandProcessor, ICliStreamCommandProcessor):
+    """Stream processor that respects cancellation between chunks."""
+
+    cancellation_observed: bool = False
+
+    @property
+    def command(self) -> str:
+        return "slow-stream"
+
+    @property
+    def description(self) -> str:
+        return "Streams chunks until cancelled"
+
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
+        return "non-streaming fallback"
+
+    async def handle_stream_async(self, command, emit, cancellation_event: asyncio.Event | None = None) -> int:
+        SlowStreamProcessor.cancellation_observed = False
+        for i in range(1000):
+            if cancellation_event is not None and cancellation_event.is_set():
+                SlowStreamProcessor.cancellation_observed = True
+                return 1
+            emit({"type": "text", "value": f"chunk{i}"})
+            await asyncio.sleep(0.01)
+        return 0
+
+
 class UnlistedParentProcessor(ICliCommandProcessor):
     """Parent that allows unlisted sub-commands."""
 
