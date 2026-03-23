@@ -4,6 +4,8 @@ import json
 import urllib.request
 import urllib.error
 
+from qodalis_cli_server_abstractions import ICliStreamCommandProcessor
+
 from ..abstractions import (
     CliCommandParameterDescriptor,
     CliCommandProcessor,
@@ -13,7 +15,7 @@ from ..abstractions import (
 )
 
 
-class _HttpGetProcessor(CliCommandProcessor):
+class _HttpGetProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
     """Sub-processor that performs HTTP GET requests."""
 
     @property
@@ -40,8 +42,15 @@ class _HttpGetProcessor(CliCommandProcessor):
             return "Usage: http get <url>"
         return _do_request(url, method="GET", show_headers="headers" in command.args)
 
+    async def handle_stream_async(self, command: CliProcessCommand, emit) -> int:
+        url = command.value
+        if not url:
+            emit({"type": "text", "value": "Usage: http get <url>"})
+            return 1
+        return await _do_stream_request(url, "GET", None, "headers" in command.args, emit)
 
-class _HttpPostProcessor(CliCommandProcessor):
+
+class _HttpPostProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
     """Sub-processor that performs HTTP POST requests."""
 
     @property
@@ -76,6 +85,64 @@ class _HttpPostProcessor(CliCommandProcessor):
         return _do_request(
             url, method="POST", body=body, show_headers="headers" in command.args
         )
+
+    async def handle_stream_async(self, command: CliProcessCommand, emit) -> int:
+        url = command.value
+        if not url:
+            emit({"type": "text", "value": "Usage: http post <url> --body '{\"key\":\"value\"}'"})
+            return 1
+        body = command.args.get("body")
+        return await _do_stream_request(url, "POST", body, "headers" in command.args, emit)
+
+
+async def _do_stream_request(
+    url: str,
+    method: str,
+    body: str | None,
+    show_headers: bool,
+    emit,
+) -> int:
+    try:
+        emit({"type": "text", "value": f"Fetching {method} {url}...", "style": "info"})
+
+        data = body.encode("utf-8") if body else None
+        req = urllib.request.Request(url, data=data, method=method)
+        if body:
+            req.add_header("Content-Type", "application/json")
+
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            status = resp.status
+            content_type = resp.headers.get("Content-Type", "unknown")
+            resp_body = resp.read().decode("utf-8", errors="replace")
+
+            emit({"type": "text", "value": f"Status: {status}"})
+            emit({"type": "text", "value": f"Content-Type: {content_type}"})
+
+            if show_headers:
+                emit({"type": "text", "value": "Headers:"})
+                for key, value in resp.headers.items():
+                    emit({"type": "text", "value": f"  {key}: {value}"})
+
+            if "json" in content_type:
+                try:
+                    parsed = json.loads(resp_body)
+                    resp_body = json.dumps(parsed, indent=2)
+                except json.JSONDecodeError:
+                    pass
+
+            emit({"type": "text", "value": resp_body[:5000]})
+            return 0
+
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode("utf-8", errors="replace")[:2000] if e.fp else ""
+        emit({"type": "text", "value": f"HTTP Error: {e.code} {e.reason}\n{body_text}", "style": "error"})
+        return 1
+    except urllib.error.URLError as e:
+        emit({"type": "text", "value": f"Connection error: {e.reason}", "style": "error"})
+        return 1
+    except Exception as e:
+        emit({"type": "text", "value": f"Error: {e}", "style": "error"})
+        return 1
 
 
 def _do_request(
