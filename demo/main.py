@@ -8,12 +8,19 @@ of the available providers by uncommenting the relevant section below.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import uvicorn
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
+)
+logger = logging.getLogger(__name__)
 
 # Allow importing from the project root so ``plugins`` is accessible.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -275,13 +282,13 @@ def main() -> None:
 
     result.app.router.lifespan_context = lifespan_with_jobs
 
-    print(f"Qodalis CLI Demo Server (Python) running on http://{host}:{port}")
-    print(f"  API: http://{host}:{port}/api/qcli")
-    print(f"  Admin API: http://{host}:{port}/api/v1/qcli/admin")
+    logger.info("Qodalis CLI Demo Server (Python) running on http://%s:%d", host, port)
+    logger.info("  API: http://%s:%d/api/qcli", host, port)
+    logger.info("  Admin API: http://%s:%d/api/v1/qcli/admin", host, port)
     if admin_plugin.dashboard_app:
-        print(f"  Admin Dashboard: http://{host}:{port}/qcli/admin")
-    print(f"  WebSocket: ws://{host}:{port}/ws/qcli/events")
-    print(f"  File storage: {type(file_storage_provider).__name__}")
+        logger.info("  Admin Dashboard: http://%s:%d/qcli/admin", host, port)
+    logger.info("  WebSocket: ws://%s:%d/ws/qcli/events", host, port)
+    logger.info("  File storage: %s", type(file_storage_provider).__name__)
 
     uvicorn.run(result.app, host=host, port=port)
 

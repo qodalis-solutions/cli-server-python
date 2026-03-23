@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter
@@ -11,6 +12,8 @@ from ..abstractions.cli_process_command import CliProcessCommand
 from ..models import CliServerCommandDescriptor, CliServerCommandParameterDescriptorDto, CliServerResponse
 from ..services.cli_command_executor_service import ICliCommandExecutorService
 from ..services.cli_command_registry import ICliCommandRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class ExecuteRequestV2(BaseModel):
@@ -89,6 +92,7 @@ def create_cli_router_v2(
 
     @router.post("/execute")
     async def execute_command_v2(request: ExecuteRequestV2) -> JSONResponse:
+        logger.debug("Executing command (v2): %s", request.command)
         cmd = CliProcessCommand(
             command=request.command,
             raw_command=request.raw_command,

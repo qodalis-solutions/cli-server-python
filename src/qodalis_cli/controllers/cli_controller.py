@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import platform
 from typing import Any
 
@@ -12,6 +13,8 @@ from ..abstractions.cli_process_command import CliProcessCommand
 from ..models import CliServerCommandDescriptor, CliServerCommandParameterDescriptorDto, CliServerResponse
 from ..services.cli_command_executor_service import ICliCommandExecutorService
 from ..services.cli_command_registry import ICliCommandRegistry
+
+logger = logging.getLogger(__name__)
 
 SERVER_VERSION = "1.0.0"
 
@@ -109,6 +112,7 @@ def create_cli_router(
 
     @router.post("/execute")
     async def execute_command(request: ExecuteRequest) -> JSONResponse:
+        logger.debug("Executing command: %s", request.command)
         cmd = CliProcessCommand(
             command=request.command,
             raw_command=request.raw_command,

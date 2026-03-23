@@ -39,6 +39,7 @@ class CliLogSocketManager:
         client_id = self._next_id
         self._next_id += 1
         self._clients[client_id] = (websocket, level_filter)
+        logger.info("Log client connected (id=%s, level=%s)", client_id, level_filter or "all")
 
         try:
             await websocket.send_text(json.dumps({"type": "connected"}))
@@ -50,6 +51,7 @@ class CliLogSocketManager:
                     break
         finally:
             self._clients.pop(client_id, None)
+            logger.info("Log client disconnected (id=%s)", client_id)
 
     @staticmethod
     def should_send_log(filter_level: str | None, log_level: str) -> bool:
@@ -106,6 +108,7 @@ class CliLogSocketManager:
 
     async def broadcast_disconnect(self) -> None:
         """Send a disconnect message to all clients and close connections."""
+        logger.info("Broadcasting disconnect to %d log clients", len(self._clients))
         message = json.dumps({"type": "disconnect"})
         tasks = []
         for ws, _ in list(self._clients.values()):
@@ -119,7 +122,7 @@ class CliLogSocketManager:
         try:
             await client.send_text(message)
         except Exception:
-            pass
+            logger.debug("Log broadcast send failed, removing client")
 
     @staticmethod
     async def _send_and_close(client: WebSocket, message: str) -> None:
@@ -127,7 +130,7 @@ class CliLogSocketManager:
             await client.send_text(message)
             await client.close()
         except Exception:
-            pass
+            logger.debug("Failed to send disconnect to log client")
 
 
 class WebSocketLogHandler(logging.Handler):

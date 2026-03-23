@@ -52,6 +52,7 @@ class CliShellSessionManager:
                 # execvp never returns
 
             # Parent process
+            logger.info("Shell session started (shell=%s, cols=%d, rows=%d)", os.path.basename(shell), cols, rows)
             self._set_pty_size(master_fd, cols, rows)
 
             detected_os = (
@@ -86,31 +87,33 @@ class CliShellSessionManager:
                 try:
                     await task
                 except (asyncio.CancelledError, Exception):
-                    pass
+                    logger.debug("Task cancelled during cleanup")
 
         except Exception as exc:
+            logger.error("Shell session error: %s", exc)
             try:
                 await websocket.send_text(json.dumps({
                     "type": "error",
                     "message": str(exc),
                 }))
-            except Exception:
-                pass
+            except Exception as send_err:
+                logger.debug("Failed to send WebSocket message: %s", send_err)
         finally:
+            logger.info("Shell session ended")
             if master_fd is not None:
                 try:
                     os.close(master_fd)
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.debug("Failed to close file descriptor: %s", e)
             if child_pid is not None and child_pid > 0:
                 try:
                     os.kill(child_pid, signal.SIGTERM)
-                except OSError:
-                    pass
+                except OSError as e:
+                    logger.debug("Failed to kill process: %s", e)
                 try:
                     os.waitpid(child_pid, os.WNOHANG)
-                except ChildProcessError:
-                    pass
+                except ChildProcessError as e:
+                    logger.debug("Process already reaped: %s", e)
 
     async def _read_pty_output(
         self, master_fd: int, websocket: WebSocket
@@ -167,8 +170,8 @@ class CliShellSessionManager:
                     new_cols = msg.get("cols", 80)
                     new_rows = msg.get("rows", 24)
                     self._set_pty_size(master_fd, new_cols, new_rows)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("WebSocket input error: %s", e)
 
     async def _wait_for_exit(
         self, child_pid: int, websocket: WebSocket
@@ -193,8 +196,8 @@ class CliShellSessionManager:
         try:
             winsize = struct.pack("HHHH", rows, cols, 0, 0)
             fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
-        except OSError:
-            pass
+        except OSError as e:
+            logger.debug("Failed to resize PTY: %s", e)
 
     @staticmethod
     def _detect_shell() -> str:

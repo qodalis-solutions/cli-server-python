@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import stat
@@ -20,6 +21,8 @@ from qodalis_cli_filesystem import (
 )
 
 from ..filesystem.filesystem_path_validator import FileSystemPathValidator
+
+logger = logging.getLogger(__name__)
 
 
 def _map_provider_error(exc: Exception) -> HTTPException:
@@ -57,41 +60,51 @@ def _create_provider_router(provider: IFileStorageProvider) -> APIRouter:
 
     @router.get("/ls")
     async def list_directory(path: str) -> dict[str, Any]:
+        logger.debug("Listing directory: %s", path)
         try:
             entries = await provider.list(path)
             return {"entries": [asdict(e) for e in entries]}
+        except FileStoragePermissionError as exc:
+            logger.warning("Permission denied: %s", path)
+            raise _map_provider_error(exc) from exc
         except (
             FileStorageNotFoundError,
             FileStorageNotADirectoryError,
-            FileStoragePermissionError,
         ) as exc:
             raise _map_provider_error(exc) from exc
 
     @router.get("/cat")
     async def read_file(path: str) -> dict[str, str]:
+        logger.debug("Reading file: %s", path)
         try:
             content = await provider.read_file(path)
             return {"content": content}
+        except FileStoragePermissionError as exc:
+            logger.warning("Permission denied: %s", path)
+            raise _map_provider_error(exc) from exc
         except (
             FileStorageNotFoundError,
             FileStorageIsADirectoryError,
-            FileStoragePermissionError,
         ) as exc:
             raise _map_provider_error(exc) from exc
 
     @router.get("/stat")
     async def stat_path(path: str) -> dict[str, Any]:
+        logger.debug("Getting stat: %s", path)
         try:
             info = await provider.stat(path)
             return asdict(info)
+        except FileStoragePermissionError as exc:
+            logger.warning("Permission denied: %s", path)
+            raise _map_provider_error(exc) from exc
         except (
             FileStorageNotFoundError,
-            FileStoragePermissionError,
         ) as exc:
             raise _map_provider_error(exc) from exc
 
     @router.get("/download")
     async def download_file(path: str) -> StreamingResponse:
+        logger.debug("Downloading file: %s", path)
         try:
             stream = await provider.get_download_stream(path)
             filename = path.rstrip("/").rsplit("/", 1)[-1] or "download"
@@ -102,10 +115,12 @@ def _create_provider_router(provider: IFileStorageProvider) -> APIRouter:
                     "Content-Disposition": f'attachment; filename="{filename}"'
                 },
             )
+        except FileStoragePermissionError as exc:
+            logger.warning("Permission denied: %s", path)
+            raise _map_provider_error(exc) from exc
         except (
             FileStorageNotFoundError,
             FileStorageIsADirectoryError,
-            FileStoragePermissionError,
         ) as exc:
             raise _map_provider_error(exc) from exc
 
@@ -114,14 +129,17 @@ def _create_provider_router(provider: IFileStorageProvider) -> APIRouter:
         file: UploadFile = File(...),
         path: str = Form(...),
     ) -> dict[str, str]:
+        logger.debug("Uploading file: %s", path)
         try:
             contents = await file.read()
             await provider.upload_file(path, contents)
             return {"path": path, "status": "uploaded"}
+        except FileStoragePermissionError as exc:
+            logger.warning("Permission denied: %s", path)
+            raise _map_provider_error(exc) from exc
         except (
             FileStorageNotFoundError,
             FileStorageIsADirectoryError,
-            FileStoragePermissionError,
         ) as exc:
             raise _map_provider_error(exc) from exc
 
@@ -131,25 +149,31 @@ def _create_provider_router(provider: IFileStorageProvider) -> APIRouter:
         if not raw_path:
             raise HTTPException(status_code=400, detail="'path' is required")
 
+        logger.debug("Creating directory: %s", raw_path)
         recursive = body.get("recursive", True)
         try:
             await provider.mkdir(raw_path, recursive=recursive)
             return {"path": raw_path, "status": "created"}
+        except FileStoragePermissionError as exc:
+            logger.warning("Permission denied: %s", raw_path)
+            raise _map_provider_error(exc) from exc
         except (
             FileStorageNotFoundError,
             FileStorageExistsError,
-            FileStoragePermissionError,
         ) as exc:
             raise _map_provider_error(exc) from exc
 
     @router.delete("/rm")
     async def remove_path(path: str, recursive: bool = True) -> dict[str, str]:
+        logger.debug("Removing path: %s", path)
         try:
             await provider.remove(path, recursive=recursive)
             return {"path": path, "status": "deleted"}
+        except FileStoragePermissionError as exc:
+            logger.warning("Permission denied: %s", path)
+            raise _map_provider_error(exc) from exc
         except (
             FileStorageNotFoundError,
-            FileStoragePermissionError,
         ) as exc:
             raise _map_provider_error(exc) from exc
 
@@ -161,6 +185,7 @@ def _safe_validate(validator: FileSystemPathValidator, path: str) -> str:
     try:
         return validator.validate(path)
     except PermissionError as exc:
+        logger.warning("Permission denied: %s", path)
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
@@ -185,6 +210,7 @@ def _create_legacy_router(validator: FileSystemPathValidator) -> APIRouter:
 
     @router.get("/ls")
     async def list_directory(path: str) -> dict[str, Any]:
+        logger.debug("Listing directory: %s", path)
         resolved = _safe_validate(validator, path)
 
         if not os.path.exists(resolved):
@@ -213,12 +239,14 @@ def _create_legacy_router(validator: FileSystemPathValidator) -> APIRouter:
                 except OSError:
                     continue
         except OSError as exc:
+            logger.error("Failed to list directory %s: %s", path, str(exc))
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         return {"entries": entries}
 
     @router.get("/cat")
     async def read_file(path: str) -> dict[str, str]:
+        logger.debug("Reading file: %s", path)
         resolved = _safe_validate(validator, path)
 
         if not os.path.exists(resolved):
@@ -230,12 +258,14 @@ def _create_legacy_router(validator: FileSystemPathValidator) -> APIRouter:
             with open(resolved, "r", encoding="utf-8", errors="replace") as fh:
                 content = fh.read()
         except OSError as exc:
+            logger.error("Failed to read file %s: %s", path, str(exc))
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         return {"content": content}
 
     @router.get("/stat")
     async def stat_path(path: str) -> dict[str, Any]:
+        logger.debug("Getting stat: %s", path)
         resolved = _safe_validate(validator, path)
 
         if not os.path.exists(resolved):
@@ -244,10 +274,12 @@ def _create_legacy_router(validator: FileSystemPathValidator) -> APIRouter:
         try:
             return _stat_entry(resolved)
         except OSError as exc:
+            logger.error("Failed to stat %s: %s", path, str(exc))
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @router.get("/download")
     async def download_file(path: str) -> FileResponse:
+        logger.debug("Downloading file: %s", path)
         resolved = _safe_validate(validator, path)
 
         if not os.path.exists(resolved):
@@ -267,6 +299,7 @@ def _create_legacy_router(validator: FileSystemPathValidator) -> APIRouter:
         file: UploadFile = File(...),
         path: str = Form(...),
     ) -> dict[str, str]:
+        logger.debug("Uploading file: %s", path)
         resolved = _safe_validate(validator, path)
 
         parent = os.path.dirname(resolved)
@@ -280,6 +313,7 @@ def _create_legacy_router(validator: FileSystemPathValidator) -> APIRouter:
             with open(resolved, "wb") as fh:
                 fh.write(contents)
         except OSError as exc:
+            logger.error("Failed to upload file %s: %s", path, str(exc))
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         return {"path": resolved, "status": "uploaded"}
@@ -290,17 +324,20 @@ def _create_legacy_router(validator: FileSystemPathValidator) -> APIRouter:
         if not raw_path:
             raise HTTPException(status_code=400, detail="'path' is required")
 
+        logger.debug("Creating directory: %s", raw_path)
         resolved = _safe_validate(validator, raw_path)
 
         try:
             os.makedirs(resolved, exist_ok=True)
         except OSError as exc:
+            logger.error("Failed to create directory %s: %s", raw_path, str(exc))
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         return {"path": resolved, "status": "created"}
 
     @router.delete("/rm")
     async def remove_path(path: str) -> dict[str, str]:
+        logger.debug("Removing path: %s", path)
         resolved = _safe_validate(validator, path)
 
         if not os.path.exists(resolved):
@@ -312,6 +349,7 @@ def _create_legacy_router(validator: FileSystemPathValidator) -> APIRouter:
             else:
                 os.remove(resolved)
         except OSError as exc:
+            logger.error("Failed to remove %s: %s", path, str(exc))
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         return {"path": resolved, "status": "deleted"}

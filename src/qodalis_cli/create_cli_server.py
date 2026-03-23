@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+
+logger = logging.getLogger(__name__)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Callable
@@ -130,14 +132,17 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     @app.websocket("/ws/v1/qcli/events")
     async def websocket_events_v1(websocket: WebSocket) -> None:
+        logger.debug("WebSocket connection accepted: events")
         await event_socket_manager.handle_connection(websocket)
 
     @app.websocket("/ws/qcli/events")
     async def websocket_events(websocket: WebSocket) -> None:
+        logger.debug("WebSocket connection accepted: events")
         await event_socket_manager.handle_connection(websocket)
 
     async def _handle_logs(websocket: WebSocket) -> None:
         level_filter = websocket.query_params.get("level") or None
+        logger.debug("Log WebSocket connection accepted (level=%s)", level_filter or "all")
         await log_socket_manager.handle_connection(websocket, level_filter)
 
     @app.websocket("/ws/v1/qcli/logs")
@@ -153,6 +158,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         cols = int(websocket.query_params.get("cols", "80")) or 80
         rows = int(websocket.query_params.get("rows", "24")) or 24
         cmd = websocket.query_params.get("cmd") or None
+        logger.debug("Shell WebSocket connection accepted (cols=%d, rows=%d)", cols, rows)
         await shell_session_manager.handle_session(websocket, cols, rows, cmd)
 
     @app.websocket("/ws/v1/qcli/shell")
