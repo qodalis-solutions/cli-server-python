@@ -4,7 +4,7 @@ import abc
 import logging
 from typing import Sequence
 
-from ..abstractions import CliProcessCommand, ICliProcessorFilter
+from ..abstractions import CliProcessCommand, ICliCommandProcessor, ICliProcessorFilter
 from ..models.cli_server_output import CliServerTextOutput
 from ..models.cli_server_response import CliServerResponse
 from .cli_command_registry import ICliCommandRegistry
@@ -27,6 +27,11 @@ class ICliCommandExecutorService(abc.ABC):
         """
         ...
 
+    @abc.abstractmethod
+    def is_blocked(self, processor: "ICliCommandProcessor") -> bool:
+        """Return True if any filter blocks this processor."""
+        ...
+
 
 class CliCommandExecutorService(ICliCommandExecutorService):
     """Default executor that resolves processors from a registry and runs them."""
@@ -46,6 +51,10 @@ class CliCommandExecutorService(ICliCommandExecutorService):
             filter_: The filter to add.
         """
         self._filters.append(filter_)
+
+    def is_blocked(self, processor: ICliCommandProcessor) -> bool:
+        """Return True if any filter blocks this processor."""
+        return any(not f.is_allowed(processor) for f in self._filters)
 
     async def execute_async(self, command: CliProcessCommand) -> CliServerResponse:
         chain = command.chain_commands if command.chain_commands else None
@@ -69,7 +78,7 @@ class CliCommandExecutorService(ICliCommandExecutorService):
                 ],
             )
 
-        if any(not f.is_allowed(processor) for f in self._filters):
+        if self.is_blocked(processor):
             logger.warning(
                 "Command blocked by filter (plugin disabled): %s", full_command
             )

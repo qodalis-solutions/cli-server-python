@@ -30,6 +30,7 @@ from .data_explorer_types import (
     DataExplorerSchemaResult,
 )
 from .data_explorer_provider import IDataExplorerProvider
+from .cli_stream_command_processor import ICliStreamCommandProcessor, is_stream_capable
 
 __all__ = [
     "ICliCommandAuthor",
@@ -62,4 +63,6 @@ __all__ = [
     "DataExplorerSchemaTable",
     "DataExplorerSchemaResult",
     "IDataExplorerProvider",
+    "ICliStreamCommandProcessor",
+    "is_stream_capable",
 ]

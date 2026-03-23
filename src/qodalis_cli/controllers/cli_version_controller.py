@@ -45,6 +45,7 @@ def create_cli_version_router() -> APIRouter:
             "os": detected_os,
             "shellPath": shell_path,
             "version": SERVER_VERSION,
+            "streaming": True,
         }
 
     return router
