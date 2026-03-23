@@ -48,8 +48,8 @@ class ICliCommandProcessor(abc.ABC):
 
     @property
     def api_version(self) -> int:
-        """API version this processor targets. Default 1 for backward compatibility."""
-        return 1
+        """API version this processor targets."""
+        return 2
 
     @property
     def processors(self) -> list[ICliCommandProcessor] | None:
