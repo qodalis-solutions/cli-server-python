@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-abstractions"
-version = "1.0.0b4"
+version = "1.0.0b5"
 description = "Shared interfaces and base classes for Qodalis CLI command processors — zero framework dependencies"
 readme = "README.md"
 license = "MIT"
