@@ -1,4 +1,8 @@
+"""Weather CLI module providing current conditions and forecast commands."""
+
 from __future__ import annotations
+
+import asyncio
 
 import urllib.parse
 import urllib.request
@@ -16,6 +20,7 @@ from qodalis_cli import (
 
 
 def _get_location(command: CliProcessCommand) -> str:
+    """Extract the location from command args or value, defaulting to London."""
     if "location" in command.args:
         return str(command.args["location"])
     if command.value:
@@ -24,6 +29,7 @@ def _get_location(command: CliProcessCommand) -> str:
 
 
 def _fetch_weather_data(location: str) -> dict:
+    """Fetch weather data from wttr.in for the given location."""
     url = f"https://wttr.in/{urllib.parse.quote(location)}?format=j1"
     req = urllib.request.Request(url, headers={"User-Agent": "qodalis-cli/1.0"})
     with urllib.request.urlopen(req, timeout=15) as resp:
@@ -31,6 +37,7 @@ def _fetch_weather_data(location: str) -> dict:
 
 
 def _format_current(location: str) -> str:
+    """Format current weather conditions as a human-readable string."""
     try:
         data = _fetch_weather_data(location)
         current = data["current_condition"][0]
@@ -52,6 +59,7 @@ def _format_current(location: str) -> str:
 
 
 def _format_forecast(location: str) -> str:
+    """Format a 3-day weather forecast as a human-readable string."""
     try:
         data = _fetch_weather_data(location)
         area = data["nearest_area"][0]
@@ -81,6 +89,8 @@ _location_param = CliCommandParameterDescriptor(
 
 
 class _WeatherCurrentProcessor(CliCommandProcessor):
+    """Processor for the ``weather current`` sub-command."""
+
     @property
     def command(self) -> str:
         return "current"
@@ -93,11 +103,13 @@ class _WeatherCurrentProcessor(CliCommandProcessor):
     def parameters(self) -> list[ICliCommandParameterDescriptor]:
         return [_location_param]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return _format_current(_get_location(command))
 
 
 class _WeatherForecastProcessor(CliCommandProcessor):
+    """Processor for the ``weather forecast`` sub-command."""
+
     @property
     def command(self) -> str:
         return "forecast"
@@ -110,11 +122,13 @@ class _WeatherForecastProcessor(CliCommandProcessor):
     def parameters(self) -> list[ICliCommandParameterDescriptor]:
         return [_location_param]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return _format_forecast(_get_location(command))
 
 
 class _CliWeatherCommandProcessor(CliCommandProcessor):
+    """Root processor for the ``weather`` command with sub-commands."""
+
     @property
     def command(self) -> str:
         return "weather"
@@ -131,11 +145,13 @@ class _CliWeatherCommandProcessor(CliCommandProcessor):
     def processors(self) -> list[ICliCommandProcessor]:
         return [_WeatherCurrentProcessor(), _WeatherForecastProcessor()]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return _format_current(_get_location(command))
 
 
 class WeatherModule(CliModule):
+    """CLI module that registers the weather command and its sub-commands."""
+
     @property
     def name(self) -> str:
         return "weather"

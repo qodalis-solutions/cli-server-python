@@ -18,4 +18,11 @@ class ICliJob(abc.ABC):
         self,
         context: ICliJobExecutionContext,
         cancellation_event: asyncio.Event,
-    ) -> None: ...
+    ) -> None:
+        """Run the job's work.
+
+        Args:
+            context: Execution context providing a logger and other services.
+            cancellation_event: Set when the job should stop early.
+        """
+        ...

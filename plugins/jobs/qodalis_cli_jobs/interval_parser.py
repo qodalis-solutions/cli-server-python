@@ -1,3 +1,5 @@
+"""Parser for human-readable interval strings (e.g. ``30s``, ``5m``)."""
+
 from __future__ import annotations
 
 import re

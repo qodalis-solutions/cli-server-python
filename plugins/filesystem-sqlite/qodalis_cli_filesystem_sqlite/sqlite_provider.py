@@ -1,3 +1,5 @@
+"""SQLite-backed file storage provider."""
+
 from __future__ import annotations
 
 import os
@@ -88,7 +90,6 @@ class SqliteFileStorageProvider(IFileStorageProvider):
             options = SqliteProviderOptions()
         self._db_path = options.db_path
 
-        # Create parent directories for on-disk databases
         if self._db_path != ":memory:":
             parent_dir = os.path.dirname(self._db_path)
             if parent_dir:
@@ -101,10 +102,10 @@ class SqliteFileStorageProvider(IFileStorageProvider):
         self._conn.execute(_CREATE_INDEX)
         self._conn.commit()
 
-        # Ensure root directory exists
         self._ensure_root()
 
     def _ensure_root(self) -> None:
+        """Insert the root directory row if it does not exist."""
         row = self._conn.execute(
             "SELECT id FROM files WHERE path = ?", ("/",)
         ).fetchone()
@@ -116,8 +117,6 @@ class SqliteFileStorageProvider(IFileStorageProvider):
                 ("/", "", "directory", 0, "drwxr-xr-x", now, now, None),
             )
             self._conn.commit()
-
-    # -- IFileStorageProvider interface ----------------------------------------
 
     @property
     def name(self) -> str:
@@ -379,8 +378,6 @@ class SqliteFileStorageProvider(IFileStorageProvider):
 
     async def upload_file(self, path: str, content: bytes) -> None:
         await self.write_file(path, content)
-
-    # -- Private helpers -------------------------------------------------------
 
     async def _ensure_parents(self, path: str) -> None:
         """Ensure all ancestor directories exist up to and including *path*."""

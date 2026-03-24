@@ -9,7 +9,6 @@ from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
 
-# Level ordering from lowest to highest severity
 _LEVEL_ORDER = {
     "verbose": 0,
     "debug": 1,
@@ -30,15 +29,21 @@ class CliLogSocketManager:
     async def handle_connection(
         self, websocket: WebSocket, level_filter: str | None = None
     ) -> None:
+        """Accept a WebSocket connection for log streaming.
+
+        Args:
+            websocket: The incoming WebSocket connection.
+            level_filter: Optional minimum log level to send to this client.
+        """
         await websocket.accept()
         client_id = self._next_id
         self._next_id += 1
         self._clients[client_id] = (websocket, level_filter)
+        logger.info("Log client connected (id=%s, level=%s)", client_id, level_filter or "all")
 
         try:
             await websocket.send_text(json.dumps({"type": "connected"}))
 
-            # Keep the connection open until the client disconnects
             while True:
                 try:
                     await websocket.receive_text()
@@ -46,6 +51,7 @@ class CliLogSocketManager:
                     break
         finally:
             self._clients.pop(client_id, None)
+            logger.info("Log client disconnected (id=%s)", client_id)
 
     @staticmethod
     def should_send_log(filter_level: str | None, log_level: str) -> bool:
@@ -102,6 +108,7 @@ class CliLogSocketManager:
 
     async def broadcast_disconnect(self) -> None:
         """Send a disconnect message to all clients and close connections."""
+        logger.info("Broadcasting disconnect to %d log clients", len(self._clients))
         message = json.dumps({"type": "disconnect"})
         tasks = []
         for ws, _ in list(self._clients.values()):
@@ -115,7 +122,7 @@ class CliLogSocketManager:
         try:
             await client.send_text(message)
         except Exception:
-            pass
+            logger.debug("Log broadcast send failed, removing client")
 
     @staticmethod
     async def _send_and_close(client: WebSocket, message: str) -> None:
@@ -123,7 +130,7 @@ class CliLogSocketManager:
             await client.send_text(message)
             await client.close()
         except Exception:
-            pass
+            logger.debug("Failed to send disconnect to log client")
 
 
 class WebSocketLogHandler(logging.Handler):
@@ -134,6 +141,7 @@ class WebSocketLogHandler(logging.Handler):
         self.manager = manager
 
     def emit(self, record: logging.LogRecord) -> None:
+        """Format a log record and broadcast it via the socket manager."""
         level = self.map_log_level(record.levelno)
         category = record.name
         message = self.format(record) if self.formatter else record.getMessage()
@@ -141,6 +149,14 @@ class WebSocketLogHandler(logging.Handler):
 
     @staticmethod
     def map_log_level(levelno: int) -> str:
+        """Map a Python logging level number to a string level name.
+
+        Args:
+            levelno: The numeric logging level.
+
+        Returns:
+            A string level name (debug, information, warning, error, or fatal).
+        """
         if levelno <= logging.DEBUG:
             return "debug"
         elif levelno <= logging.INFO:

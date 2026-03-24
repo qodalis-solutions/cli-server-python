@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class CliServerCommandParameterDescriptorDto(BaseModel):
+    """DTO for serialising a command parameter descriptor to JSON."""
+
     name: str
     description: str
     required: bool = False
@@ -17,10 +19,12 @@ class CliServerCommandParameterDescriptorDto(BaseModel):
 
 
 class CliServerCommandDescriptor(BaseModel):
+    """DTO for serialising a command processor descriptor to JSON."""
+
     command: str
     description: str
     version: str = "1.0.0"
-    api_version: int | None = Field(alias="apiVersion", default=None)
+
     parameters: list[CliServerCommandParameterDescriptorDto] | None = None
     processors: list["CliServerCommandDescriptor"] | None = None
     allow_unlisted_commands: bool | None = Field(alias="allowUnlistedCommands", default=None)

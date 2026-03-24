@@ -105,6 +105,7 @@ class AdminConfig:
 
 
 def _infer_type(val: Any) -> str:
+    """Infer a JSON-schema-style type string from a Python value."""
     if isinstance(val, bool):
         return "boolean"
     if isinstance(val, (int, float)):

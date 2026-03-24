@@ -1,3 +1,5 @@
+"""In-memory file storage provider backed by a tree of nodes."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -66,8 +68,6 @@ class InMemoryFileStorageProvider(IFileStorageProvider):
 
     def __init__(self) -> None:
         self._root = _FileNode(name="", type="directory")
-
-    # -- IFileStorageProvider interface ----------------------------------------
 
     @property
     def name(self) -> str:
@@ -235,8 +235,6 @@ class InMemoryFileStorageProvider(IFileStorageProvider):
 
     async def upload_file(self, path: str, content: bytes) -> None:
         await self.write_file(path, content)
-
-    # -- Private helpers -------------------------------------------------------
 
     def _resolve(self, norm_path: str) -> _FileNode | None:
         """Walk the tree and return the node at *norm_path*, or ``None``."""

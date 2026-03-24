@@ -10,4 +10,6 @@ class ICliJobExecutionContext(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def logger(self) -> ICliJobLogger: ...
+    def logger(self) -> ICliJobLogger:
+        """Logger available to the job during execution."""
+        ...

@@ -24,12 +24,12 @@ class SPAStaticFiles(StaticFiles):
     """
 
     async def get_response(self, path: str, scope: Scope) -> Response:
+        """Return the static file or fall back to ``index.html`` for SPA routes."""
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as exc:
             if exc.status_code != 404:
                 raise
-            # File not found — serve index.html for SPA client-side routing
             index = os.path.join(self.directory, "index.html")  # type: ignore[arg-type]
             if os.path.isfile(index):
                 return FileResponse(index, media_type="text/html")

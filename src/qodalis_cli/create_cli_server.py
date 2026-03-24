@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+
+logger = logging.getLogger(__name__)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Callable
@@ -11,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from qodalis_cli_filesystem.providers.os_provider import OsFileStorageProvider, OsProviderOptions
 
-from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router
+from .controllers import create_cli_router, create_cli_version_router
 from .controllers.filesystem_controller import create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemPathValidator
@@ -27,6 +29,8 @@ from .services import (
 
 @dataclass
 class CliServerOptions:
+    """Configuration options for creating a CLI server instance."""
+
     base_path: str = "/api/qcli"
     cors: bool = True
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
@@ -35,21 +39,53 @@ class CliServerOptions:
 
 @dataclass
 class CliServerResult:
+    """Return value from ``create_cli_server`` containing the app and services."""
+
     app: FastAPI
     registry: CliCommandRegistry
     builder: CliBuilder
     event_socket_manager: CliEventSocketManager
     log_socket_manager: CliLogSocketManager
+    executor: CliCommandExecutorService | None = None
+
+    def mount_plugin(self, plugin: object) -> None:
+        """Mount a plugin using its built-in prefix.
+
+        Reads ``prefix`` and ``router`` from the plugin result, and optionally
+        ``dashboard_prefix`` / ``dashboard_app`` for plugins that serve a UI.
+
+        Example::
+
+            result = create_cli_server()
+            result.mount_plugin(jobs_plugin)
+            result.mount_plugin(admin_plugin)
+        """
+        prefix = getattr(plugin, "prefix", None)
+        router = getattr(plugin, "router", None)
+        if prefix and router:
+            self.app.include_router(router, prefix=prefix)
+
+        dashboard_prefix = getattr(plugin, "dashboard_prefix", None)
+        dashboard_app = getattr(plugin, "dashboard_app", None)
+        if dashboard_prefix and dashboard_app:
+            self.app.mount(dashboard_prefix, dashboard_app)
 
 
 def create_cli_server(options: CliServerOptions | None = None) -> CliServerResult:
+    """Create and configure a fully wired FastAPI CLI server.
+
+    Args:
+        options: Optional server configuration. Uses defaults if ``None``.
+
+    Returns:
+        A ``CliServerResult`` containing the FastAPI app and all services.
+    """
     opts = options or CliServerOptions()
 
     event_socket_manager = CliEventSocketManager()
     log_socket_manager = CliLogSocketManager()
     shell_session_manager = CliShellSessionManager()
 
-    # Attach a log handler that forwards to WebSocket clients
     log_handler = WebSocketLogHandler(log_socket_manager)
     logging.getLogger().addHandler(log_handler)
 
@@ -79,29 +115,18 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     executor = CliCommandExecutorService(registry)
     router = create_cli_router(registry, executor)
-    router_v2 = create_cli_router_v2(registry, executor)
     version_router = create_cli_version_router()
 
-    # API v1 routes
     app.include_router(router, prefix="/api/v1/qcli")
-
-    # API v2 routes
-    app.include_router(router_v2, prefix="/api/v2/qcli")
-
-    # Version discovery routes
     app.include_router(version_router, prefix="/api/qcli")
 
-    # Custom basePath fallback (when user overrides the default)
     if opts.base_path != "/api/v1/qcli":
         app.include_router(router, prefix=opts.base_path)
 
-    # Filesystem API (opt-in via builder.set_file_storage_provider() or
-    # legacy builder.add_filesystem())
     if builder.file_storage_provider is not None:
         fs_router = create_filesystem_router(builder.file_storage_provider)
         app.include_router(fs_router, prefix="/api/qcli/fs")
     elif builder.filesystem_options is not None:
-        # Legacy path: create an OsFileStorageProvider from the options
         os_provider = OsFileStorageProvider(
             OsProviderOptions(
                 allowed_paths=builder.filesystem_options.allowed_paths
@@ -110,18 +135,35 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         fs_router = create_filesystem_router(os_provider)
         app.include_router(fs_router, prefix="/api/qcli/fs")
 
-    # WebSocket event stream
+    if builder.data_explorer_registrations:
+        from qodalis_cli_data_explorer import (
+            DataExplorerRegistry,
+            DataExplorerExecutor,
+            create_data_explorer_router,
+        )
+
+        data_explorer_registry = DataExplorerRegistry()
+        for reg in builder.data_explorer_registrations:
+            data_explorer_registry.register(reg.provider, reg.options)
+        data_explorer_executor = DataExplorerExecutor(data_explorer_registry)
+        data_explorer_router = create_data_explorer_router(
+            data_explorer_registry, data_explorer_executor
+        )
+        app.include_router(data_explorer_router, prefix="/api/qcli/data-explorer")
+
     @app.websocket("/ws/v1/qcli/events")
     async def websocket_events_v1(websocket: WebSocket) -> None:
+        logger.debug("WebSocket connection accepted: events")
         await event_socket_manager.handle_connection(websocket)
 
     @app.websocket("/ws/qcli/events")
     async def websocket_events(websocket: WebSocket) -> None:
+        logger.debug("WebSocket connection accepted: events")
         await event_socket_manager.handle_connection(websocket)
 
-    # Log WebSocket endpoints
     async def _handle_logs(websocket: WebSocket) -> None:
         level_filter = websocket.query_params.get("level") or None
+        logger.debug("Log WebSocket connection accepted (level=%s)", level_filter or "all")
         await log_socket_manager.handle_connection(websocket, level_filter)
 
     @app.websocket("/ws/v1/qcli/logs")
@@ -132,12 +174,12 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     async def websocket_logs(websocket: WebSocket) -> None:
         await _handle_logs(websocket)
 
-    # Shell WebSocket endpoints
     async def _handle_shell(websocket: WebSocket) -> None:
         await websocket.accept()
         cols = int(websocket.query_params.get("cols", "80")) or 80
         rows = int(websocket.query_params.get("rows", "24")) or 24
         cmd = websocket.query_params.get("cmd") or None
+        logger.debug("Shell WebSocket connection accepted (cols=%d, rows=%d)", cols, rows)
         await shell_session_manager.handle_session(websocket, cols, rows, cmd)
 
     @app.websocket("/ws/v1/qcli/shell")
@@ -154,4 +196,5 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         builder=builder,
         event_socket_manager=event_socket_manager,
         log_socket_manager=log_socket_manager,
+        executor=executor,
     )

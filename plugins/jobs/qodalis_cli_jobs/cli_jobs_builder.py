@@ -1,3 +1,5 @@
+"""Fluent builder for configuring and creating the jobs plugin."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,6 +22,7 @@ from .in_memory_job_storage_provider import InMemoryJobStorageProvider
 class CliJobsPlugin:
     """Result of building the jobs plugin — contains the router and scheduler."""
 
+    prefix: str
     router: APIRouter
     scheduler: CliJobScheduler
 
@@ -51,4 +54,4 @@ class CliJobsBuilder:
 
         router = create_cli_jobs_router(scheduler, storage)
 
-        return CliJobsPlugin(router=router, scheduler=scheduler)
+        return CliJobsPlugin(prefix="/api/v1/qcli/jobs", router=router, scheduler=scheduler)

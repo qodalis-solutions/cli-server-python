@@ -12,12 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 class CliEventSocketManager:
+    """Manages WebSocket connections for broadcasting server events to clients."""
+
     def __init__(self) -> None:
         self._clients: set[WebSocket] = set()
         self._client_info: dict[WebSocket, dict[str, Any]] = {}
         self._next_client_id = 1
 
     async def handle_connection(self, websocket: WebSocket) -> None:
+        """Accept a WebSocket connection and keep it alive until the client disconnects."""
         await websocket.accept()
         self._clients.add(websocket)
 
@@ -35,10 +38,11 @@ class CliEventSocketManager:
             "type": "events",
         }
 
+        logger.info("Event client connected (id=%s)", client_id)
+
         try:
             await websocket.send_text(json.dumps({"type": "connected"}))
 
-            # Keep the connection open until the client disconnects
             while True:
                 try:
                     await websocket.receive_text()
@@ -47,6 +51,7 @@ class CliEventSocketManager:
         finally:
             self._clients.discard(websocket)
             self._client_info.pop(websocket, None)
+            logger.info("Event client disconnected (id=%s)", client_id)
 
     async def broadcast_message(self, message: str) -> None:
         """Send a text message to all connected WebSocket clients."""
@@ -54,7 +59,7 @@ class CliEventSocketManager:
             try:
                 await client.send_text(message)
             except Exception:
-                pass
+                logger.debug("Broadcast send failed, removing client")
 
     def get_clients(self) -> list[dict[str, Any]]:
         """Return information about all currently connected event clients."""
@@ -63,6 +68,8 @@ class CliEventSocketManager:
         ]
 
     async def broadcast_disconnect(self) -> None:
+        """Send a disconnect message to all clients and close their connections."""
+        logger.info("Broadcasting disconnect to %d event clients", len(self._clients))
         message = json.dumps({"type": "disconnect"})
         tasks = []
         for client in list(self._clients):
@@ -77,4 +84,4 @@ class CliEventSocketManager:
             await client.send_text(message)
             await client.close()
         except Exception:
-            pass
+            logger.debug("Broadcast send failed, removing client")

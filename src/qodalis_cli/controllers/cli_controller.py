@@ -1,22 +1,30 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import platform
 from typing import Any
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..abstractions import ICliCommandProcessor
 from ..abstractions.cli_process_command import CliProcessCommand
+from qodalis_cli_server_abstractions import is_stream_capable
 from ..models import CliServerCommandDescriptor, CliServerCommandParameterDescriptorDto, CliServerResponse
 from ..services.cli_command_executor_service import ICliCommandExecutorService
 from ..services.cli_command_registry import ICliCommandRegistry
+
+logger = logging.getLogger(__name__)
 
 SERVER_VERSION = "1.0.0"
 
 
 class ExecuteRequest(BaseModel):
+    """Request body for the v1 command execution endpoint."""
+
     command: str = ""
     raw_command: str = Field(alias="rawCommand", default="")
     value: str | None = None
@@ -28,6 +36,7 @@ class ExecuteRequest(BaseModel):
 
 
 def _map_to_descriptor(processor: ICliCommandProcessor) -> dict[str, Any]:
+    """Convert a command processor into a JSON-serialisable descriptor dict."""
     params = None
     if processor.parameters:
         params = [
@@ -63,6 +72,15 @@ def create_cli_router(
     registry: ICliCommandRegistry,
     executor: ICliCommandExecutorService,
 ) -> APIRouter:
+    """Create a FastAPI router for the v1 CLI API.
+
+    Args:
+        registry: The command registry to query for available processors.
+        executor: The executor service used to run commands.
+
+    Returns:
+        A configured ``APIRouter``.
+    """
     router = APIRouter()
 
     @router.get("/version")
@@ -89,6 +107,7 @@ def create_cli_router(
             "os": detected_os,
             "shellPath": shell_path,
             "version": SERVER_VERSION,
+            "streaming": True,
         }
 
     @router.get("/commands")
@@ -97,6 +116,7 @@ def create_cli_router(
 
     @router.post("/execute")
     async def execute_command(request: ExecuteRequest) -> JSONResponse:
+        logger.debug("Executing command: %s", request.command)
         cmd = CliProcessCommand(
             command=request.command,
             raw_command=request.raw_command,
@@ -105,7 +125,89 @@ def create_cli_router(
             chain_commands=request.chain_commands,
             data=request.data,
         )
-        result = await executor.execute_async(cmd)
+        result = await executor.execute_async(cmd, cancellation_event=None)
         return JSONResponse(result.model_dump(by_alias=True, exclude_none=True))
+
+    @router.post("/execute/stream")
+    async def execute_stream(request: ExecuteRequest) -> StreamingResponse:
+        command = CliProcessCommand(
+            command=request.command,
+            raw_command=request.raw_command,
+            value=request.value,
+            args=request.args,
+            chain_commands=request.chain_commands,
+            data=request.data,
+        )
+
+        cancellation_event = asyncio.Event()
+
+        async def event_generator():
+            def sse_event(event_type: str, data: dict) -> str:
+                return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+            try:
+                processor = registry.find_processor(
+                    command.command,
+                    list(command.chain_commands) if command.chain_commands else None,
+                )
+
+                if processor is None:
+                    yield sse_event("error", {"message": f"Unknown command: {command.command}"})
+                    return
+
+                if executor.is_blocked(processor):
+                    blocked_msg = f"Command '{command.command}' is currently disabled."
+                    yield sse_event("error", {"message": blocked_msg})
+                    return
+
+                if is_stream_capable(processor):
+                    queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+                    def emit_to_queue(output: dict) -> None:
+                        if not cancellation_event.is_set():
+                            queue.put_nowait(sse_event("output", output))
+
+                    task = asyncio.ensure_future(
+                        processor.handle_stream_async(command, emit_to_queue, cancellation_event)
+                    )
+                    while not task.done() or not queue.empty():
+                        if cancellation_event.is_set():
+                            task.cancel()
+                            break
+                        try:
+                            chunk = queue.get_nowait()
+                            yield chunk
+                        except asyncio.QueueEmpty:
+                            await asyncio.sleep(0)
+                    if not cancellation_event.is_set():
+                        try:
+                            exit_code = task.result()
+                        except Exception as exc:
+                            yield sse_event("error", {"message": f"Error executing command: {exc}"})
+                            return
+                    else:
+                        logger.debug("Stream cancelled for command: %s", command.command)
+                        return
+                else:
+                    response = await executor.execute_async(command, cancellation_event)
+                    for output in response.outputs:
+                        yield sse_event("output", output.model_dump(by_alias=True, exclude_none=True))
+                    exit_code = response.exit_code
+
+                yield sse_event("done", {"exitCode": exit_code})
+            except asyncio.CancelledError:
+                logger.debug("Stream cancelled for command: %s", command.command)
+            except Exception as exc:
+                yield sse_event("error", {"message": f"Error executing command: {exc}"})
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     return router

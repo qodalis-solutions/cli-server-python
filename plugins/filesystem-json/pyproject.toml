@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-filesystem-json"
-version = "1.0.0b1"
+version = "1.0.0b5"
 description = "JSON file-based storage provider for the Qodalis CLI filesystem plugin"
 readme = { text = "", content-type = "text/plain" }
 license = "MIT"

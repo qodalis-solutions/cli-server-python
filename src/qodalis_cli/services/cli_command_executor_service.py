@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import abc
+import asyncio
 import logging
+from typing import Sequence
 
-from ..abstractions import CliProcessCommand
+from ..abstractions import CliProcessCommand, ICliCommandProcessor, ICliProcessorFilter
 from ..models.cli_server_output import CliServerTextOutput
 from ..models.cli_server_response import CliServerResponse
 from .cli_command_registry import ICliCommandRegistry
@@ -12,15 +14,60 @@ logger = logging.getLogger(__name__)
 
 
 class ICliCommandExecutorService(abc.ABC):
+    """Interface for a service that executes parsed CLI commands."""
+
     @abc.abstractmethod
-    async def execute_async(self, command: CliProcessCommand) -> CliServerResponse: ...
+    async def execute_async(
+        self,
+        command: CliProcessCommand,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> CliServerResponse:
+        """Execute a command and return a structured response.
+
+        Args:
+            command: The parsed command to execute.
+            cancellation_event: Optional event that is set when the caller
+                requests cancellation.
+
+        Returns:
+            A ``CliServerResponse`` containing outputs and an exit code.
+        """
+        ...
+
+    @abc.abstractmethod
+    def is_blocked(self, processor: "ICliCommandProcessor") -> bool:
+        """Return True if any filter blocks this processor."""
+        ...
 
 
 class CliCommandExecutorService(ICliCommandExecutorService):
-    def __init__(self, registry: ICliCommandRegistry) -> None:
-        self._registry = registry
+    """Default executor that resolves processors from a registry and runs them."""
 
-    async def execute_async(self, command: CliProcessCommand) -> CliServerResponse:
+    def __init__(
+        self,
+        registry: ICliCommandRegistry,
+        filters: Sequence[ICliProcessorFilter] | None = None,
+    ) -> None:
+        self._registry = registry
+        self._filters: list[ICliProcessorFilter] = list(filters or [])
+
+    def add_filter(self, filter_: ICliProcessorFilter) -> None:
+        """Register an additional processor filter at runtime.
+
+        Args:
+            filter_: The filter to add.
+        """
+        self._filters.append(filter_)
+
+    def is_blocked(self, processor: ICliCommandProcessor) -> bool:
+        """Return True if any filter blocks this processor."""
+        return any(not f.is_allowed(processor) for f in self._filters)
+
+    async def execute_async(
+        self,
+        command: CliProcessCommand,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> CliServerResponse:
         chain = command.chain_commands if command.chain_commands else None
         full_command = (
             f"{command.command} {' '.join(chain)}" if chain else command.command
@@ -42,8 +89,26 @@ class CliCommandExecutorService(ICliCommandExecutorService):
                 ],
             )
 
+        if self.is_blocked(processor):
+            logger.warning(
+                "Command blocked by filter (plugin disabled): %s", full_command
+            )
+            return CliServerResponse(
+                exitCode=1,
+                outputs=[
+                    CliServerTextOutput(
+                        value=f"Command '{command.command}' is currently disabled.",
+                        style="error",
+                    )
+                ],
+            )
+
         try:
-            result = await processor.handle_async(command)
+            structured = await processor.handle_structured_async(command, cancellation_event)
+            if structured is not processor._STRUCTURED_NOT_IMPLEMENTED:
+                logger.info("Command completed (structured): %s", full_command)
+                return structured
+            result = await processor.handle_async(command, cancellation_event)
             logger.info("Command completed: %s", full_command)
             return CliServerResponse(
                 exitCode=0,

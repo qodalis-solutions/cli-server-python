@@ -11,6 +11,7 @@ from .abstractions import (
     CliCommandProcessor,
     ICliModule,
     CliModule,
+    ICliProcessorFilter,
 )
 from .models import (
     CliServerOutput,
@@ -28,7 +29,7 @@ from .services import (
     CliEventSocketManager,
     CliShellSessionManager,
 )
-from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router, create_filesystem_router
+from .controllers import create_cli_router, create_cli_version_router, create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemOptions, FileSystemPathValidator
 
@@ -56,7 +57,7 @@ from .processors import (
     CliHashCommandProcessor,
     CliBase64CommandProcessor,
 )
-from .create_cli_server import create_cli_server, CliServerOptions
+from .create_cli_server import create_cli_server, CliServerOptions, CliServerResult
 
 __all__ = [
     "ICliCommandAuthor",
@@ -69,6 +70,7 @@ __all__ = [
     "CliCommandProcessor",
     "ICliModule",
     "CliModule",
+    "ICliProcessorFilter",
     "CliServerOutput",
     "CliServerResponse",
     "CliServerCommandDescriptor",
@@ -82,7 +84,6 @@ __all__ = [
     "CliEventSocketManager",
     "CliShellSessionManager",
     "create_cli_router",
-    "create_cli_router_v2",
     "create_cli_version_router",
     "create_filesystem_router",
     "CliBuilder",
@@ -96,6 +97,7 @@ __all__ = [
     "CliBase64CommandProcessor",
     "create_cli_server",
     "CliServerOptions",
+    "CliServerResult",
     "FileEntry",
     "FileStat",
     "FileStorageExistsError",

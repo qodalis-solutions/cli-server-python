@@ -1,3 +1,5 @@
+"""FastAPI router for the background jobs API."""
+
 from __future__ import annotations
 
 import datetime
@@ -13,12 +15,9 @@ from .cli_job_scheduler import CliJobScheduler, InvalidOperationError
 from .interval_parser import parse_interval
 
 
-# ---------------------------------------------------------------------------
-# Request / Response models
-# ---------------------------------------------------------------------------
-
-
 class UpdateJobRequest(BaseModel):
+    """Request body for updating job options (patch semantics)."""
+
     description: str | None = None
     group: str | None = None
     schedule: str | None = None
@@ -33,12 +32,14 @@ class UpdateJobRequest(BaseModel):
 
 
 def _serialize_dt(dt: datetime.datetime | None) -> str | None:
+    """Serialize a datetime to ISO 8601 with a trailing ``Z`` suffix."""
     if dt is None:
         return None
     return dt.isoformat().replace("+00:00", "Z") if dt.tzinfo else dt.isoformat() + "Z"
 
 
 def _job_dto(reg: Any) -> dict[str, Any]:
+    """Convert a job registration to a JSON-serialisable DTO."""
     return {
         "id": reg.id,
         "name": reg.options.name,
@@ -61,23 +62,17 @@ def _job_dto(reg: Any) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Router factory
-# ---------------------------------------------------------------------------
-
-
 def create_cli_jobs_router(
     scheduler: CliJobScheduler,
     storage: ICliJobStorageProvider,
 ) -> APIRouter:
+    """Create a FastAPI router with CRUD and control endpoints for jobs."""
     router = APIRouter()
 
-    # GET / — list all jobs
     @router.get("")
     async def list_jobs() -> list[dict[str, Any]]:
         return [_job_dto(reg) for reg in scheduler.registrations.values()]
 
-    # GET /{job_id}
     @router.get("/{job_id}")
     async def get_job(job_id: str) -> Any:
         reg = scheduler.registrations.get(job_id)
@@ -88,7 +83,6 @@ def create_cli_jobs_router(
             )
         return _job_dto(reg)
 
-    # POST /{job_id}/trigger
     @router.post("/{job_id}/trigger")
     async def trigger_job(job_id: str) -> Any:
         try:
@@ -105,7 +99,6 @@ def create_cli_jobs_router(
                 content={"error": str(exc), "code": "JOB_ALREADY_RUNNING"},
             )
 
-    # POST /{job_id}/pause
     @router.post("/{job_id}/pause")
     async def pause_job(job_id: str) -> Any:
         try:
@@ -122,7 +115,6 @@ def create_cli_jobs_router(
                 content={"error": str(exc), "code": "JOB_ALREADY_PAUSED"},
             )
 
-    # POST /{job_id}/resume
     @router.post("/{job_id}/resume")
     async def resume_job(job_id: str) -> Any:
         try:
@@ -139,7 +131,6 @@ def create_cli_jobs_router(
                 content={"error": str(exc), "code": "JOB_NOT_PAUSED"},
             )
 
-    # POST /{job_id}/stop
     @router.post("/{job_id}/stop")
     async def stop_job(job_id: str) -> Any:
         try:
@@ -151,7 +142,6 @@ def create_cli_jobs_router(
                 content={"error": "Job not found", "code": "JOB_NOT_FOUND"},
             )
 
-    # POST /{job_id}/cancel
     @router.post("/{job_id}/cancel")
     async def cancel_job(job_id: str) -> Any:
         try:
@@ -168,7 +158,6 @@ def create_cli_jobs_router(
                 content={"error": str(exc), "code": "JOB_NOT_RUNNING"},
             )
 
-    # PUT /{job_id} — update options (patch semantics)
     @router.put("/{job_id}")
     async def update_job(job_id: str, body: UpdateJobRequest) -> Any:
         try:
@@ -196,7 +185,6 @@ def create_cli_jobs_router(
                 content={"error": str(exc), "code": "INVALID_SCHEDULE"},
             )
 
-    # GET /{job_id}/history
     @router.get("/{job_id}/history")
     async def get_history(
         job_id: str,
@@ -233,7 +221,6 @@ def create_cli_jobs_router(
             "offset": offset,
         }
 
-    # GET /{job_id}/history/{exec_id}
     @router.get("/{job_id}/history/{exec_id}")
     async def get_execution(job_id: str, exec_id: str) -> Any:
         execution = await storage.get_execution(exec_id)

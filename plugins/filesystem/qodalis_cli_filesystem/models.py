@@ -1,3 +1,5 @@
+"""Data models for file storage entries and metadata."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

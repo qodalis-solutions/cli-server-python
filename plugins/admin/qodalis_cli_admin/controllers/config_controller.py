@@ -11,6 +11,8 @@ from ..services.admin_config import AdminConfig
 
 
 class UpdateConfigRequest(BaseModel):
+    """Request body for updating admin configuration settings."""
+
     settings: dict[str, Any]
 
 

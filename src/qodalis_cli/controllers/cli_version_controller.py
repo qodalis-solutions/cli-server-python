@@ -10,13 +10,18 @@ SERVER_VERSION = "1.0.0"
 
 
 def create_cli_version_router() -> APIRouter:
+    """Create a FastAPI router for version discovery and server capabilities.
+
+    Returns:
+        A configured ``APIRouter`` with ``/versions`` and ``/capabilities`` endpoints.
+    """
     router = APIRouter()
 
     @router.get("/versions")
     async def get_versions() -> dict[str, Any]:
         return {
-            "supportedVersions": [1, 2],
-            "preferredVersion": 2,
+            "supportedVersions": [1],
+            "preferredVersion": 1,
             "serverVersion": SERVER_VERSION,
         }
 
@@ -40,6 +45,7 @@ def create_cli_version_router() -> APIRouter:
             "os": detected_os,
             "shellPath": shell_path,
             "version": SERVER_VERSION,
+            "streaming": True,
         }
 
     return router

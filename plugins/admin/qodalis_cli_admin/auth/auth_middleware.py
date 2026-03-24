@@ -36,8 +36,6 @@ def create_auth_dependency(jwt_service: JwtService):
     return require_auth
 
 
-# Convenience alias — requires a JwtService instance to be set externally.
-# Prefer ``create_auth_dependency(jwt_service)`` for production use.
 async def require_auth(request: Request) -> dict[str, Any]:  # noqa: F811
-    """Placeholder — use :func:`create_auth_dependency` to create a real dependency."""
+    """No-op fallback; use ``create_auth_dependency`` to create a real dependency."""
     raise HTTPException(status_code=401, detail="Auth not configured")

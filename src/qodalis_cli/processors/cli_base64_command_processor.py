@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 
 from ..abstractions import CliCommandProcessor, CliProcessCommand, ICliCommandProcessor
 
 
 class _Base64EncodeProcessor(CliCommandProcessor):
+    """Sub-processor that encodes text to Base64."""
+
     @property
     def command(self) -> str:
         return "encode"
@@ -14,7 +17,7 @@ class _Base64EncodeProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "Encodes text to Base64"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         text = command.value
         if not text:
             return "Usage: base64 encode <text>"
@@ -22,6 +25,8 @@ class _Base64EncodeProcessor(CliCommandProcessor):
 
 
 class _Base64DecodeProcessor(CliCommandProcessor):
+    """Sub-processor that decodes Base64 to text."""
+
     @property
     def command(self) -> str:
         return "decode"
@@ -30,7 +35,7 @@ class _Base64DecodeProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "Decodes Base64 to text"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         text = command.value
         if not text:
             return "Usage: base64 decode <base64string>"
@@ -41,6 +46,8 @@ class _Base64DecodeProcessor(CliCommandProcessor):
 
 
 class CliBase64CommandProcessor(CliCommandProcessor):
+    """Command processor for Base64 encoding and decoding."""
+
     @property
     def command(self) -> str:
         return "base64"
@@ -57,5 +64,5 @@ class CliBase64CommandProcessor(CliCommandProcessor):
     def processors(self) -> list[ICliCommandProcessor]:
         return [_Base64EncodeProcessor(), _Base64DecodeProcessor()]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return "Usage: base64 encode|decode <text>"

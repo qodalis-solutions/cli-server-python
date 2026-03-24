@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import platform
 import time
@@ -10,6 +11,8 @@ _start_time = time.time()
 
 
 class CliSystemCommandProcessor(CliCommandProcessor):
+    """Command processor that reports server system information."""
+
     @property
     def command(self) -> str:
         return "system"
@@ -18,7 +21,7 @@ class CliSystemCommandProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "Shows server system information"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         uptime_secs = int(time.time() - _start_time)
         hours, remainder = divmod(uptime_secs, 3600)
         minutes, seconds = divmod(remainder, 60)

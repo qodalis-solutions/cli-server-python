@@ -1,3 +1,5 @@
+"""AWS S3-backed file storage provider."""
+
 from __future__ import annotations
 
 import asyncio
@@ -101,8 +103,6 @@ class S3FileStorageProvider(IFileStorageProvider):
         """Run a synchronous boto3 call in the default executor."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, partial(func, *args, **kwargs))
-
-    # -- IFileStorageProvider interface ----------------------------------------
 
     @property
     def name(self) -> str:
@@ -442,8 +442,6 @@ class S3FileStorageProvider(IFileStorageProvider):
 
     async def upload_file(self, path: str, content: bytes) -> None:
         await self.write_file(path, content)
-
-    # -- Private helpers ------------------------------------------------------
 
     async def _is_file(self, norm_path: str) -> bool:
         """Check if a normalized path corresponds to a file object."""

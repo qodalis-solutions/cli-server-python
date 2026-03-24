@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-filesystem"
-version = "1.0.0b1"
+version = "1.0.0b5"
 description = "Filesystem abstraction layer for Qodalis CLI servers — interfaces, models, errors, and built-in providers (in-memory, OS)"
 readme = { text = "", content-type = "text/plain" }
 license = "MIT"

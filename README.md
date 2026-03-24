@@ -571,6 +571,156 @@ class MyProvider(IFileStorageProvider):
 builder.set_file_storage_provider(MyProvider())
 ```
 
+## Data Explorer
+
+The Data Explorer plugin provides interactive access to data sources through a provider-based API. Each data source type (SQL, MongoDB, etc.) is a separate plugin implementing `IDataExplorerProvider`.
+
+### API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/qcli/data-explorer/sources` | List registered data sources with metadata |
+| POST | `/api/qcli/data-explorer/execute` | Execute a query against a named source |
+
+### SQL Provider
+
+```python
+from qodalis_cli_data_explorer_sql import SqlDataExplorerProvider
+from qodalis_cli_server_abstractions import (
+    DataExplorerProviderOptions,
+    DataExplorerLanguage,
+    DataExplorerOutputFormat,
+    DataExplorerTemplate,
+)
+
+result = create_cli_server(
+    CliServerOptions(
+        configure=lambda builder: builder.add_data_explorer_provider(
+            SqlDataExplorerProvider("app.db"),
+            DataExplorerProviderOptions(
+                name="app-database",
+                description="Application database",
+                language=DataExplorerLanguage.SQL,
+                default_output_format=DataExplorerOutputFormat.TABLE,
+                timeout=30000,
+                max_rows=1000,
+                templates=[
+                    DataExplorerTemplate(
+                        "list_tables",
+                        "SELECT name FROM sqlite_master WHERE type='table'",
+                        "List all tables",
+                    ),
+                ],
+            ),
+        ),
+    )
+)
+```
+
+### MongoDB Provider
+
+```python
+from qodalis_cli_data_explorer_mongo import MongoDataExplorerProvider
+
+builder.add_data_explorer_provider(
+    MongoDataExplorerProvider("mongodb://localhost:27017", "myapp"),
+    DataExplorerProviderOptions(
+        name="mongo-primary",
+        description="Primary MongoDB database",
+        language=DataExplorerLanguage.JSON,
+        default_output_format=DataExplorerOutputFormat.JSON,
+        templates=[
+            DataExplorerTemplate("show_collections", "show collections", "List all collections"),
+            DataExplorerTemplate("find_users", "db.users.find({})", "Find all users"),
+        ],
+    ),
+)
+```
+
+**Supported MongoDB operations:** `db.collection.find({...})`, `findOne`, `aggregate([...])`, `insertOne`, `insertMany`, `updateOne`, `updateMany`, `deleteOne`, `deleteMany`, `countDocuments`, `distinct`. Convenience commands: `show collections`, `show dbs`.
+
+### Custom Provider
+
+Implement `IDataExplorerProvider` to add your own data source:
+
+```python
+from qodalis_cli_server_abstractions import (
+    IDataExplorerProvider,
+    DataExplorerExecutionContext,
+    DataExplorerResult,
+)
+
+class MyProvider(IDataExplorerProvider):
+    async def execute_async(
+        self, context: DataExplorerExecutionContext
+    ) -> DataExplorerResult:
+        # context.query — the user's query string
+        # context.parameters — key-value parameters
+        # context.options — provider options (name, language, etc.)
+        return DataExplorerResult(
+            success=True,
+            source=context.options.name,
+            language=context.options.language,
+            default_output_format=context.options.default_output_format,
+            execution_time=0,
+            columns=["id", "name"],       # None for document-oriented results
+            rows=[[1, "Alice"], [2, "Bob"]],  # dicts when columns is None
+            row_count=2,
+            truncated=False,
+            error=None,
+        )
+
+builder.add_data_explorer_provider(
+    MyProvider(),
+    DataExplorerProviderOptions(name="custom", description="My custom source"),
+)
+```
+
+The same provider class can be registered multiple times with different configurations (e.g., two databases with different names).
+
+## AWS Cloud Services
+
+The AWS plugin adds commands for managing AWS resources (S3, EC2, Lambda, CloudWatch, SNS, SQS, IAM, DynamoDB, ECS) directly from the CLI. It uses boto3 and supports the full credential chain.
+
+```python
+from plugins.aws.qodalis_cli_aws import AwsModule
+
+result = create_cli_server(
+    CliServerOptions(configure=lambda builder: builder.add_module(AwsModule()))
+)
+```
+
+### Authentication
+
+The plugin resolves credentials in this order:
+
+1. **CLI configure**: `aws configure set --key <KEY> --secret <SECRET> --region <REGION>`
+2. **Environment variables**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
+3. **AWS profiles**: `aws configure set --profile <name>`
+4. **IAM roles**: Automatic on EC2/ECS/Lambda
+
+Verify connectivity with `aws status`.
+
+### Available Commands
+
+| Service | Commands |
+|---------|----------|
+| **configure** | `aws configure set`, `aws configure get`, `aws configure profiles` |
+| **status** | `aws status` — STS GetCallerIdentity connectivity check |
+| **S3** | `aws s3 ls`, `aws s3 cp`, `aws s3 rm`, `aws s3 mb`, `aws s3 rb`, `aws s3 presign` |
+| **EC2** | `aws ec2 list`, `aws ec2 describe`, `aws ec2 start`, `aws ec2 stop`, `aws ec2 reboot`, `aws ec2 sg list` |
+| **Lambda** | `aws lambda list`, `aws lambda invoke`, `aws lambda logs` |
+| **CloudWatch** | `aws cloudwatch alarms`, `aws cloudwatch logs`, `aws cloudwatch metrics` |
+| **SNS** | `aws sns topics`, `aws sns publish`, `aws sns subscriptions` |
+| **SQS** | `aws sqs list`, `aws sqs send`, `aws sqs receive`, `aws sqs purge` |
+| **IAM** | `aws iam users`, `aws iam roles`, `aws iam policies` |
+| **DynamoDB** | `aws dynamodb tables`, `aws dynamodb describe`, `aws dynamodb scan`, `aws dynamodb query` |
+| **ECS** | `aws ecs clusters`, `aws ecs services`, `aws ecs tasks` |
+
+All commands support `--region` (`-r`) for region override and `--output` (`-o`) for format selection (`table`, `json`, `text`). Destructive commands support `--dry-run`.
+
+See [`plugins/aws/README.md`](plugins/aws/README.md) for the full command reference.
+
 ## Built-in Processors
 
 These processors ship with the library and are included in the standalone server:

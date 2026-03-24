@@ -1,3 +1,5 @@
+"""OS filesystem storage provider with path whitelisting."""
+
 from __future__ import annotations
 
 import os
@@ -38,8 +40,6 @@ class OsFileStorageProvider(IFileStorageProvider):
 
     def __init__(self, options: OsProviderOptions) -> None:
         self._allowed_paths = [os.path.realpath(p) for p in options.allowed_paths]
-
-    # -- IFileStorageProvider interface ----------------------------------------
 
     @property
     def name(self) -> str:
@@ -195,8 +195,6 @@ class OsFileStorageProvider(IFileStorageProvider):
 
     async def upload_file(self, path: str, content: bytes) -> None:
         await self.write_file(path, content)
-
-    # -- Private helpers -------------------------------------------------------
 
     def _validate(self, path: str) -> str:
         """Resolve *path* and check it against the allowed whitelist.

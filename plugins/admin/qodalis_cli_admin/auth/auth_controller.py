@@ -13,25 +13,20 @@ from .jwt_service import JwtService
 from ..services.admin_config import AdminConfig
 
 
-# ---------------------------------------------------------------------------
-# Request / Response models
-# ---------------------------------------------------------------------------
-
-
 class LoginRequest(BaseModel):
+    """Request body for the login endpoint."""
+
     username: str
     password: str
 
 
 class LoginResponse(BaseModel):
+    """Response body returned on successful login."""
+
     token: str
     expiresIn: int
     username: str
 
-
-# ---------------------------------------------------------------------------
-# Rate limiting helpers
-# ---------------------------------------------------------------------------
 
 _MAX_ATTEMPTS = 5
 _WINDOW_SECONDS = 60
@@ -47,18 +42,13 @@ class _RateLimiter:
         """Raise ``HTTPException(429)`` if the IP has exceeded the limit."""
         now = time.time()
         cutoff = now - _WINDOW_SECONDS
-        # Clean old entries
         self._attempts[ip] = [t for t in self._attempts[ip] if t > cutoff]
         if len(self._attempts[ip]) >= _MAX_ATTEMPTS:
             raise HTTPException(status_code=429, detail="Too many failed login attempts. Try again later.")
 
     def record_failure(self, ip: str) -> None:
+        """Record a failed login attempt for the given IP."""
         self._attempts[ip].append(time.time())
-
-
-# ---------------------------------------------------------------------------
-# Router factory
-# ---------------------------------------------------------------------------
 
 
 def create_auth_router(
@@ -72,7 +62,6 @@ def create_auth_router(
 
     @router.post("/login", response_model=LoginResponse)
     async def login(body: LoginRequest, request: Request) -> Any:
-        # Check X-Forwarded-For header for real client IP behind proxy
         forwarded_for = request.headers.get("x-forwarded-for")
         if forwarded_for:
             client_ip = forwarded_for.split(",")[0].strip()

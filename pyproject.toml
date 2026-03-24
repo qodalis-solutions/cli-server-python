@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server"
-version = "1.0.0b4"
+version = "1.0.0b5"
 description = "A Python CLI server framework for the Qodalis CLI ecosystem"
 readme = "README.md"
 license = "MIT"
