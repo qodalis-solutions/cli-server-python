@@ -1,5 +1,8 @@
 # Qodalis CLI Server (Python)
 
+[![PyPI qodalis-cli-server](https://img.shields.io/pypi/v/qodalis-cli-server?label=qodalis-cli-server)](https://pypi.org/project/qodalis-cli-server/)
+[![PyPI qodalis-cli-server-abstractions](https://img.shields.io/pypi/v/qodalis-cli-server-abstractions?label=qodalis-cli-server-abstractions)](https://pypi.org/project/qodalis-cli-server-abstractions/)
+
 A Python CLI server framework for the [Qodalis CLI](https://github.com/qodalis-solutions/web-cli) ecosystem. Build custom server-side commands that integrate with the Qodalis web terminal.
 
 ## Installation
@@ -388,14 +391,14 @@ The server exposes versioned endpoints:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/cli/versions` | Version discovery (supported versions, preferred version) |
-| GET | `/api/v1/cli/version` | V1 server version |
-| GET | `/api/v1/cli/commands` | V1 commands (all processors) |
-| POST | `/api/v1/cli/execute` | V1 execute |
-| GET | `/api/v2/cli/version` | V2 server version |
-| GET | `/api/v2/cli/commands` | V2 commands (only `api_version >= 2`) |
-| POST | `/api/v2/cli/execute` | V2 execute |
-| WS | `/ws/cli/events` | WebSocket events (also `/ws/v1/cli/events`, `/ws/v2/cli/events`) |
+| GET | `/api/qcli/versions` | Version discovery (supported versions, preferred version) |
+| GET | `/api/v1/qcli/version` | V1 server version |
+| GET | `/api/v1/qcli/commands` | V1 commands (all processors) |
+| POST | `/api/v1/qcli/execute` | V1 execute |
+| GET | `/api/v1/qcli/capabilities` | Server capabilities (OS, shell, features) |
+| WS | `/ws/v1/qcli/events` | WebSocket server-push event broadcast |
+| WS | `/ws/v1/qcli/logs` | WebSocket log streaming (supports `?level=` filter) |
+| WS | `/ws/v1/qcli/shell` | Interactive PTY shell session (supports `?cols=&rows=&cmd=`) |
 
 The Qodalis CLI client auto-negotiates the highest mutually supported version via the `/api/cli/versions` discovery endpoint.
 
@@ -421,7 +424,7 @@ The Qodalis CLI client auto-negotiates the highest mutually supported version vi
 ```python
 @dataclass
 class CliServerOptions:
-    base_path: str = "/api/cli"            # API base path
+    base_path: str = "/api/qcli"           # API base path
     cors: bool = True                       # Enable CORS
     cors_origins: list[str] = ["*"]         # Allowed origins
     configure: Callable[[CliBuilder], None] | None = None  # Processor registration
@@ -435,7 +438,11 @@ class CliServerResult:
     app: FastAPI                            # Configured FastAPI app
     registry: CliCommandRegistry            # Processor registry
     builder: CliBuilder                     # Registration builder
-    event_socket_manager: CliEventSocketManager  # WebSocket manager
+    event_socket_manager: CliEventSocketManager  # WebSocket event manager
+    log_socket_manager: CliLogSocketManager  # WebSocket log manager
+    executor: CliCommandExecutorService | None  # Command executor service
+
+    def mount_plugin(self, plugin: object) -> None: ...  # Mount a plugin with router/dashboard
 ```
 
 ## Exported Types
@@ -483,19 +490,19 @@ from qodalis_cli import (
 
 ## File Storage
 
-The server includes a pluggable file storage system exposed at `/api/cli/fs/*`. Enable it with `set_file_storage_provider()` and choose a storage backend.
+The server includes a pluggable file storage system exposed at `/api/qcli/fs/*`. Enable it with `set_file_storage_provider()` and choose a storage backend.
 
 ### Filesystem API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/cli/fs/ls?path=/` | List directory contents |
-| GET | `/api/cli/fs/cat?path=/file.txt` | Read file content |
-| GET | `/api/cli/fs/stat?path=/file.txt` | File/directory metadata |
-| GET | `/api/cli/fs/download?path=/file.txt` | Download file |
-| POST | `/api/cli/fs/upload` | Upload file (multipart) |
-| POST | `/api/cli/fs/mkdir` | Create directory |
-| DELETE | `/api/cli/fs/rm?path=/file.txt` | Delete file or directory |
+| GET | `/api/qcli/fs/ls?path=/` | List directory contents |
+| GET | `/api/qcli/fs/cat?path=/file.txt` | Read file content |
+| GET | `/api/qcli/fs/stat?path=/file.txt` | File/directory metadata |
+| GET | `/api/qcli/fs/download?path=/file.txt` | Download file |
+| POST | `/api/qcli/fs/upload` | Upload file (multipart) |
+| POST | `/api/qcli/fs/mkdir` | Create directory |
+| DELETE | `/api/qcli/fs/rm?path=/file.txt` | Delete file or directory |
 
 ### Storage Providers
 
@@ -510,10 +517,10 @@ result = create_cli_server(
     CliServerOptions(
         configure=lambda builder: (
             # In-memory (default) — files lost on restart
-            builder.set_file_storage_provider(InMemoryProvider())
+            builder.set_file_storage_provider(InMemoryFileStorageProvider())
 
             # OS filesystem
-            # builder.set_file_storage_provider(OsProvider())
+            # builder.set_file_storage_provider(OsFileStorageProvider())
 
             # JSON file — persists to a single JSON file
             # builder.set_file_storage_provider(
@@ -683,7 +690,7 @@ The same provider class can be registered multiple times with different configur
 The AWS plugin adds commands for managing AWS resources (S3, EC2, Lambda, CloudWatch, SNS, SQS, IAM, DynamoDB, ECS) directly from the CLI. It uses boto3 and supports the full credential chain.
 
 ```python
-from plugins.aws.qodalis_cli_aws import AwsModule
+from qodalis_cli_aws import AwsModule
 
 result = create_cli_server(
     CliServerOptions(configure=lambda builder: builder.add_module(AwsModule()))
@@ -733,7 +740,6 @@ These processors ship with the library and are included in the standalone server
 | `http` | HTTP request operations |
 | `hash` | Hash computation (MD5, SHA1, SHA256, SHA512) |
 | `base64` | Base64 encode/decode (sub-commands) |
-| `uuid` | UUID generation |
 
 ## Docker
 
@@ -775,7 +781,18 @@ plugins/
   filesystem-json/                    # JSON file persistence provider
   filesystem-sqlite/                  # SQLite persistence provider (stdlib sqlite3)
   filesystem-s3/                      # Amazon S3 storage provider (boto3)
+  data-explorer/                      # Base data exploration framework
+  data-explorer-sql/                  # SQLite data explorer provider
+  data-explorer-mongo/                # MongoDB data explorer provider
+  data-explorer-postgres/             # PostgreSQL data explorer provider
+  data-explorer-mysql/                # MySQL data explorer provider
+  data-explorer-mssql/                # MS SQL Server data explorer provider
+  data-explorer-redis/                # Redis data explorer provider
+  data-explorer-elasticsearch/        # Elasticsearch data explorer provider
   weather/                            # Weather module (example plugin)
+  admin/                              # Admin dashboard and monitoring
+  jobs/                               # Job scheduling and management
+  aws/                                # AWS cloud resource management
 src/qodalis_cli/
   abstractions/                       # Re-exports from qodalis_cli_server_abstractions
   models/
@@ -787,10 +804,12 @@ src/qodalis_cli/
     cli_command_executor_service.py   # Command execution pipeline
     cli_response_builder.py           # Structured output builder
     cli_event_socket_manager.py       # WebSocket event broadcasting
+    cli_log_socket_manager.py         # WebSocket log streaming
+    cli_shell_session_manager.py      # Interactive PTY shell sessions
   controllers/
-    cli_controller.py                 # V1 REST API (/api/v1/cli)
-    cli_controller_v2.py              # V2 REST API (/api/v2/cli)
-    cli_version_controller.py         # Version discovery (/api/cli/versions)
+    cli_controller.py                 # REST API (/api/v1/qcli)
+    cli_version_controller.py         # Version discovery (/api/qcli/versions)
+    filesystem_controller.py          # Filesystem API (/api/qcli/fs)
   extensions/
     cli_builder.py                    # Fluent registration API (add_processor, add_module)
   processors/                         # Built-in processors
