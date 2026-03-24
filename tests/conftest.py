@@ -46,25 +46,6 @@ class FailingProcessor(ICliCommandProcessor):
         raise RuntimeError("boom")
 
 
-class V2OnlyProcessor(ICliCommandProcessor):
-    """Processor that targets API v2."""
-
-    @property
-    def command(self) -> str:
-        return "v2cmd"
-
-    @property
-    def description(self) -> str:
-        return "V2-only command"
-
-    @property
-    def api_version(self) -> int:
-        return 2
-
-    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
-        return "v2 result"
-
-
 class ParentProcessor(ICliCommandProcessor):
     """Processor with nested sub-processors."""
 
@@ -207,7 +188,6 @@ def registry() -> CliCommandRegistry:
 def populated_registry(registry: CliCommandRegistry) -> CliCommandRegistry:
     registry.register(EchoProcessor())
     registry.register(FailingProcessor())
-    registry.register(V2OnlyProcessor())
     registry.register(ParentProcessor())
     registry.register(UnlistedParentProcessor())
     return registry

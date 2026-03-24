@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from qodalis_cli_filesystem.providers.os_provider import OsFileStorageProvider, OsProviderOptions
 
-from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router
+from .controllers import create_cli_router, create_cli_version_router
 from .controllers.filesystem_controller import create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemPathValidator
@@ -47,6 +47,28 @@ class CliServerResult:
     event_socket_manager: CliEventSocketManager
     log_socket_manager: CliLogSocketManager
     executor: CliCommandExecutorService | None = None
+
+    def mount_plugin(self, plugin: object) -> None:
+        """Mount a plugin using its built-in prefix.
+
+        Reads ``prefix`` and ``router`` from the plugin result, and optionally
+        ``dashboard_prefix`` / ``dashboard_app`` for plugins that serve a UI.
+
+        Example::
+
+            result = create_cli_server()
+            result.mount_plugin(jobs_plugin)
+            result.mount_plugin(admin_plugin)
+        """
+        prefix = getattr(plugin, "prefix", None)
+        router = getattr(plugin, "router", None)
+        if prefix and router:
+            self.app.include_router(router, prefix=prefix)
+
+        dashboard_prefix = getattr(plugin, "dashboard_prefix", None)
+        dashboard_app = getattr(plugin, "dashboard_app", None)
+        if dashboard_prefix and dashboard_app:
+            self.app.mount(dashboard_prefix, dashboard_app)
 
 
 def create_cli_server(options: CliServerOptions | None = None) -> CliServerResult:
@@ -93,11 +115,9 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     executor = CliCommandExecutorService(registry)
     router = create_cli_router(registry, executor)
-    router_v2 = create_cli_router_v2(registry, executor)
     version_router = create_cli_version_router()
 
     app.include_router(router, prefix="/api/v1/qcli")
-    app.include_router(router_v2, prefix="/api/v2/qcli")
     app.include_router(version_router, prefix="/api/qcli")
 
     if opts.base_path != "/api/v1/qcli":

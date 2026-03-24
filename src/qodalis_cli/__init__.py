@@ -29,7 +29,7 @@ from .services import (
     CliEventSocketManager,
     CliShellSessionManager,
 )
-from .controllers import create_cli_router, create_cli_router_v2, create_cli_version_router, create_filesystem_router
+from .controllers import create_cli_router, create_cli_version_router, create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemOptions, FileSystemPathValidator
 
@@ -84,7 +84,6 @@ __all__ = [
     "CliEventSocketManager",
     "CliShellSessionManager",
     "create_cli_router",
-    "create_cli_router_v2",
     "create_cli_version_router",
     "create_filesystem_router",
     "CliBuilder",

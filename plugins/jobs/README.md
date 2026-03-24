@@ -45,7 +45,12 @@ jobs_plugin = (
     .build(broadcast_fn=event_socket_manager.broadcast_message)
 )
 
-app.include_router(jobs_plugin.router, prefix="/api/v1/qcli/jobs")
+# Using create_cli_server:
+result.mount_plugin(jobs_plugin)
+
+# Or on an existing FastAPI app:
+app.include_router(jobs_plugin.router, prefix=jobs_plugin.prefix)
+
 await jobs_plugin.scheduler.start()
 ```
 
@@ -65,7 +70,7 @@ await jobs_plugin.scheduler.start()
 
 ## REST API
 
-All endpoints are mounted at the prefix you choose (typically `/api/v1/qcli/jobs`).
+All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli/jobs`).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|

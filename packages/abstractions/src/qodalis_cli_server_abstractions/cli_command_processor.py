@@ -47,11 +47,6 @@ class ICliCommandProcessor(abc.ABC):
         return None
 
     @property
-    def api_version(self) -> int:
-        """API version this processor targets."""
-        return 2
-
-    @property
     def processors(self) -> list[ICliCommandProcessor] | None:
         """Optional nested sub-command processors."""
         return None

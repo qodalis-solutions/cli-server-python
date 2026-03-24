@@ -42,6 +42,8 @@ class AdminBuildDeps:
 class CliAdminPlugin:
     """Result of building the admin plugin."""
 
+    prefix: str
+    dashboard_prefix: str
     router: APIRouter
     auth_dependency: Any
     log_buffer: LogRingBuffer
@@ -134,6 +136,8 @@ class CliAdminBuilder:
             dashboard_app = SPAStaticFiles(directory=dashboard_dir, html=True)
 
         return CliAdminPlugin(
+            prefix="/api/v1/qcli",
+            dashboard_prefix="/qcli/admin",
             router=router,
             auth_dependency=auth_dep,
             log_buffer=log_buffer,

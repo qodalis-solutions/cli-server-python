@@ -27,10 +27,13 @@ admin_plugin = (
     ))
 )
 
-result.app.include_router(admin_plugin.router, prefix="/api/v1/qcli")
+# Using create_cli_server:
+result.mount_plugin(admin_plugin)
 
+# Or on an existing FastAPI app:
+result.app.include_router(admin_plugin.router, prefix=admin_plugin.prefix)
 if admin_plugin.dashboard_app:
-    result.app.mount("/qcli/admin", admin_plugin.dashboard_app)
+    result.app.mount(admin_plugin.dashboard_prefix, admin_plugin.dashboard_app)
 ```
 
 ## Configuration
@@ -45,7 +48,7 @@ Credentials can be set via the builder or environment variables:
 
 ## REST API
 
-All endpoints are mounted at the prefix you choose (typically `/api/v1/qcli`). Except for `/auth/login`, all endpoints require a valid JWT token.
+All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli`). Except for `/auth/login`, all endpoints require a valid JWT token.
 
 | Method | Endpoint | Description |
 |---|---|---|

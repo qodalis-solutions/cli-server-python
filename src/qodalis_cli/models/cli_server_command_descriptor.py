@@ -24,7 +24,7 @@ class CliServerCommandDescriptor(BaseModel):
     command: str
     description: str
     version: str = "1.0.0"
-    api_version: int | None = Field(alias="apiVersion", default=None)
+
     parameters: list[CliServerCommandParameterDescriptorDto] | None = None
     processors: list["CliServerCommandDescriptor"] | None = None
     allow_unlisted_commands: bool | None = Field(alias="allowUnlistedCommands", default=None)
