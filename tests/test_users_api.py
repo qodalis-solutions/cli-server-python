@@ -113,6 +113,33 @@ class TestAuthLogin:
         )
         assert res.status_code == 422
 
+    def test_login_disabled_user(self, plugin_and_client, admin_token):
+        """Create a user, disable the account, then verify login is rejected."""
+        _, client = plugin_and_client
+        # Create a user
+        create_res = client.post(
+            "/api/v1/qcli/users",
+            headers=_auth(admin_token),
+            json={"name": "disabled_user", "email": "disabled@example.com", "password": "pass123"},
+        )
+        assert create_res.status_code == 201
+        user_id = create_res.json()["id"]
+
+        # Disable the user via PUT
+        disable_res = client.put(
+            f"/api/v1/qcli/users/{user_id}",
+            headers=_auth(admin_token),
+            json={"disabled": True},
+        )
+        assert disable_res.status_code == 200
+
+        # Attempt login — should fail with 401
+        login_res = client.post(
+            "/api/v1/qcli/auth/login",
+            json={"username": "disabled_user", "password": "pass123"},
+        )
+        assert login_res.status_code == 401
+
 
 class TestAuthLogout:
     def test_logout_invalidates_session(self, plugin_and_client):
@@ -166,6 +193,14 @@ class TestAuthVerify:
         res = client.post(
             "/api/v1/qcli/auth/verify",
             json={"password": "admin123"},
+        )
+        assert res.status_code == 422
+
+    def test_missing_password_field(self, plugin_and_client, admin_user_id):
+        _, client = plugin_and_client
+        res = client.post(
+            "/api/v1/qcli/auth/verify",
+            json={"userId": admin_user_id},
         )
         assert res.status_code == 422
 
@@ -265,6 +300,31 @@ class TestUsersEndpoints:
         assert get_res.status_code == 404
 
 
+    def test_update_nonexistent_user(self, plugin_and_client, admin_token):
+        _, client = plugin_and_client
+        res = client.put(
+            "/api/v1/qcli/users/00000000-0000-0000-0000-000000000000",
+            headers=_auth(admin_token),
+            json={"email": "ghost@example.com"},
+        )
+        assert res.status_code == 404
+
+    def test_create_user_with_groups(self, plugin_and_client, admin_token):
+        _, client = plugin_and_client
+        res = client.post(
+            "/api/v1/qcli/users",
+            headers=_auth(admin_token),
+            json={
+                "name": "groupuser",
+                "email": "groupuser@example.com",
+                "password": "grouppass",
+                "groups": ["editors"],
+            },
+        )
+        assert res.status_code == 201
+        assert "editors" in res.json()["groups"]
+
+
 class TestPasswordChange:
     def test_admin_can_change_others_password(self, plugin_and_client, admin_token):
         _, client = plugin_and_client
@@ -311,6 +371,23 @@ class TestPasswordChange:
             json={"currentPassword": "wrongcurrent", "newPassword": "newpass"},
         )
         assert res.status_code == 401
+
+    def test_self_change_missing_current_password(self, plugin_and_client):
+        """Non-admin changing own password without currentPassword → 400."""
+        _, client = plugin_and_client
+        login_res = client.post(
+            "/api/v1/qcli/auth/login",
+            json={"username": "alice", "password": "alicepass2"},
+        )
+        alice_token = login_res.json()["token"]
+        alice_id = login_res.json()["session"]["userId"]
+
+        res = client.put(
+            f"/api/v1/qcli/users/{alice_id}/password",
+            headers=_auth(alice_token),
+            json={"newPassword": "shouldfail"},
+        )
+        assert res.status_code == 400
 
 
 # -------------------------------------------------------------------------
@@ -428,6 +505,33 @@ class TestGroups:
         )
         assert res.status_code == 200
 
+    def test_add_member_nonexistent_group(self, plugin_and_client, admin_token):
+        _, client = plugin_and_client
+        get_res = client.get("/api/v1/qcli/users/alice", headers=_auth(admin_token))
+        alice_id = get_res.json()["id"]
+
+        res = client.put(
+            f"/api/v1/qcli/groups/no-such-group/members/{alice_id}",
+            headers=_auth(admin_token),
+        )
+        assert res.status_code == 404
+
+    def test_add_member_nonexistent_user(self, plugin_and_client, admin_token):
+        _, client = plugin_and_client
+        res = client.put(
+            "/api/v1/qcli/groups/editors/members/00000000-0000-0000-0000-000000000000",
+            headers=_auth(admin_token),
+        )
+        assert res.status_code == 404
+
+    def test_remove_member_nonexistent_user(self, plugin_and_client, admin_token):
+        _, client = plugin_and_client
+        res = client.delete(
+            "/api/v1/qcli/groups/editors/members/00000000-0000-0000-0000-000000000000",
+            headers=_auth(admin_token),
+        )
+        assert res.status_code == 404
+
     def test_delete_group(self, plugin_and_client, admin_token):
         _, client = plugin_and_client
         # Create a disposable group
@@ -463,6 +567,19 @@ class TestAudit:
         assert res.status_code == 200
         for entry in res.json():
             assert entry["event"] == "login"
+
+    def test_filter_by_username(self, plugin_and_client, admin_token):
+        _, client = plugin_and_client
+        res = client.get("/api/v1/qcli/audit?username=root", headers=_auth(admin_token))
+        assert res.status_code == 200
+        for entry in res.json():
+            assert entry["username"] == "root"
+
+    def test_limit_results(self, plugin_and_client, admin_token):
+        _, client = plugin_and_client
+        res = client.get("/api/v1/qcli/audit?limit=1", headers=_auth(admin_token))
+        assert res.status_code == 200
+        assert len(res.json()) <= 1
 
     def test_audit_requires_auth(self, plugin_and_client):
         _, client = plugin_and_client
@@ -545,6 +662,15 @@ class TestNonAdminRestrictions:
         res = client.delete(
             "/api/v1/qcli/groups/admin",
             headers=_auth(bob_setup["token"]),
+        )
+        assert res.status_code == 403
+
+    def test_cannot_create_groups(self, plugin_and_client, bob_setup):
+        _, client = plugin_and_client
+        res = client.post(
+            "/api/v1/qcli/groups",
+            headers=_auth(bob_setup["token"]),
+            json={"name": "hacker-group"},
         )
         assert res.status_code == 403
 
