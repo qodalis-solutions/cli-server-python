@@ -5,7 +5,10 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
 
 from pydantic import BaseModel
 
@@ -174,3 +177,20 @@ class VerifyRequest(BaseModel):
 class CreateGroupRequest(BaseModel):
     name: str
     description: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# External auth adapter
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ExternalAuthResult:
+    """Result returned by an external auth adapter."""
+    user: User
+    is_admin: bool = False
+
+
+# Type alias: (Request) -> ExternalAuthResult | None
+# The callable receives a FastAPI Request and should return an
+# ExternalAuthResult when the request is authenticated, or None otherwise.
+ExternalAuthAdapter = Callable[["Request"], Optional[ExternalAuthResult]]

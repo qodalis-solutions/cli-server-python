@@ -15,6 +15,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from plugins.users import build_users_plugin, UsersPluginOptions, UsersPluginResult
+from plugins.users.models import ExternalAuthResult, User
 
 
 @pytest.fixture(scope="module")
@@ -682,3 +683,127 @@ class TestNonAdminRestrictions:
             json={"newPassword": "hackedpass"},
         )
         assert res.status_code == 403
+
+
+# -------------------------------------------------------------------------
+# External auth adapter
+# -------------------------------------------------------------------------
+
+
+def _test_auth_adapter(request):
+    """Adapter that reads X-Test-User / X-Test-Admin headers."""
+    username = request.headers.get("x-test-user")
+    if not username:
+        return None
+    is_admin = request.headers.get("x-test-admin", "").lower() == "true"
+    user = User(
+        id=f"ext-{username}",
+        name=username,
+        email=f"{username}@external.test",
+        groups=["admin"] if is_admin else [],
+    )
+    return ExternalAuthResult(user=user, is_admin=is_admin)
+
+
+@pytest.fixture(scope="module")
+def ext_plugin_and_client():
+    """Build a test app with the users plugin using an external auth adapter."""
+    app = FastAPI()
+
+    loop = asyncio.new_event_loop()
+    plugin = loop.run_until_complete(
+        build_users_plugin(
+            options=UsersPluginOptions(auth_adapter=_test_auth_adapter),
+        )
+    )
+    loop.close()
+
+    app.include_router(plugin.router, prefix=plugin.prefix)
+    client = TestClient(app)
+    yield plugin, client
+    plugin.dispose()
+
+
+class TestExternalAuthAdapter:
+    def test_login_returns_501(self, ext_plugin_and_client):
+        _, client = ext_plugin_and_client
+        res = client.post(
+            "/api/v1/qcli/auth/login",
+            json={"username": "root", "password": "whatever"},
+        )
+        assert res.status_code == 501
+        assert "host application" in res.json()["error"]
+
+    def test_logout_returns_501(self, ext_plugin_and_client):
+        _, client = ext_plugin_and_client
+        res = client.post("/api/v1/qcli/auth/logout")
+        assert res.status_code == 501
+        assert "host application" in res.json()["error"]
+
+    def test_verify_returns_501(self, ext_plugin_and_client):
+        _, client = ext_plugin_and_client
+        res = client.post(
+            "/api/v1/qcli/auth/verify",
+            json={"userId": "x", "password": "y"},
+        )
+        assert res.status_code == 501
+        assert "host application" in res.json()["error"]
+
+    def test_users_list_with_adapter_auth(self, ext_plugin_and_client):
+        """GET /users works when adapter authenticates the request."""
+        _, client = ext_plugin_and_client
+        res = client.get(
+            "/api/v1/qcli/users",
+            headers={"X-Test-User": "alice", "X-Test-Admin": "true"},
+        )
+        assert res.status_code == 200
+        assert isinstance(res.json(), list)
+
+    def test_admin_endpoint_with_admin_adapter(self, ext_plugin_and_client):
+        """Admin endpoints work when adapter returns is_admin=True."""
+        _, client = ext_plugin_and_client
+        res = client.get(
+            "/api/v1/qcli/sessions",
+            headers={"X-Test-User": "admin-user", "X-Test-Admin": "true"},
+        )
+        assert res.status_code == 200
+
+    def test_admin_endpoint_denied_for_non_admin(self, ext_plugin_and_client):
+        """Admin endpoints return 403 when adapter returns is_admin=False."""
+        _, client = ext_plugin_and_client
+        res = client.get(
+            "/api/v1/qcli/sessions",
+            headers={"X-Test-User": "regular-user", "X-Test-Admin": "false"},
+        )
+        assert res.status_code == 403
+
+    def test_no_header_returns_401(self, ext_plugin_and_client):
+        """Requests without X-Test-User header return 401 (adapter returns None)."""
+        _, client = ext_plugin_and_client
+        res = client.get("/api/v1/qcli/users")
+        assert res.status_code == 401
+
+    def test_current_session_returns_external_user(self, ext_plugin_and_client):
+        """The session returned for an external user has the correct user data."""
+        _, client = ext_plugin_and_client
+        res = client.get(
+            "/api/v1/qcli/sessions/current",
+            headers={"X-Test-User": "jane", "X-Test-Admin": "false"},
+        )
+        assert res.status_code == 200
+        session = res.json()
+        assert session["user"]["name"] == "jane"
+        assert session["user"]["email"] == "jane@external.test"
+        assert session["token"] == "external"
+
+    def test_no_root_user_seeded(self, ext_plugin_and_client):
+        """When using an external adapter, no root user should be seeded."""
+        _, client = ext_plugin_and_client
+        res = client.get(
+            "/api/v1/qcli/users",
+            headers={"X-Test-User": "admin", "X-Test-Admin": "true"},
+        )
+        assert res.status_code == 200
+        users = res.json()
+        names = [u["name"] for u in users]
+        assert "root" not in names

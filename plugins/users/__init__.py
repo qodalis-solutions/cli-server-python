@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from fastapi import APIRouter
 
@@ -15,7 +15,7 @@ from .controllers.groups_controller import create_groups_router
 from .controllers.sessions_controller import create_sessions_router
 from .controllers.users_controller import create_users_router
 from .middleware.auth_middleware import create_auth_dependencies
-from .models import User
+from .models import ExternalAuthAdapter, ExternalAuthResult, User
 from .services.auth_service import AuthService
 from .stores.in_memory_audit_store import InMemoryAuditStore
 from .stores.in_memory_credential_store import InMemoryCredentialStore
@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AuthService",
+    "ExternalAuthAdapter",
+    "ExternalAuthResult",
     "IAuditStore",
     "ICredentialStore",
     "IGroupStore",
@@ -64,6 +66,7 @@ class UsersPluginOptions:
     group_store: IGroupStore | None = None
     session_timeout_ms: int = DEFAULT_SESSION_TIMEOUT_MS
     default_admin_password: str = "root"
+    auth_adapter: Optional[ExternalAuthAdapter] = None
 
 
 @dataclass
@@ -100,25 +103,29 @@ async def build_users_plugin(
 
     opts = options or UsersPluginOptions()
 
+    auth_adapter = opts.auth_adapter
+    use_external_auth = auth_adapter is not None
+
     # 1. Create store instances (in-memory defaults, overridable)
     user_store = opts.user_store or InMemoryUserStore()
     session_store = opts.session_store or InMemorySessionStore()
-    credential_store = opts.credential_store or InMemoryCredentialStore()
+    credential_store = opts.credential_store or InMemoryCredentialStore() if not use_external_auth else (opts.credential_store or InMemoryCredentialStore())
     audit_store = opts.audit_store or InMemoryAuditStore()
     group_store = opts.group_store or InMemoryGroupStore()
 
     # 2. Create AuthService
     auth_service = AuthService(user_store, session_store, credential_store, audit_store)
 
-    # 3. Seed default admin user if no users exist
-    existing_users = await user_store.get_users()
-    if len(existing_users) == 0:
-        admin_user = await user_store.create_user(
-            name="root",
-            email="root@localhost",
-            groups=["admin"],
-        )
-        await auth_service.set_password(admin_user.id, opts.default_admin_password)
+    # 3. Seed default admin user if no users exist (skip when using external auth)
+    if not use_external_auth:
+        existing_users = await user_store.get_users()
+        if len(existing_users) == 0:
+            admin_user = await user_store.create_user(
+                name="root",
+                email="root@localhost",
+                groups=["admin"],
+            )
+            await auth_service.set_password(admin_user.id, opts.default_admin_password)
 
     # 4. Seed 'admin' group if not already present
     existing_admin_group = await group_store.get_group("admin")
@@ -126,11 +133,15 @@ async def build_users_plugin(
         await group_store.create_group("admin", "Administrator group")
 
     # 5. Create auth dependencies
-    get_current_session, require_admin = create_auth_dependencies(session_store)
+    get_current_session, require_admin = create_auth_dependencies(
+        session_store, auth_adapter=auth_adapter,
+    )
 
     # 6. Build the router
     router = APIRouter()
-    router.include_router(create_auth_router(auth_service, get_current_session))
+    router.include_router(create_auth_router(
+        auth_service, get_current_session, external_auth=use_external_auth,
+    ))
     router.include_router(create_users_router(
         user_store, auth_service, credential_store, session_store,
         get_current_session, require_admin,
