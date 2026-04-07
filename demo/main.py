@@ -53,6 +53,7 @@ from processors import (
 
 from plugins.weather import WeatherModule
 from plugins.aws.qodalis_cli_aws import AwsModule
+from plugins.users import build_users_plugin, UsersPluginOptions
 from qodalis_cli_data_explorer_sql import SqlDataExplorerProvider
 from qodalis_cli_data_explorer_postgres import PostgresDataExplorerProvider
 from qodalis_cli_data_explorer_mysql import MysqlDataExplorerProvider
@@ -266,6 +267,16 @@ def main() -> None:
 
     result.mount_plugin(admin_plugin)
 
+    # Build the users plugin
+    import asyncio
+    users_plugin = asyncio.get_event_loop().run_until_complete(
+        build_users_plugin(
+            options=UsersPluginOptions(default_admin_password="admin"),
+            broadcast_event=lambda msg: result.event_socket_manager.broadcast_message(msg),
+        )
+    )
+    result.mount_plugin(users_plugin)
+
     # Register the module registry as a processor filter so that toggling
     # a plugin off in the admin dashboard actually blocks command execution.
     if admin_plugin.module_registry and result.executor:
@@ -280,11 +291,13 @@ def main() -> None:
         async with original_lifespan(app) as state:  # type: ignore[arg-type]
             yield state
         await jobs_plugin.scheduler.stop()
+        users_plugin.dispose()
 
     result.app.router.lifespan_context = lifespan_with_jobs
 
     logger.info("Qodalis CLI Demo Server (Python) running on http://%s:%d", host, port)
     logger.info("  API: http://%s:%d/api/qcli", host, port)
+    logger.info("  Users API: http://%s:%d/api/v1/qcli/users", host, port)
     logger.info("  Admin API: http://%s:%d/api/v1/qcli/admin", host, port)
     if admin_plugin.dashboard_app:
         logger.info("  Admin Dashboard: http://%s:%d/qcli/admin", host, port)
