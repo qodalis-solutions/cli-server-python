@@ -93,7 +93,9 @@ class Api:
         """Create a non-admin user in a custom group with ``perms``; return its token."""
         group = f"{name}-group"
         self.create_group(admin, group, perms)
-        self.create_user(admin, name, password, groups=[group])
+        # Also in the built-in ``users`` group (commands:execute), like any
+        # regular account.
+        self.create_user(admin, name, password, groups=[group, "users"])
         return self.login(name, password)
 
     def kicked(self) -> list[dict]:
@@ -341,7 +343,7 @@ class TestLiveUserResolution:
         assert api.get("/users", token).status_code == 200
         current = api.get("/sessions/current", token).json()
         assert "readers" in current["user"]["groups"]
-        assert current["permissions"] == ["users:read"]
+        assert current["permissions"] == ["commands:execute", "users:read"]
 
     def test_group_permission_change_applies_immediately(self, api: Api, admin: str):
         token = api.user_with_perms(admin, "bob", ["users:read"])
@@ -420,24 +422,24 @@ class TestUsers:
 
     def test_create_requires_users_create(self, api: Api, admin: str):
         token = api.user_with_perms(admin, "bob", ["users:read"])
-        assert_error(api.post("/users", token, json={"name": "x", "email": "x@x"}), 403)
+        assert_error(api.post("/users", token, json={"name": "x", "email": "x@x.io"}), 403)
         creator = api.user_with_perms(admin, "carl", ["users:create"])
-        assert api.post("/users", creator, json={"name": "x", "email": "x@x"}).status_code == 201
+        assert api.post("/users", creator, json={"name": "x", "email": "x@x.io"}).status_code == 201
 
     def test_create_validation(self, api: Api, admin: str):
-        assert_error(api.post("/users", admin, json={"email": "a@b"}), 400, "name")
+        assert_error(api.post("/users", admin, json={"email": "a@b.io"}), 400, "name")
         assert_error(api.post("/users", admin, json={"name": "a"}), 400, "email")
-        assert_error(api.post("/users", admin, json={"name": " ", "email": "a@b"}), 400)
-        assert_error(api.post("/users", admin, json={"name": "a", "email": "a@b", "groups": "admin"}), 400)
-        assert_error(api.post("/users", admin, json={"name": "a", "email": "a@b", "password": "abc"}), 400, "at least 4")
+        assert_error(api.post("/users", admin, json={"name": " ", "email": "a@b.io"}), 400)
+        assert_error(api.post("/users", admin, json={"name": "a", "email": "a@b.io", "groups": "admin"}), 400)
+        assert_error(api.post("/users", admin, json={"name": "a", "email": "a@b.io", "password": "abcdefg"}), 400, "at least 8")
 
     def test_create_unknown_group(self, api: Api, admin: str):
-        res = api.post("/users", admin, json={"name": "a", "email": "a@b", "groups": ["nope"]})
+        res = api.post("/users", admin, json={"name": "a", "email": "a@b.io", "groups": ["nope"]})
         assert_error(res, 400, "unknown group: nope")
 
     def test_duplicate_name_and_email(self, api: Api, admin: str):
         api.create_user(admin, "alice")
-        assert_error(api.post("/users", admin, json={"name": "ALICE", "email": "z@z"}), 409)
+        assert_error(api.post("/users", admin, json={"name": "ALICE", "email": "z@z.io"}), 409)
         assert_error(api.post("/users", admin, json={"name": "other", "email": "Alice@Example.com"}), 409)
 
     def test_get_user_by_name_and_id(self, api: Api, admin: str):
@@ -489,7 +491,7 @@ class TestUsers:
         assert_error(api.put("/users/alice", admin, json={"groups": ["nope"]}), 400, "unknown group: nope")
 
     def test_update_nonexistent(self, api: Api, admin: str):
-        assert_error(api.put("/users/ghost", admin, json={"email": "g@g"}), 404)
+        assert_error(api.put("/users/ghost", admin, json={"email": "g@g.io"}), 404)
 
     def test_self_service_update(self, api: Api, admin: str):
         token = api.user_with_perms(admin, "bob", [])
@@ -498,12 +500,13 @@ class TestUsers:
         assert res.json()["data"] == {"theme": "dark"}
         for body in ({"name": "x"}, {"groups": ["admin"]}, {"disabled": True}, {"homeDir": "/x"}):
             assert_error(api.put("/users/bob", token, json=body), 403)
-        assert_error(api.put("/users/root", token, json={"email": "x@x"}), 403)
+        assert_error(api.put("/users/root", token, json={"email": "x@x.io"}), 403)
 
     def test_update_requires_users_update(self, api: Api, admin: str):
         api.create_user(admin, "alice")
-        updater = api.user_with_perms(admin, "upd", ["users:update"])
-        assert api.put("/users/alice", updater, json={"groups": ["admin"]}).status_code == 200
+        api.create_group(admin, "editors", ["docs:read"])
+        updater = api.user_with_perms(admin, "upd", ["users:update", "docs:*"])
+        assert api.put("/users/alice", updater, json={"groups": ["users", "editors"]}).status_code == 200
 
     def test_delete_user_cascades(self, api: Api, admin: str):
         user = api.create_user(admin, "alice")
@@ -550,7 +553,8 @@ class TestUsers:
 class TestLastAdminProtection:
     @pytest.fixture()
     def ops(self, api: Api, admin: str) -> str:
-        return api.user_with_perms(admin, "ops", ["users:*", "groups:*"])
+        # Holds '*' (so it covers root) without being a member of 'admin'.
+        return api.user_with_perms(admin, "ops", ["*"])
 
     def test_cannot_delete_last_admin(self, api: Api, ops: str):
         assert_error(api.delete("/users/root", ops), 409)
@@ -578,12 +582,12 @@ class TestPasswords:
     def test_admin_changes_others_password_revokes_all(self, api: Api, admin: str):
         user = api.create_user(admin, "alice")
         alice = api.login_full("alice", "pass1234")
-        res = api.put(f"/users/{user['id']}/password", admin, json={"password": "newpass"})
+        res = api.put(f"/users/{user['id']}/password", admin, json={"password": "newpass1"})
         assert res.status_code == 204
         assert_error(api.get("/sessions/current", alice["token"]), 401)
         assert {"sessionId": alice["session"]["id"], "userId": user["id"], "reason": "password_changed"} in api.kicked()
         assert_error(api.login_res("alice", "pass1234"), 401)
-        assert api.login_res("alice", "newpass").status_code == 201
+        assert api.login_res("alice", "newpass1").status_code == 201
         entry = api.get("/audit?event=password_changed", admin).json()[0]
         assert entry["username"] == "alice" and entry["actor"] == "root"
 
@@ -601,15 +605,15 @@ class TestPasswords:
 
     def test_self_change_requires_current_password(self, api: Api, admin: str):
         token = api.user_with_perms(admin, "bob", [])
-        assert_error(api.put("/users/bob/password", token, json={"password": "newpass"}), 400)
-        assert_error(api.put("/users/bob/password", token, json={"currentPassword": "wrong", "password": "newpass"}), 403)
+        assert_error(api.put("/users/bob/password", token, json={"password": "newpass1"}), 400)
+        assert_error(api.put("/users/bob/password", token, json={"currentPassword": "wrong", "password": "newpass1"}), 403)
 
     def test_admin_self_change_no_current_needed(self, api: Api, admin: str):
         assert api.put("/users/root/password", admin, json={"password": "rootpass2"}).status_code == 204
 
     def test_policy(self, api: Api, admin: str):
         api.create_user(admin, "alice")
-        assert_error(api.put("/users/alice/password", admin, json={"password": "abc"}), 400, "at least 4")
+        assert_error(api.put("/users/alice/password", admin, json={"password": "abcdefg"}), 400, "at least 8")
         assert_error(api.put("/users/alice/password", admin, json={}), 400)
 
     def test_min_password_length_configurable(self):
@@ -622,8 +626,8 @@ class TestPasswords:
 
     def test_legacy_new_password_field(self, api: Api, admin: str):
         api.create_user(admin, "alice")
-        assert api.put("/users/alice/password", admin, json={"newPassword": "legacy1"}).status_code == 204
-        assert api.login_res("alice", "legacy1").status_code == 201
+        assert api.put("/users/alice/password", admin, json={"newPassword": "legacy12"}).status_code == 204
+        assert api.login_res("alice", "legacy12").status_code == 201
 
     def test_unknown_user(self, api: Api, admin: str):
         assert_error(api.put("/users/ghost/password", admin, json={"password": "whatever"}), 404)
@@ -661,7 +665,7 @@ class TestGroups:
     def test_builtins_seeded(self, api: Api, admin: str):
         groups = {g["name"]: g for g in api.get("/groups", admin).json()}
         assert groups["admin"]["permissions"] == ["*"] and groups["admin"]["builtIn"] is True
-        assert groups["users"]["permissions"] == [] and groups["users"]["builtIn"] is True
+        assert groups["users"]["permissions"] == ["commands:execute"] and groups["users"]["builtIn"] is True
         for g in groups.values():
             assert {"id", "name", "permissions", "builtIn", "createdAt", "updatedAt"} <= set(g)
 
@@ -832,7 +836,7 @@ class TestAudit:
 MATRIX = [
     # (method, path, body, required permission)
     ("GET", "/users", None, "users:read"),
-    ("POST", "/users", {"name": "newbie", "email": "newbie@x"}, "users:create"),
+    ("POST", "/users", {"name": "newbie", "email": "newbie@x.io"}, "users:create"),
     ("PUT", "/users/target", {"groups": ["users"]}, "users:update"),
     ("DELETE", "/users/target", None, "users:delete"),
     ("GET", "/users/target", None, "users:read"),
@@ -890,11 +894,12 @@ class TestPermissionMatrix:
         assert res.status_code in (200, 201, 204), (perm, res.status_code, res.text)
 
     def test_revoke_session_requires_sessions_revoke(self, api: Api, admin: str):
-        root_session = api.get("/sessions/current", admin).json()["id"]
+        api.create_user(admin, "alice")
+        alice_session = api.login_full("alice", "pass1234")["session"]["id"]
         denied = api.user_with_perms(admin, "reader", ["sessions:read"])
-        assert_error(api.delete(f"/sessions/{root_session}", denied), 403)
+        assert_error(api.delete(f"/sessions/{alice_session}", denied), 403)
         revoker = api.user_with_perms(admin, "revoker", ["sessions:revoke"])
-        assert api.delete(f"/sessions/{root_session}", revoker).status_code == 204
+        assert api.delete(f"/sessions/{alice_session}", revoker).status_code == 204
 
 
 # =========================================================================
@@ -914,8 +919,8 @@ class TestRouting:
             assert isinstance(res.json(), list)
 
     def test_post_with_and_without_trailing_slash(self, api: Api, admin: str):
-        assert api.post("/users/", admin, json={"name": "a1", "email": "a1@x"}).status_code == 201
-        assert api.post("/users", admin, json={"name": "a2", "email": "a2@x"}).status_code == 201
+        assert api.post("/users/", admin, json={"name": "a1", "email": "a1@x.io"}).status_code == 201
+        assert api.post("/users", admin, json={"name": "a2", "email": "a2@x.io"}).status_code == 201
         assert api.post("/groups/", admin, json={"name": "g1"}).status_code == 201
         assert api.post("/groups", admin, json={"name": "g2"}).status_code == 201
         assert api.post("/sessions/", json={"username": "root", "password": ROOT_PASS}).status_code == 201
@@ -1016,7 +1021,7 @@ class TestExternalAuthAdapter:
         assert ext.get(BASE + "/sessions", headers=h).json() == []
 
     def test_adapter_user_not_mutated(self):
-        shared = User(id="ext-1", name="shared", email="s@x", groups=["users"])
+        shared = User(id="ext-1", name="shared", email="s@x.io", groups=["users"])
 
         def adapter(request):
             return ExternalAuthResult(user=shared, is_admin=True)
@@ -1031,7 +1036,7 @@ class TestExternalAuthAdapter:
 
     def test_async_adapter(self):
         async def adapter(request):
-            return ExternalAuthResult(user=User(id="a", name="async-user", email="a@x"), is_admin=True)
+            return ExternalAuthResult(user=User(id="a", name="async-user", email="a@x.io"), is_admin=True)
 
         plugin = CliUsersBuilder().set_auth_adapter(adapter).build()
         app = FastAPI()

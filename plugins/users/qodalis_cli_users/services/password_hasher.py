@@ -62,3 +62,35 @@ def verify_password(password: str, encoded: str, legacy_salt: str = "") -> bool:
 def needs_rehash(encoded: str) -> bool:
     parts = encoded.split("$")
     return not (len(parts) == 4 and parts[0] == PREFIX and parts[1] == str(ITERATIONS))
+
+
+# ---------------------------------------------------------------------------
+# Async API — PBKDF2 runs off the event loop with a concurrency cap.
+# ---------------------------------------------------------------------------
+
+import asyncio  # noqa: E402
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
+
+#: At most this many PBKDF2 computations run at once.
+MAX_CONCURRENT_HASHES = 4
+_executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT_HASHES, thread_name_prefix="qcli-pbkdf2")
+_dummy_hash: str | None = None
+
+
+async def hash_password_async(password: str) -> tuple[str, str]:
+    return await asyncio.get_running_loop().run_in_executor(_executor, hash_password, password)
+
+
+async def verify_password_async(password: str, encoded: str, legacy_salt: str = "") -> bool:
+    return await asyncio.get_running_loop().run_in_executor(
+        _executor, verify_password, password, encoded, legacy_salt,
+    )
+
+
+async def dummy_verify_async(password: str) -> None:
+    """Run a full PBKDF2 verification against a throwaway hash so unknown
+    users take as long as known ones."""
+    global _dummy_hash
+    if _dummy_hash is None:
+        _dummy_hash = (await hash_password_async(secrets.token_hex(16)))[0]
+    await verify_password_async(password, _dummy_hash)

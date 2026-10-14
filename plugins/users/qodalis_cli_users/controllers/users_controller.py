@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Callable
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
-from ..errors import UsersApiError, bad_request, error_response, forbidden, not_found
+from ..errors import bad_request, error_response, forbidden, not_found
 from ..models import (
     CreateUserRequest,
     PasswordChangeRequest,
@@ -15,7 +15,7 @@ from ..models import (
     VerifyPasswordRequest,
 )
 from ..permissions import USERS_CREATE, USERS_DELETE, USERS_READ, USERS_UPDATE
-from ..services.auth_service import ACCOUNT_LOCKED, AuthContext, AuthService
+from ..services.auth_service import AuthContext, AuthService
 from ..services.users_service import UsersService
 from ._routing import collection, new_router
 
@@ -27,7 +27,9 @@ def create_users_router(
     users_service: UsersService,
     get_auth: Callable,
     require_permission: Callable[[str], Callable],
+    get_auth_pending: Callable | None = None,
 ) -> APIRouter:
+    get_auth_pending = get_auth_pending or get_auth
     router = new_router("/users", "users")
     user_store = auth_service.user_store
     external = auth_service.external_auth
@@ -143,39 +145,39 @@ def create_users_router(
     async def change_password(
         id_or_name: str,
         body: PasswordChangeRequest,
-        ctx: AuthContext = Depends(get_auth),
+        request: Request,
+        ctx: AuthContext = Depends(get_auth_pending),
     ):
+        target = await user_store.get_user(id_or_name)
+        is_self = ctx.is_self(target)
+        # While a password change is pending only the own password may change.
+        if not is_self:
+            auth_service.ensure_password_changed(ctx)
         target = await load_target(id_or_name, ctx, USERS_UPDATE, allow_self=True)
         password = body.password if body.password is not None else body.newPassword
         if password is None:
             raise bad_request("password is required")
-        if ctx.is_self(target) and not ctx.can(USERS_UPDATE):
+        if is_self:
+            auth_service.check_rate_limit(request)
+        if is_self and (not ctx.can(USERS_UPDATE) or ctx.must_change_password):
             if not body.currentPassword:
                 raise bad_request("currentPassword is required")
-            if not await auth_service.verify_password(target.id, body.currentPassword):
+            if not await auth_service.check_password_attempt(ctx, target, body.currentPassword):
                 raise forbidden("current password is incorrect")
-        await users_service.change_password(ctx, target, password)
+        await users_service.change_password(ctx, target, password, temporary=body.temporary)
         return Response(status_code=204)
 
     @router.post("/{id_or_name}/verify-password")
     async def verify_password(
         id_or_name: str,
         body: VerifyPasswordRequest,
+        request: Request,
         ctx: AuthContext = Depends(get_auth),
     ):
         target = await load_target(id_or_name, ctx, USERS_UPDATE, allow_self=True)
-        password = body.password
-        if auth_service.is_locked(target.id):
-            raise UsersApiError(429, ACCOUNT_LOCKED)
-        valid = await auth_service.verify_password(target.id, password)
-        if valid:
-            auth_service.reset_failures(target.id)
-        else:
-            auth_service.register_failure(target.id)
-            await auth_service.audit(
-                "login_failed", target.name,
-                details="password verification failed", actor=ctx.user.name,
-            )
+        await auth_service.ensure_covers_user(ctx, target)
+        auth_service.check_rate_limit(request)
+        valid = await auth_service.check_password_attempt(ctx, target, body.password)
         return {"valid": valid}
 
     return router

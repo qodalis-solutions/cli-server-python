@@ -40,6 +40,7 @@ class InMemoryUserStore(IUserStore):
         *,
         disabled: bool = False,
         home_dir: str | None = None,
+        must_change_password: bool = False,
     ) -> User:
         lower = name.lower()
         for user in self._users.values():
@@ -52,6 +53,7 @@ class InMemoryUserStore(IUserStore):
             email=email,
             groups=list(groups or []),
             disabled=disabled,
+            must_change_password=must_change_password,
             home_dir=home_dir,
             data=copy.deepcopy(data),
             created_at=now,
@@ -71,6 +73,7 @@ class InMemoryUserStore(IUserStore):
         data: dict | None = None,
         home_dir: str | None = None,
         last_login_at: int | None = None,
+        must_change_password: bool | None = None,
     ) -> User:
         user = self._users.get(user_id)
         if not user:
@@ -90,6 +93,8 @@ class InMemoryUserStore(IUserStore):
             user.home_dir = home_dir
         if last_login_at is not None:
             user.last_login_at = last_login_at
+        if must_change_password is not None:
+            user.must_change_password = must_change_password
         user.updated_at = now_ms()
         return copy.deepcopy(user)
 

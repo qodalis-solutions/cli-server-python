@@ -52,6 +52,7 @@ class IUserStore(ABC):
         *,
         disabled: bool = False,
         home_dir: str | None = None,
+        must_change_password: bool = False,
     ) -> User:
         ...
 
@@ -67,6 +68,7 @@ class IUserStore(ABC):
         data: dict | None = None,
         home_dir: str | None = None,
         last_login_at: int | None = None,
+        must_change_password: bool | None = None,
     ) -> User:
         """Update the given fields (``None`` = unchanged).  Raises
         ``KeyError`` when the user does not exist."""
@@ -77,13 +79,17 @@ class IUserStore(ABC):
 
 
 class ISessionStore(ABC):
-    """Persistence interface for sessions (keyed by token, addressable by id)."""
+    """Persistence interface for sessions.
+
+    Sessions are keyed by ``token_hash`` — the SHA-256 (hex) of the bearer
+    token; raw tokens never reach the store.  Also addressable by id.
+    """
 
     @abstractmethod
     async def create_session(
         self,
         user_id: str,
-        token: str,
+        token_hash: str,
         metadata: SessionMetadata,
         *,
         user_name: str = "",
@@ -91,7 +97,7 @@ class ISessionStore(ABC):
         ...
 
     @abstractmethod
-    async def get_session(self, token: str) -> Session | None:
+    async def get_session(self, token_hash: str) -> Session | None:
         ...
 
     @abstractmethod
@@ -103,7 +109,7 @@ class ISessionStore(ABC):
         ...
 
     @abstractmethod
-    async def delete_session(self, token: str) -> None:
+    async def delete_session(self, token_hash: str) -> None:
         ...
 
     @abstractmethod
@@ -115,7 +121,7 @@ class ISessionStore(ABC):
         ...
 
     @abstractmethod
-    async def update_last_activity(self, token: str) -> None:
+    async def update_last_activity(self, token_hash: str) -> None:
         ...
 
     @abstractmethod

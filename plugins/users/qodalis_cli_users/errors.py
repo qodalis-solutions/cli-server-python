@@ -16,13 +16,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
+BODY_MAX_BYTES = 1024 * 1024
 
-class UsersApiError(Exception):
-    """An error with an HTTP status, rendered as ``{"error": message}``."""
+
+class UsersApiError(HTTPException):
+    """An error with an HTTP status, rendered as ``{"error": message}`` on the
+    users routes (and by the server-protection middleware).  Being an
+    ``HTTPException`` it also works in host-app routes using the exported
+    guards."""
 
     def __init__(self, status_code: int, message: str) -> None:
-        super().__init__(message)
-        self.status_code = status_code
+        super().__init__(status_code=status_code, detail=message)
         self.message = message
 
 
@@ -72,6 +76,16 @@ class UsersApiRoute(APIRoute):
         original = super().get_route_handler()
 
         async def handler(request: Request) -> Response:
+            length = request.headers.get("content-length")
+            try:
+                too_large = length is not None and int(length) > BODY_MAX_BYTES
+            except ValueError:
+                too_large = True
+            if too_large or (
+                request.method in ("POST", "PUT", "PATCH")
+                and len(await request.body()) > BODY_MAX_BYTES
+            ):
+                return error_response(400, "request body too large")
             try:
                 return await original(request)
             except UsersApiError as exc:

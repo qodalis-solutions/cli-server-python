@@ -30,6 +30,7 @@ from qodalis_cli_users import (
     permission_matches,
 )
 from qodalis_cli_users.services import password_hasher
+from qodalis_cli_users.services.auth_service import hash_token
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +193,7 @@ async def test_seed_is_idempotent():
     assert [u.name for u in await service.user_store.get_users()] == ["root"]
     groups = {g.name: g for g in await service.group_store.get_groups()}
     assert groups["admin"].permissions == ["*"] and groups["admin"].built_in
-    assert groups["users"].permissions == [] and groups["users"].built_in
+    assert groups["users"].permissions == ["commands:execute"] and groups["users"].built_in
 
 
 async def test_login_and_lockout():
@@ -226,11 +227,11 @@ async def test_authenticate_token_idle_expiry():
     service = _service(session_timeout_ms=1_000)
     await service.seed("pw12")
     result = await service.login("root", "pw12")
-    service.session_store._sessions[result.token].last_activity -= 5_000
+    service.session_store._sessions[hash_token(result.token)].last_activity -= 5_000
     with pytest.raises(UsersApiError) as exc:
         await service.authenticate_token(result.token)
     assert exc.value.status_code == 401
-    assert await service.session_store.get_session(result.token) is None
+    assert await service.session_store.get_session(hash_token(result.token)) is None
 
 
 async def test_revoke_broadcasts_with_async_and_sync_fns():
@@ -264,7 +265,7 @@ async def test_broadcast_failure_does_not_break_revoke():
     await service.seed("pw12")
     result = await service.login("root", "pw12")
     assert await service.revoke_user_sessions(result.user.id, "x") == 1
-    assert await service.session_store.get_session(result.token) is None
+    assert await service.session_store.get_session(hash_token(result.token)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -285,9 +286,9 @@ async def test_startup_seeds_and_runs_cleanup_on_running_loop():
         assert plugin._cleanup_task is not None and not plugin._cleanup_task.done()
         assert plugin._cleanup_task.get_loop() is asyncio.get_running_loop()
         result = await plugin.auth_service.login("root", "pw12")
-        assert await plugin.session_store.get_session(result.token) is not None
+        assert await plugin.session_store.get_session(hash_token(result.token)) is not None
         await asyncio.sleep(0.2)
-        assert await plugin.session_store.get_session(result.token) is None
+        assert await plugin.session_store.get_session(hash_token(result.token)) is None
     finally:
         await plugin.shutdown()
     assert plugin._cleanup_task is None

@@ -6,8 +6,10 @@ Usage::
         CliUsersBuilder()
         .set_default_admin_password("admin")
         .set_session_timeout(30 * 60 * 1000)
-        .build(broadcast_fn=result.event_socket_manager.broadcast_message)
+        .build()
     )
+    # Protects every server route/socket and scopes user events to the
+    # user's own event sockets.
     result.mount_plugin(users_plugin)
 
     # in the app lifespan / startup hook (running event loop):
@@ -21,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter
 
@@ -31,10 +33,14 @@ from .controllers.sessions_controller import create_sessions_router
 from .controllers.users_controller import create_users_router
 from .middleware.auth_middleware import create_auth_dependencies
 from .models import ExternalAuthAdapter
+from .server_protection import ServerProtectionMiddleware
 from .services.auth_service import (
     DEFAULT_LOCKOUT_MS,
     DEFAULT_MAX_LOGIN_ATTEMPTS,
+    DEFAULT_MAX_SESSION_LIFETIME_MS,
     DEFAULT_MIN_PASSWORD_LENGTH,
+    DEFAULT_RATE_LIMIT_ATTEMPTS,
+    DEFAULT_RATE_LIMIT_WINDOW_MS,
     DEFAULT_SESSION_TIMEOUT_MS,
     AuthService,
     AuthServiceOptions,
@@ -78,8 +84,17 @@ class CliUsersPlugin:
     credential_store: ICredentialStore
     group_store: IGroupStore
     audit_store: IAuditStore
-    default_admin_password: str = "root"
+    default_admin_password: Optional[str] = None
     cleanup_interval_ms: int = DEFAULT_CLEANUP_INTERVAL_MS
+    #: Protect every CLI server route/socket when mounted (B1).
+    protect_server: bool = True
+    #: FastAPI dependency: authenticated caller (``AuthContext``) — for
+    #: host-app routes.  401 / 403 (password change required).
+    require_auth: Any = None
+    #: ``require_permission("perm")`` → FastAPI dependency (403 if missing).
+    require_permission: Any = None
+    _extra_public: list = field(default_factory=list, repr=False)
+    _protected_apps: list = field(default_factory=list, repr=False)
     _cleanup_task: Optional[asyncio.Task] = field(default=None, repr=False)
     _seeded: bool = field(default=False, repr=False)
     _seed_lock: Optional[asyncio.Lock] = field(default=None, repr=False)
@@ -95,6 +110,47 @@ class CliUsersPlugin:
                 return
             await self.auth_service.seed(self.default_admin_password)
             self._seeded = True
+
+    @property
+    def auth(self) -> AuthService:
+        return self.auth_service
+
+    def allow_anonymous(self, path: str, methods: list[str] | None = None) -> None:
+        """Exempt an exact path from server protection (e.g. another plugin's
+        login endpoint)."""
+        self._extra_public.append(
+            (path, frozenset(m.upper() for m in methods) if methods else None),
+        )
+
+    def protect(self, app: Any) -> None:
+        """Install the server-protection middleware on ``app`` (innermost,
+        so CORS stays outermost).  Must be called before the app starts."""
+        if any(a is app for a in self._protected_apps):
+            return
+        from starlette.middleware import Middleware
+
+        app.user_middleware.append(Middleware(
+            ServerProtectionMiddleware,
+            auth_service=self.auth_service,
+            ensure_ready=self.ensure_seeded,
+            extra_public=self._extra_public,
+        ))
+        app.middleware_stack = None
+        self._protected_apps.append(app)
+
+    def on_mount(self, server: Any) -> None:
+        """Hook called by ``CliServerResult.mount_plugin``: scopes user events
+        to the user's own event sockets, adopts the server's allowed origins
+        (CSRF) and protects the whole server unless disabled."""
+        manager = getattr(server, "event_socket_manager", None)
+        if manager is not None and hasattr(manager, "send_to_user"):
+            self.auth_service.user_event_sender = manager.send_to_user
+        options = getattr(server, "options", None)
+        origins = getattr(options, "allowed_origins", None)
+        if origins and self.auth_service.options.allowed_origins is None:
+            self.auth_service.options.allowed_origins = list(origins)
+        if self.protect_server:
+            self.protect(server.app)
 
     async def startup(self) -> None:
         """Seed and start the background session sweep on the running loop."""
@@ -142,8 +198,14 @@ class CliUsersBuilder:
         self._audit_store: IAuditStore | None = None
         self._group_store: IGroupStore | None = None
         self._auth_adapter: ExternalAuthAdapter | None = None
-        self._default_admin_password = "root"
+        self._default_admin_password: str | None = None
         self._session_timeout_ms = DEFAULT_SESSION_TIMEOUT_MS
+        self._max_session_lifetime_ms = DEFAULT_MAX_SESSION_LIFETIME_MS
+        self._rate_limit_attempts = DEFAULT_RATE_LIMIT_ATTEMPTS
+        self._rate_limit_window_ms = DEFAULT_RATE_LIMIT_WINDOW_MS
+        self._trust_proxy = False
+        self._allowed_origins: list[str] | None = None
+        self._protect_server = True
         self._min_password_length = DEFAULT_MIN_PASSWORD_LENGTH
         self._max_login_attempts = DEFAULT_MAX_LOGIN_ATTEMPTS
         self._lockout_ms = DEFAULT_LOCKOUT_MS
@@ -174,8 +236,39 @@ class CliUsersBuilder:
         self._auth_adapter = adapter
         return self
 
-    def set_default_admin_password(self, password: str) -> CliUsersBuilder:
+    def set_default_admin_password(self, password: str | None) -> CliUsersBuilder:
+        """Password of the seeded ``root`` user.  When not set, a random
+        password is generated, logged once, and must be changed at first
+        login."""
         self._default_admin_password = password
+        return self
+
+    def set_max_session_lifetime(self, lifetime_ms: int) -> CliUsersBuilder:
+        """Absolute session lifetime (default 12 hours)."""
+        self._max_session_lifetime_ms = lifetime_ms
+        return self
+
+    def set_rate_limit(self, attempts: int, window_ms: int = DEFAULT_RATE_LIMIT_WINDOW_MS) -> CliUsersBuilder:
+        """Per-IP limit for login / verify-password / self password change
+        (default 20 per minute)."""
+        self._rate_limit_attempts = attempts
+        self._rate_limit_window_ms = window_ms
+        return self
+
+    def set_trust_proxy(self, trust: bool = True) -> CliUsersBuilder:
+        """Use ``X-Forwarded-For`` for the client IP (only behind a proxy)."""
+        self._trust_proxy = trust
+        return self
+
+    def set_allowed_origins(self, origins: list[str] | None) -> CliUsersBuilder:
+        """Origins accepted for bearer-less state-changing requests (CSRF,
+        adapter mode).  Defaults to the server's ``allowed_origins``."""
+        self._allowed_origins = list(origins) if origins is not None else None
+        return self
+
+    def set_protect_server(self, protect: bool) -> CliUsersBuilder:
+        """Protect every CLI server route and socket (default ``True``)."""
+        self._protect_server = protect
         return self
 
     def set_session_timeout(self, timeout_ms: int) -> CliUsersBuilder:
@@ -212,9 +305,14 @@ class CliUsersBuilder:
             self._group_store or InMemoryGroupStore(),
             options=AuthServiceOptions(
                 session_timeout_ms=self._session_timeout_ms,
+                max_session_lifetime_ms=self._max_session_lifetime_ms,
                 min_password_length=self._min_password_length,
                 max_login_attempts=self._max_login_attempts,
                 lockout_ms=self._lockout_ms,
+                rate_limit_attempts=self._rate_limit_attempts,
+                rate_limit_window_ms=self._rate_limit_window_ms,
+                trust_proxy=self._trust_proxy,
+                allowed_origins=self._allowed_origins,
             ),
             broadcast_fn=broadcast_fn,
             auth_adapter=self._auth_adapter,
@@ -234,18 +332,23 @@ class CliUsersBuilder:
             audit_store=auth_service.audit_store,
             default_admin_password=self._default_admin_password,
             cleanup_interval_ms=self._cleanup_interval_ms,
+            protect_server=self._protect_server,
         )
 
         # Requests made before startup() (e.g. apps without a lifespan) still
         # see the seeded built-ins.
-        get_auth, require_permission = create_auth_dependencies(
+        get_auth, require_permission, get_auth_pending = create_auth_dependencies(
             auth_service, ensure_ready=plugin.ensure_seeded,
         )
+        plugin.require_auth = get_auth
+        plugin.require_permission = require_permission
         router.include_router(create_sessions_router(
-            auth_service, get_auth, require_permission, ensure_ready=plugin.ensure_seeded,
+            auth_service, get_auth, require_permission,
+            ensure_ready=plugin.ensure_seeded, get_auth_pending=get_auth_pending,
         ))
         router.include_router(create_users_router(
             auth_service, users_service, get_auth, require_permission,
+            get_auth_pending=get_auth_pending,
         ))
         router.include_router(create_groups_router(
             auth_service, users_service, get_auth, require_permission,

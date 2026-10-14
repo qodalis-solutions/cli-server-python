@@ -28,6 +28,7 @@ from .services.auth_service import (
     AuthServiceOptions,
 )
 from .services.users_service import UsersService
+from .server_protection import ServerProtectionMiddleware
 from .stores.in_memory_audit_store import InMemoryAuditStore
 from .stores.in_memory_credential_store import InMemoryCredentialStore
 from .stores.in_memory_group_store import InMemoryGroupStore
@@ -64,6 +65,7 @@ __all__ = [
     "InMemorySessionStore",
     "InMemoryUserStore",
     "Session",
+    "ServerProtectionMiddleware",
     "SessionMetadata",
     "User",
     "UsersApiError",
@@ -91,7 +93,7 @@ class UsersPluginOptions:
     audit_store: IAuditStore | None = None
     group_store: IGroupStore | None = None
     session_timeout_ms: int = DEFAULT_SESSION_TIMEOUT_MS
-    default_admin_password: str = "root"
+    default_admin_password: str | None = None
     auth_adapter: Optional[ExternalAuthAdapter] = None
 
 

@@ -38,6 +38,7 @@ class User:
     email: str = ""
     groups: list[str] = field(default_factory=list)
     disabled: bool = False
+    must_change_password: bool = False
     home_dir: str | None = None
     data: dict[str, Any] | None = None
     last_login_at: int | None = None
@@ -51,6 +52,7 @@ class User:
             "email": self.email,
             "groups": list(self.groups),
             "disabled": bool(self.disabled),
+            "mustChangePassword": bool(self.must_change_password),
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
@@ -98,7 +100,8 @@ class Session:
     """
 
     id: str = field(default_factory=_new_id)
-    token: str = ""
+    #: SHA-256 (hex) of the bearer token — the raw token is never stored.
+    token_hash: str = ""
     user_id: str = ""
     user_name: str = ""
     created_at: int = field(default_factory=now_ms)
@@ -109,12 +112,17 @@ class Session:
     def login_time(self) -> int:
         return self.created_at
 
-    def expires_at(self, timeout_ms: int) -> int:
-        return self.last_activity + timeout_ms
+    def expires_at(self, timeout_ms: int, max_lifetime_ms: int | None = None) -> int:
+        """``min(lastActivity + idle timeout, createdAt + max lifetime)``."""
+        idle = self.last_activity + timeout_ms
+        if max_lifetime_ms is None:
+            return idle
+        return min(idle, self.created_at + max_lifetime_ms)
 
     def to_listing_dict(
         self,
         timeout_ms: int,
+        max_lifetime_ms: int | None = None,
         *,
         user_name: str | None = None,
         current: bool | None = None,
@@ -126,7 +134,7 @@ class Session:
             "userName": user_name if user_name is not None else self.user_name,
             "createdAt": self.created_at,
             "lastActivity": self.last_activity,
-            "expiresAt": self.expires_at(timeout_ms),
+            "expiresAt": self.expires_at(timeout_ms, max_lifetime_ms),
             "metadata": (self.metadata or SessionMetadata()).to_dict(),
         }
         if current is not None:
@@ -143,6 +151,8 @@ class AuditEntry:
     details: str | None = None
     actor: str | None = None
     metadata: dict[str, Any] | None = None
+    user_id: str | None = None
+    actor_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -151,6 +161,10 @@ class AuditEntry:
             "event": self.event,
             "username": self.username,
         }
+        if self.user_id is not None:
+            result["userId"] = self.user_id
+        if self.actor_id is not None:
+            result["actorId"] = self.actor_id
         if self.details is not None:
             result["details"] = self.details
         if self.actor is not None:
@@ -226,6 +240,9 @@ class UpdateUserRequest(_Body):
 class PasswordChangeRequest(_Body):
     password: str | None = None
     currentPassword: str | None = None  # noqa: N815
+    #: Admin reset only: ``False`` keeps the new password permanent;
+    #: otherwise the target must change it at next login.
+    temporary: bool | None = None
     #: Deprecated alias of ``password`` (pre-contract clients).
     newPassword: str | None = None  # noqa: N815
 

@@ -5,6 +5,7 @@
 - ``DELETE /sessions/current``  logout (authenticated)
 - ``GET    /sessions``          list sessions (``sessions:read``)
 - ``DELETE /sessions/{id}``     revoke (``sessions:revoke`` or own session)
+- ``POST   /sessions/ws-ticket``  single-use WebSocket ticket (authenticated)
 """
 
 from __future__ import annotations
@@ -27,7 +28,9 @@ def create_sessions_router(
     get_auth: Callable,
     require_permission: Callable[[str], Callable],
     ensure_ready: Callable | None = None,
+    get_auth_pending: Callable | None = None,
 ) -> APIRouter:
+    get_auth_pending = get_auth_pending or get_auth
     router = new_router("/sessions", "sessions")
     external = auth_service.external_auth
 
@@ -45,6 +48,7 @@ def create_sessions_router(
         async def login(body: LoginRequest, request: Request):
             if ensure_ready is not None:
                 await ensure_ready()
+            auth_service.check_rate_limit(request)
             metadata = SessionMetadata(
                 remote_address=request.client.host if request.client else None,
                 user_agent=request.headers.get("user-agent"),
@@ -58,13 +62,18 @@ def create_sessions_router(
             }
 
         @router.delete("/current", status_code=204)
-        async def logout(ctx: AuthContext = Depends(get_auth)):
+        async def logout(ctx: AuthContext = Depends(get_auth_pending)):
             if ctx.token:
                 await auth_service.logout(ctx.token)
             return Response(status_code=204)
 
+    @router.post("/ws-ticket", status_code=201)
+    async def ws_ticket(ctx: AuthContext = Depends(get_auth)):
+        ticket, expires_in = auth_service.issue_ticket(ctx)
+        return {"ticket": ticket, "expiresIn": expires_in}
+
     @router.get("/current")
-    async def current_session(ctx: AuthContext = Depends(get_auth)):
+    async def current_session(ctx: AuthContext = Depends(get_auth_pending)):
         assert ctx.session is not None
         return auth_service.session_payload(ctx.session, ctx.user, ctx.permissions)
 
@@ -73,11 +82,12 @@ def create_sessions_router(
         result = []
         for session in await auth_service.session_store.get_active_sessions():
             if auth_service.is_expired(session):
-                await auth_service.session_store.delete_session(session.token)
+                await auth_service.session_store.delete_session_by_id(session.id)
                 continue
             user = await auth_service.user_store.get_user(session.user_id)
             result.append(session.to_listing_dict(
                 auth_service.session_timeout_ms,
+                auth_service.max_session_lifetime_ms,
                 user_name=user.name if user else None,
                 current=ctx.session is not None and session.id == ctx.session.id,
             ))
@@ -91,9 +101,12 @@ def create_sessions_router(
         if target.user_id != ctx.user.id and not ctx.can(SESSIONS_REVOKE):
             raise forbidden(f"missing permission: {SESSIONS_REVOKE}")
         user = await auth_service.user_store.get_user(target.user_id)
+        if user is not None:
+            await auth_service.ensure_covers_user(ctx, user)
         await auth_service.revoke_session(
             target, "revoked",
             actor=ctx.user.name,
+            actor_id=ctx.user.id,
             username=user.name if user else None,
         )
         return Response(status_code=204)
