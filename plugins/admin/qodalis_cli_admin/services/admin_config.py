@@ -22,6 +22,7 @@ class AdminConfig:
     username: str = ""
     password: str = ""
     jwt_secret: str = ""
+    warn_default: bool = True
 
     # Mutable runtime settings
     _mutable_settings: dict[str, Any] = field(default_factory=dict)
@@ -38,7 +39,7 @@ class AdminConfig:
         if not self.jwt_secret:
             self.jwt_secret = os.environ.get("QCLI_ADMIN_JWT_SECRET", "")
 
-        if self.username == "admin" and self.password == "admin":
+        if self.warn_default and self.username == "admin" and self.password == "admin":
             logger.warning(
                 "Using default admin credentials. Set QCLI_ADMIN_USERNAME"
                 " and QCLI_ADMIN_PASSWORD environment variables."
@@ -46,8 +47,8 @@ class AdminConfig:
 
     def validate_credentials(self, username: str, password: str) -> bool:
         """Return *True* if the supplied credentials match."""
-        username_ok = hmac.compare_digest(username, self.username)
-        password_ok = hmac.compare_digest(password, self.password)
+        username_ok = hmac.compare_digest(username.encode("utf-8"), self.username.encode("utf-8"))
+        password_ok = hmac.compare_digest(password.encode("utf-8"), self.password.encode("utf-8"))
         return username_ok and password_ok
 
     def get_config_sections(self) -> list[dict[str, Any]]:

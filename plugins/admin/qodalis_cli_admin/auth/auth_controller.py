@@ -51,26 +51,45 @@ class _RateLimiter:
         self._attempts[ip].append(time.time())
 
 
+ADMIN_ACCESS = "admin:access"
+
+
+def client_ip(request: Request, trust_proxy: bool) -> str:
+    """Client IP; ``X-Forwarded-For`` is only trusted behind a proxy."""
+    if trust_proxy:
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for and forwarded_for.split(",")[0].strip():
+            return forwarded_for.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
+
+
 def create_auth_router(
     admin_config: AdminConfig,
     jwt_service: JwtService,
     auth_dependency: Any = None,
+    *,
+    trust_proxy: bool = False,
+    users_plugin: Any = None,
 ) -> APIRouter:
-    """Create a FastAPI router with ``POST /login`` and ``GET /me``."""
+    """Create a FastAPI router with ``POST /login`` and ``GET /me``.
+
+    With ``users_plugin`` the login goes through the users auth service and
+    requires the ``admin:access`` permission; the returned token is the
+    users session token.  Otherwise the static admin credentials are used.
+    """
     router = APIRouter()
     limiter = _RateLimiter()
 
     @router.post("/login", response_model=LoginResponse)
     async def login(body: LoginRequest, request: Request) -> Any:
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            client_ip = forwarded_for.split(",")[0].strip()
-        else:
-            client_ip = request.client.host if request.client else "127.0.0.1"
-        limiter.check(client_ip)
+        ip = client_ip(request, trust_proxy)
+        limiter.check(ip)
+
+        if users_plugin is not None:
+            return await _users_login(body, request, ip)
 
         if not admin_config.validate_credentials(body.username, body.password):
-            limiter.record_failure(client_ip)
+            limiter.record_failure(ip)
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
         expires_in = JwtService.DEFAULT_EXPIRY_SECONDS
@@ -81,6 +100,33 @@ def create_auth_router(
 
         return LoginResponse(token=token, expiresIn=expires_in, username=body.username)
 
+    async def _users_login(body: LoginRequest, request: Request, ip: str) -> Any:
+        from qodalis_cli_users import SessionMetadata
+
+        auth_service = users_plugin.auth_service
+        await users_plugin.ensure_seeded()
+        try:
+            result = await auth_service.login(
+                body.username, body.password,
+                SessionMetadata(remote_address=ip, user_agent=request.headers.get("user-agent")),
+            )
+        except HTTPException as exc:
+            if exc.status_code == 401:
+                limiter.record_failure(ip)
+            raise
+        allowed = any(_matches(p, ADMIN_ACCESS) for p in result.permissions)
+        if not allowed or result.user.must_change_password:
+            await auth_service.logout(result.token)
+            raise HTTPException(
+                status_code=403,
+                detail="password change required" if allowed else f"missing permission: {ADMIN_ACCESS}",
+            )
+        return LoginResponse(
+            token=result.token,
+            expiresIn=auth_service.session_timeout_ms // 1000,
+            username=result.user.name,
+        )
+
     if auth_dependency is not None:
         @router.get("/me")
         async def me(payload: dict[str, Any] = Depends(auth_dependency)) -> dict[str, Any]:
@@ -90,3 +136,14 @@ def create_auth_router(
             }
 
     return router
+
+
+def _matches(granted: str, required: str) -> bool:
+    g = granted.strip().lower().split(":")
+    r = required.strip().lower().split(":")
+    for i, seg in enumerate(g):
+        if seg == "*":
+            return True
+        if i >= len(r) or seg != r[i]:
+            return False
+    return len(g) == len(r)

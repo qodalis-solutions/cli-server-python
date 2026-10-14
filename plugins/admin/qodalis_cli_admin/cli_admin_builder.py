@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from .spa_static_files import SPAStaticFiles
 
 from .auth.jwt_service import JwtService
-from .auth.auth_middleware import create_auth_dependency
+from .auth.auth_middleware import create_auth_dependency, create_users_auth_dependency
 from .auth.auth_controller import create_auth_router
 from .controllers.status_controller import create_status_router
 from .controllers.plugins_controller import create_plugins_router
@@ -36,6 +36,9 @@ class AdminBuildDeps:
     builder: Any  # CliBuilder
     broadcast_fn: BroadcastFn | None = None
     enabled_features: list[str] | None = None
+    #: When set, the dashboard authenticates through the users plugin
+    #: (``admin:access`` permission); static credentials are not used.
+    users_plugin: Any = None
 
 
 @dataclass
@@ -59,6 +62,8 @@ class CliAdminBuilder:
         self._password: str = ""
         self._jwt_secret: str = ""
         self._dashboard_path: str | None = None
+        self._trust_proxy = False
+        self._users_plugin: Any = None
 
     def set_credentials(self, username: str, password: str) -> CliAdminBuilder:
         """Set admin login credentials (overrides env vars)."""
@@ -76,24 +81,45 @@ class CliAdminBuilder:
         self._dashboard_path = path
         return self
 
+    def set_trust_proxy(self, trust: bool = True) -> CliAdminBuilder:
+        """Trust ``X-Forwarded-For`` for login rate limiting (behind a proxy only)."""
+        self._trust_proxy = trust
+        return self
+
+    def set_users_plugin(self, users_plugin: Any) -> CliAdminBuilder:
+        """Authenticate the dashboard through the users plugin."""
+        self._users_plugin = users_plugin
+        return self
+
     def build(self, deps: AdminBuildDeps) -> CliAdminPlugin:
         """Build the plugin, returning the router, auth dependency, and log buffer."""
         start_time = time.time()
 
+        users_plugin = self._users_plugin or deps.users_plugin
         config = AdminConfig(
             username=self._username,
             password=self._password,
             jwt_secret=self._jwt_secret,
+            warn_default=users_plugin is None,
         )
         jwt_service = JwtService(secret=config.jwt_secret)
         log_buffer = LogRingBuffer(broadcast_fn=deps.broadcast_fn)
         log_buffer.install_handler()
         module_registry = ModuleRegistry(deps.builder)
-        auth_dep = create_auth_dependency(jwt_service)
+        if users_plugin is not None:
+            auth_dep = create_users_auth_dependency(users_plugin)
+            allow = getattr(users_plugin, "allow_anonymous", None)
+            if callable(allow):
+                allow("/api/v1/qcli/auth/login", ["POST"])
+        else:
+            auth_dep = create_auth_dependency(jwt_service)
 
         router = APIRouter()
 
-        auth_router = create_auth_router(config, jwt_service, auth_dependency=auth_dep)
+        auth_router = create_auth_router(
+            config, jwt_service, auth_dependency=auth_dep,
+            trust_proxy=self._trust_proxy, users_plugin=users_plugin,
+        )
         router.include_router(auth_router, prefix="/auth")
 
         enabled_features: list[str] = list(deps.enabled_features or [])
