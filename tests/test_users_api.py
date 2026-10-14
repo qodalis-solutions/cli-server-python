@@ -15,7 +15,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from plugins.users import build_users_plugin, UsersPluginOptions, UsersPluginResult
-from plugins.users.models import ExternalAuthResult, User
+from plugins.users.qodalis_cli_users.models import ExternalAuthResult, User
 
 
 @pytest.fixture(scope="module")

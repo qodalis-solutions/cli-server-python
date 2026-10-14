@@ -728,6 +728,22 @@ All commands support `--region` (`-r`) for region override and `--output` (`-o`)
 
 See [`plugins/aws/README.md`](plugins/aws/README.md) for the full command reference.
 
+### Users Plugin
+
+The users plugin (`qodalis-cli-server-plugin-users`) adds endpoints under `/api/v1/qcli` for authentication, users, sessions, groups and an audit log, with swappable storage (in-memory by default). It is the server side of the `@qodalis/cli-users` browser plugin's *server mode*.
+
+```python
+from qodalis_cli_users import build_users_plugin, UsersPluginOptions
+
+users_plugin = await build_users_plugin(
+    UsersPluginOptions(default_admin_password="admin"),
+    broadcast_event=lambda msg: result.event_socket_manager.broadcast_message(msg),
+)
+result.mount_plugin(users_plugin)
+```
+
+See [`plugins/users/README.md`](plugins/users/README.md) for options, endpoints, custom storage and external auth adapters.
+
 ## Built-in Processors
 
 These processors ship with the library and are included in the standalone server:
@@ -789,6 +805,7 @@ plugins/
   data-explorer-mssql/                # MS SQL Server data explorer provider
   data-explorer-redis/                # Redis data explorer provider
   data-explorer-elasticsearch/        # Elasticsearch data explorer provider
+  users/                              # Users plugin (auth, sessions, groups, audit)
   weather/                            # Weather module (example plugin)
   admin/                              # Admin dashboard and monitoring
   jobs/                               # Job scheduling and management
