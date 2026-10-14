@@ -6,7 +6,7 @@ import logging
 import platform
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -16,6 +16,7 @@ from qodalis_cli_server_abstractions import is_stream_capable
 from ..models import CliServerCommandDescriptor, CliServerCommandParameterDescriptorDto, CliServerResponse
 from ..services.cli_command_executor_service import ICliCommandExecutorService
 from ..services.cli_command_registry import ICliCommandRegistry
+from ..security import get_auth_context, missing_processor_permissions
 
 logger = logging.getLogger(__name__)
 
@@ -64,13 +65,29 @@ def _map_to_descriptor(processor: ICliCommandProcessor) -> dict[str, Any]:
         allowUnlistedCommands=processor.allow_unlisted_commands,
         valueRequired=processor.value_required,
         author={"name": processor.author.name, "email": processor.author.email},
+        requiredPermissions=list(getattr(processor, "required_permissions", None) or []) or None,
     )
     return desc.model_dump(by_alias=True, exclude_none=True)
+
+
+def _permission_denied(registry: ICliCommandRegistry, request: Request, command: str, chain: list[str]) -> JSONResponse | None:
+    """403 response when the caller lacks a processor's declared permissions."""
+    ctx = get_auth_context(request)
+    if ctx is None:
+        return None
+    root = registry.find_processor(command, None)
+    resolved = registry.find_processor(command, list(chain) if chain else None)
+    missing = missing_processor_permissions(ctx, root, resolved)
+    if missing:
+        return JSONResponse(status_code=403, content={"error": f"missing permission: {', '.join(missing)}"})
+    return None
 
 
 def create_cli_router(
     registry: ICliCommandRegistry,
     executor: ICliCommandExecutorService,
+    *,
+    enable_shell: bool = False,
 ) -> APIRouter:
     """Create a FastAPI router for the v1 CLI API.
 
@@ -103,7 +120,7 @@ def create_cli_router(
         )
 
         return {
-            "shell": True,
+            "shell": enable_shell,
             "os": detected_os,
             "shellPath": shell_path,
             "version": SERVER_VERSION,
@@ -115,7 +132,10 @@ def create_cli_router(
         return [_map_to_descriptor(p) for p in registry.processors]
 
     @router.post("/execute")
-    async def execute_command(request: ExecuteRequest) -> JSONResponse:
+    async def execute_command(request: ExecuteRequest, http_request: Request) -> JSONResponse:
+        denied = _permission_denied(registry, http_request, request.command, request.chain_commands)
+        if denied is not None:
+            return denied
         logger.debug("Executing command: %s", request.command)
         cmd = CliProcessCommand(
             command=request.command,
@@ -129,7 +149,10 @@ def create_cli_router(
         return JSONResponse(result.model_dump(by_alias=True, exclude_none=True))
 
     @router.post("/execute/stream")
-    async def execute_stream(request: ExecuteRequest) -> StreamingResponse:
+    async def execute_stream(request: ExecuteRequest, http_request: Request):
+        denied = _permission_denied(registry, http_request, request.command, request.chain_commands)
+        if denied is not None:
+            return denied
         command = CliProcessCommand(
             command=request.command,
             raw_command=request.raw_command,

@@ -9,7 +9,7 @@ from fastapi import APIRouter
 SERVER_VERSION = "1.0.0"
 
 
-def create_cli_version_router() -> APIRouter:
+def create_cli_version_router(*, enable_shell: bool = False) -> APIRouter:
     """Create a FastAPI router for version discovery and server capabilities.
 
     Returns:
@@ -41,7 +41,7 @@ def create_cli_version_router() -> APIRouter:
         )
 
         return {
-            "shell": True,
+            "shell": enable_shell,
             "os": detected_os,
             "shellPath": shell_path,
             "version": SERVER_VERSION,

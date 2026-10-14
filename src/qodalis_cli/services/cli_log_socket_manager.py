@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 
 from fastapi import WebSocket
 
+from ..security import is_sensitive_record, redact
+
 logger = logging.getLogger(__name__)
 
 _LEVEL_ORDER = {
@@ -27,7 +29,7 @@ class CliLogSocketManager:
         self._next_id = 0
 
     async def handle_connection(
-        self, websocket: WebSocket, level_filter: str | None = None
+        self, websocket: WebSocket, level_filter: str | None = None, identity: object = None,
     ) -> None:
         """Accept a WebSocket connection for log streaming.
 
@@ -35,7 +37,8 @@ class CliLogSocketManager:
             websocket: The incoming WebSocket connection.
             level_filter: Optional minimum log level to send to this client.
         """
-        await websocket.accept()
+        if websocket.client_state.name == "CONNECTING":
+            await websocket.accept()
         client_id = self._next_id
         self._next_id += 1
         self._clients[client_id] = (websocket, level_filter)
@@ -141,10 +144,14 @@ class WebSocketLogHandler(logging.Handler):
         self.manager = manager
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Format a log record and broadcast it via the socket manager."""
+        """Format a log record and broadcast it via the socket manager.
+
+        Records flagged sensitive are dropped; tokens/passwords are redacted."""
+        if is_sensitive_record(record):
+            return
         level = self.map_log_level(record.levelno)
         category = record.name
-        message = self.format(record) if self.formatter else record.getMessage()
+        message = redact(self.format(record) if self.formatter else record.getMessage())
         self.manager.broadcast_log(level, message, category)
 
     @staticmethod

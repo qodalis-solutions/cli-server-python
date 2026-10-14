@@ -19,9 +19,15 @@ class CliEventSocketManager:
         self._client_info: dict[WebSocket, dict[str, Any]] = {}
         self._next_client_id = 1
 
-    async def handle_connection(self, websocket: WebSocket) -> None:
-        """Accept a WebSocket connection and keep it alive until the client disconnects."""
-        await websocket.accept()
+    async def handle_connection(self, websocket: WebSocket, identity: Any = None) -> None:
+        """Accept a WebSocket connection and keep it alive until the client disconnects.
+
+        ``identity`` is the authenticated caller (an auth context exposing
+        ``user.id`` and optionally ``session.id``) when the server is
+        protected; user-scoped events are only delivered to such sockets.
+        """
+        if websocket.client_state.name == "CONNECTING":
+            await websocket.accept()
         self._clients.add(websocket)
 
         client_id = f"evt-{self._next_client_id}"
@@ -37,6 +43,13 @@ class CliEventSocketManager:
             "remoteAddress": remote_address,
             "type": "events",
         }
+        user = getattr(identity, "user", None)
+        session = getattr(identity, "session", None)
+        if user is not None:
+            self._client_info[websocket]["userId"] = getattr(user, "id", None)
+            self._client_info[websocket]["userName"] = getattr(user, "name", None)
+        if session is not None:
+            self._client_info[websocket]["sessionId"] = getattr(session, "id", None)
 
         logger.info("Event client connected (id=%s)", client_id)
 
@@ -60,6 +73,15 @@ class CliEventSocketManager:
                 await client.send_text(message)
             except Exception:
                 logger.debug("Broadcast send failed, removing client")
+
+    async def send_to_user(self, user_id: str, message: str) -> None:
+        """Send a message only to sockets authenticated as ``user_id``."""
+        for client, info in list(self._client_info.items()):
+            if info.get("userId") == user_id:
+                try:
+                    await client.send_text(message)
+                except Exception:
+                    logger.debug("User-scoped send failed")
 
     def get_clients(self) -> list[dict[str, Any]]:
         """Return information about all currently connected event clients."""

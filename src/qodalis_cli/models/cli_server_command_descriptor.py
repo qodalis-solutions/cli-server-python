@@ -30,5 +30,6 @@ class CliServerCommandDescriptor(BaseModel):
     allow_unlisted_commands: bool | None = Field(alias="allowUnlistedCommands", default=None)
     value_required: bool | None = Field(alias="valueRequired", default=None)
     author: dict[str, str] | None = None
+    required_permissions: list[str] | None = Field(alias="requiredPermissions", default=None)
 
     model_config = {"populate_by_name": True}
