@@ -42,6 +42,7 @@ from qodalis_cli_server_abstractions.jobs import CliJobOptions
 
 from qodalis_cli_jobs import CliJobsBuilder
 from qodalis_cli_admin import CliAdminBuilder, AdminBuildDeps
+from qodalis_cli_users import CliUsersBuilder
 
 from processors import (
     CliEchoCommandProcessor,
@@ -53,7 +54,6 @@ from processors import (
 
 from plugins.weather import WeatherModule
 from plugins.aws.qodalis_cli_aws import AwsModule
-from plugins.users import build_users_plugin, UsersPluginOptions
 from qodalis_cli_data_explorer_sql import SqlDataExplorerProvider
 from qodalis_cli_data_explorer_postgres import PostgresDataExplorerProvider
 from qodalis_cli_data_explorer_mysql import MysqlDataExplorerProvider
@@ -267,13 +267,11 @@ def main() -> None:
 
     result.mount_plugin(admin_plugin)
 
-    # Build the users plugin
-    import asyncio
-    users_plugin = asyncio.get_event_loop().run_until_complete(
-        build_users_plugin(
-            options=UsersPluginOptions(default_admin_password="admin"),
-            broadcast_event=lambda msg: result.event_socket_manager.broadcast_message(msg),
-        )
+    # Build the users plugin (seeded and started in the app lifespan below)
+    users_plugin = (
+        CliUsersBuilder()
+        .set_default_admin_password("admin")
+        .build(broadcast_fn=lambda msg: result.event_socket_manager.broadcast_message(msg))
     )
     result.mount_plugin(users_plugin)
 
@@ -282,18 +280,21 @@ def main() -> None:
     if admin_plugin.module_registry and result.executor:
         result.executor.add_filter(admin_plugin.module_registry)
 
-    # Wire scheduler lifecycle into the app lifespan
+    # Wire the jobs scheduler and users plugin lifecycles into the app lifespan
     original_lifespan = result.app.router.lifespan_context
 
     @asynccontextmanager
-    async def lifespan_with_jobs(app: object) -> AsyncIterator[None]:
+    async def lifespan_with_plugins(app: object) -> AsyncIterator[None]:
         await jobs_plugin.scheduler.start()
-        async with original_lifespan(app) as state:  # type: ignore[arg-type]
-            yield state
-        await jobs_plugin.scheduler.stop()
-        users_plugin.dispose()
+        await users_plugin.startup()
+        try:
+            async with original_lifespan(app) as state:  # type: ignore[arg-type]
+                yield state
+        finally:
+            await users_plugin.shutdown()
+            await jobs_plugin.scheduler.stop()
 
-    result.app.router.lifespan_context = lifespan_with_jobs
+    result.app.router.lifespan_context = lifespan_with_plugins
 
     logger.info("Qodalis CLI Demo Server (Python) running on http://%s:%d", host, port)
     logger.info("  API: http://%s:%d/api/qcli", host, port)
