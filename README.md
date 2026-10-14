@@ -730,16 +730,18 @@ See [`plugins/aws/README.md`](plugins/aws/README.md) for the full command refere
 
 ### Users Plugin
 
-The users plugin (`qodalis-cli-server-plugin-users`) adds endpoints under `/api/v1/qcli` for authentication, users, sessions, groups and an audit log, with swappable storage (in-memory by default). It is the server side of the `@qodalis/cli-users` browser plugin's *server mode*.
+The users plugin (`qodalis-cli-server-plugin-users`) adds endpoints under `/api/v1/qcli` for authentication, users, groups with permissions, sessions and an audit log, with swappable storage (in-memory by default). It is the server side of the `@qodalis/cli-users` browser plugin's *server mode*.
 
 ```python
-from qodalis_cli_users import build_users_plugin, UsersPluginOptions
+from qodalis_cli_users import CliUsersBuilder
 
-users_plugin = await build_users_plugin(
-    UsersPluginOptions(default_admin_password="admin"),
-    broadcast_event=lambda msg: result.event_socket_manager.broadcast_message(msg),
+users_plugin = (
+    CliUsersBuilder()
+    .set_default_admin_password("admin")
+    .build(broadcast_fn=result.event_socket_manager.broadcast_message)
 )
 result.mount_plugin(users_plugin)
+# In the app lifespan: await users_plugin.startup() / await users_plugin.shutdown()
 ```
 
 See [`plugins/users/README.md`](plugins/users/README.md) for options, endpoints, custom storage and external auth adapters.
