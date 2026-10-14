@@ -16,7 +16,7 @@ from httpx import ASGITransport, AsyncClient
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder  # noqa: E402
-from plugins.users import UsersPluginOptions, build_users_plugin  # noqa: E402
+from qodalis_cli_users import CliUsersBuilder  # noqa: E402
 from tests.test_admin_plugin import (  # noqa: E402
     _StubBuilder,
     _StubEventSocketManager,
@@ -44,9 +44,8 @@ async def client():
             )
         )
     )
-    users_plugin = await build_users_plugin(
-        UsersPluginOptions(default_admin_password=ROOT_PASS)
-    )
+    users_plugin = CliUsersBuilder().set_default_admin_password(ROOT_PASS).build()
+    await users_plugin.startup()
 
     app = FastAPI()
     # Same order as demo/main.py: admin first, then users
@@ -55,7 +54,7 @@ async def client():
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
-    users_plugin.dispose()
+    await users_plugin.shutdown()
 
 
 async def test_users_login_via_sessions(client: AsyncClient):

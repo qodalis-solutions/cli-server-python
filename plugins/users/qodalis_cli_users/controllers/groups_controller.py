@@ -1,75 +1,109 @@
-"""Groups controller — /groups routes."""
+"""Groups controller — ``/groups`` (CRUD, permissions, membership)."""
 
 from __future__ import annotations
 
 from typing import Callable
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Response
 
-from ..models import CreateGroupRequest, Session
-from ..stores.interfaces import IGroupStore, IUserStore
+from ..errors import bad_request, forbidden, not_found
+from ..models import CreateGroupRequest, Group, UpdateGroupRequest
+from ..permissions import GROUPS_CREATE, GROUPS_DELETE, GROUPS_READ, GROUPS_UPDATE
+from ..services.auth_service import AuthContext, AuthService
+from ..services.users_service import UsersService
+from ._routing import collection, new_router
 
 
 def create_groups_router(
-    group_store: IGroupStore,
-    user_store: IUserStore,
-    get_current_session: Callable,
-    require_admin: Callable,
+    auth_service: AuthService,
+    users_service: UsersService,
+    get_auth: Callable,
+    require_permission: Callable[[str], Callable],
 ) -> APIRouter:
-    router = APIRouter(prefix="/groups", tags=["groups"])
+    router = new_router("/groups", "groups")
+    group_store = auth_service.group_store
+    user_store = auth_service.user_store
 
-    # GET / — list all groups
-    @router.get("/")
-    async def list_groups(session: Session = Depends(get_current_session)):
-        groups = await group_store.get_groups()
-        return [g.to_dict() for g in groups]
-
-    # GET /{name} — get group by name
-    @router.get("/{name}")
-    async def get_group(name: str, session: Session = Depends(get_current_session)):
+    async def load_group(name: str) -> Group:
         group = await group_store.get_group(name)
         if not group:
-            raise HTTPException(status_code=404, detail="Group not found")
+            raise not_found(f"group not found: {name}")
+        return group
+
+    async def load_user(id_or_name: str):
+        user = await user_store.get_user(id_or_name)
+        if not user:
+            raise not_found(f"user not found: {id_or_name}")
+        return user
+
+    @collection(router, "GET")
+    async def list_groups(ctx: AuthContext = Depends(get_auth)):
+        return [g.to_dict() for g in await group_store.get_groups()]
+
+    @collection(router, "POST", status_code=201)
+    async def create_group(
+        body: CreateGroupRequest,
+        ctx: AuthContext = Depends(require_permission(GROUPS_CREATE)),
+    ):
+        group = await users_service.create_group(
+            ctx, name=body.name, description=body.description, permissions=body.permissions,
+        )
         return group.to_dict()
 
-    # POST / — create group (admin only)
-    @router.post("/", status_code=201)
-    async def create_group(body: CreateGroupRequest, session: Session = Depends(require_admin)):
-        try:
-            group = await group_store.create_group(body.name, body.description)
-            return group.to_dict()
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
+    @router.get("/{name}")
+    async def get_group(name: str, ctx: AuthContext = Depends(get_auth)):
+        return (await load_group(name)).to_dict()
 
-    # DELETE /{name} — delete group (admin only)
+    @router.get("/{name}/members")
+    async def list_members(name: str, ctx: AuthContext = Depends(get_auth)):
+        group = await load_group(name)
+        if not ctx.can(GROUPS_READ) and not auth_service.in_group(ctx.user, group.name):
+            raise forbidden(f"missing permission: {GROUPS_READ}")
+        return [u.to_dict() for u in await users_service.group_members(group)]
+
+    @router.put("/{name}")
+    async def update_group(
+        name: str,
+        body: UpdateGroupRequest,
+        ctx: AuthContext = Depends(require_permission(GROUPS_UPDATE)),
+    ):
+        group = await load_group(name)
+        updated = await users_service.update_group(
+            ctx, group, description=body.description, permissions=body.permissions,
+        )
+        return updated.to_dict()
+
     @router.delete("/{name}", status_code=204)
-    async def delete_group(name: str, session: Session = Depends(require_admin)):
-        await group_store.delete_group(name)
+    async def delete_group(
+        name: str,
+        ctx: AuthContext = Depends(require_permission(GROUPS_DELETE)),
+    ):
+        await users_service.delete_group(ctx, await load_group(name))
+        return Response(status_code=204)
 
-    # PUT /{name}/members/{user_id} — add user to group (admin only)
-    @router.put("/{name}/members/{user_id}")
-    async def add_member(name: str, user_id: str, session: Session = Depends(require_admin)):
+    @router.post("/{name}/members/{id_or_name}", status_code=204)
+    async def add_member(
+        name: str,
+        id_or_name: str,
+        ctx: AuthContext = Depends(require_permission(GROUPS_UPDATE)),
+    ):
         group = await group_store.get_group(name)
         if not group:
-            raise HTTPException(status_code=404, detail="Group not found")
+            # Contract: referenced groups must exist when adding a member → 400.
+            raise bad_request(f"unknown group: {name}")
+        user = await load_user(id_or_name)
+        await users_service.add_member(ctx, group, user)
+        return Response(status_code=204)
 
-        user = await user_store.get_user(user_id)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        if name not in user.groups:
-            await user_store.update_user(user_id, groups=[*user.groups, name])
-
-        return {"message": f"User added to group '{name}'"}
-
-    # DELETE /{name}/members/{user_id} — remove user from group (admin only)
-    @router.delete("/{name}/members/{user_id}")
-    async def remove_member(name: str, user_id: str, session: Session = Depends(require_admin)):
-        user = await user_store.get_user(user_id)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-
-        await user_store.update_user(user_id, groups=[g for g in user.groups if g != name])
-        return {"message": f"User removed from group '{name}'"}
+    @router.delete("/{name}/members/{id_or_name}", status_code=204)
+    async def remove_member(
+        name: str,
+        id_or_name: str,
+        ctx: AuthContext = Depends(require_permission(GROUPS_UPDATE)),
+    ):
+        group = await load_group(name)
+        user = await load_user(id_or_name)
+        await users_service.remove_member(ctx, group, user)
+        return Response(status_code=204)
 
     return router

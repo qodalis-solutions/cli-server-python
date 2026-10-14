@@ -1,9 +1,13 @@
-"""Abstract store interfaces for the users plugin."""
+"""Abstract store interfaces for the users plugin.
+
+Implement these to persist users, sessions, credentials, groups and the audit
+log in your own storage.  All business rules (permissions, cascades,
+protections) live in the plugin; stores are plain persistence.
+"""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-
 from ..models import (
     AuditEntry,
     AuditQueryOptions,
@@ -24,7 +28,19 @@ class IUserStore(ABC):
 
     @abstractmethod
     async def get_user(self, id_or_name: str) -> User | None:
-        ...
+        """Look a user up by id, or by name (case-insensitive)."""
+
+    async def get_user_by_email(self, email: str) -> User | None:
+        """Look a user up by email (case-insensitive).
+
+        Default implementation scans :meth:`get_users`; override for
+        efficiency.
+        """
+        lower = email.strip().lower()
+        for user in await self.get_users():
+            if user.email.lower() == lower:
+                return user
+        return None
 
     @abstractmethod
     async def create_user(
@@ -33,6 +49,9 @@ class IUserStore(ABC):
         email: str,
         groups: list[str] | None = None,
         data: dict | None = None,
+        *,
+        disabled: bool = False,
+        home_dir: str | None = None,
     ) -> User:
         ...
 
@@ -46,8 +65,11 @@ class IUserStore(ABC):
         groups: list[str] | None = None,
         disabled: bool | None = None,
         data: dict | None = None,
+        home_dir: str | None = None,
+        last_login_at: int | None = None,
     ) -> User:
-        ...
+        """Update the given fields (``None`` = unchanged).  Raises
+        ``KeyError`` when the user does not exist."""
 
     @abstractmethod
     async def delete_user(self, user_id: str) -> None:
@@ -55,15 +77,16 @@ class IUserStore(ABC):
 
 
 class ISessionStore(ABC):
-    """Persistence interface for sessions."""
+    """Persistence interface for sessions (keyed by token, addressable by id)."""
 
     @abstractmethod
     async def create_session(
         self,
         user_id: str,
         token: str,
-        user: User,
         metadata: SessionMetadata,
+        *,
+        user_name: str = "",
     ) -> Session:
         ...
 
@@ -97,7 +120,7 @@ class ISessionStore(ABC):
 
     @abstractmethod
     async def cleanup(self, max_age_ms: int) -> None:
-        ...
+        """Delete sessions idle for longer than ``max_age_ms``."""
 
 
 class ICredentialStore(ABC):
@@ -125,7 +148,7 @@ class IAuditStore(ABC):
 
     @abstractmethod
     async def get_entries(self, options: AuditQueryOptions | None = None) -> list[AuditEntry]:
-        ...
+        """Entries newest-first, filtered by ``options``."""
 
     @abstractmethod
     async def clear(self) -> None:
@@ -133,7 +156,7 @@ class IAuditStore(ABC):
 
 
 class IGroupStore(ABC):
-    """Persistence interface for user groups."""
+    """Persistence interface for user groups.  Lookups are case-insensitive."""
 
     @abstractmethod
     async def get_groups(self) -> list[Group]:
@@ -144,9 +167,36 @@ class IGroupStore(ABC):
         ...
 
     @abstractmethod
-    async def create_group(self, name: str, description: str | None = None) -> Group:
-        ...
+    async def create_group(
+        self,
+        name: str,
+        description: str | None = None,
+        permissions: list[str] | None = None,
+        *,
+        built_in: bool = False,
+    ) -> Group:
+        """Raises ``ValueError`` when a group with that name exists."""
+
+    @abstractmethod
+    async def update_group(
+        self,
+        name: str,
+        *,
+        description: str | None = None,
+        permissions: list[str] | None = None,
+    ) -> Group:
+        """Update the given fields (``None`` = unchanged).  Raises
+        ``KeyError`` when the group does not exist."""
 
     @abstractmethod
     async def delete_group(self, name: str) -> None:
         ...
+
+
+__all__ = [
+    "IAuditStore",
+    "ICredentialStore",
+    "IGroupStore",
+    "ISessionStore",
+    "IUserStore",
+]

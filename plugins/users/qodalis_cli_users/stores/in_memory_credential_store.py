@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import time
-
-from ..models import Credentials
+from ..models import Credentials, now_ms
 from .interfaces import ICredentialStore
 
 
@@ -17,7 +15,7 @@ class InMemoryCredentialStore(ICredentialStore):
             user_id=user_id,
             password_hash=hash_,
             salt=salt,
-            last_changed=int(time.time() * 1000),
+            last_changed=now_ms(),
         )
 
     async def get_credentials(self, user_id: str) -> Credentials | None:

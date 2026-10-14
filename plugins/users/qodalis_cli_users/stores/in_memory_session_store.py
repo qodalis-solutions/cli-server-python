@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import time
-import uuid
+import copy
 
-from ..models import Session, SessionMetadata, User
+from ..models import Session, SessionMetadata, now_ms
 from .interfaces import ISessionStore
 
 
@@ -17,64 +16,56 @@ class InMemorySessionStore(ISessionStore):
         self,
         user_id: str,
         token: str,
-        user: User,
         metadata: SessionMetadata,
+        *,
+        user_name: str = "",
     ) -> Session:
-        now = int(time.time() * 1000)
+        now = now_ms()
         session = Session(
-            id=str(uuid.uuid4()),
             token=token,
             user_id=user_id,
-            user=user,
-            login_time=now,
+            user_name=user_name,
+            created_at=now,
             last_activity=now,
-            metadata=metadata,
+            metadata=metadata or SessionMetadata(),
         )
         self._sessions[token] = session
-        return session
+        return copy.deepcopy(session)
 
     async def get_session(self, token: str) -> Session | None:
-        return self._sessions.get(token)
+        session = self._sessions.get(token)
+        return copy.deepcopy(session) if session else None
 
     async def get_session_by_id(self, session_id: str) -> Session | None:
         for session in self._sessions.values():
             if session.id == session_id:
-                return session
+                return copy.deepcopy(session)
         return None
 
     async def get_active_sessions(self) -> list[Session]:
-        return list(self._sessions.values())
+        return [copy.deepcopy(s) for s in self._sessions.values()]
 
     async def delete_session(self, token: str) -> None:
         self._sessions.pop(token, None)
 
     async def delete_session_by_id(self, session_id: str) -> None:
-        token_to_delete: str | None = None
-        for token, session in self._sessions.items():
+        for token, session in list(self._sessions.items()):
             if session.id == session_id:
-                token_to_delete = token
-                break
-        if token_to_delete is not None:
-            del self._sessions[token_to_delete]
+                del self._sessions[token]
+                return
 
     async def delete_user_sessions(self, user_id: str) -> None:
-        tokens_to_delete = [
-            token for token, session in self._sessions.items()
-            if session.user_id == user_id
-        ]
-        for token in tokens_to_delete:
-            del self._sessions[token]
+        for token, session in list(self._sessions.items()):
+            if session.user_id == user_id:
+                del self._sessions[token]
 
     async def update_last_activity(self, token: str) -> None:
         session = self._sessions.get(token)
         if session:
-            session.last_activity = int(time.time() * 1000)
+            session.last_activity = now_ms()
 
     async def cleanup(self, max_age_ms: int) -> None:
-        cutoff = int(time.time() * 1000) - max_age_ms
-        tokens_to_delete = [
-            token for token, session in self._sessions.items()
-            if session.last_activity < cutoff
-        ]
-        for token in tokens_to_delete:
-            del self._sessions[token]
+        cutoff = now_ms() - max_age_ms
+        for token, session in list(self._sessions.items()):
+            if session.last_activity < cutoff:
+                del self._sessions[token]
