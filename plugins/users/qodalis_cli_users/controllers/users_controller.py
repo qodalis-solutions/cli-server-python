@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from ..models import (
+    VerifyPasswordRequest,
     CreateUserRequest,
     PasswordChangeRequest,
     Session,
@@ -23,6 +25,8 @@ def create_users_router(
     session_store: ISessionStore,
     get_current_session: Callable,
     require_admin: Callable,
+    *,
+    external_auth: bool = False,
 ) -> APIRouter:
     router = APIRouter(prefix="/users", tags=["users"])
 
@@ -98,9 +102,26 @@ def create_users_router(
                 raise HTTPException(status_code=400, detail="currentPassword is required")
             valid = await auth_service.verify_password(user_id, body.currentPassword)
             if not valid:
-                raise HTTPException(status_code=401, detail="Current password is incorrect")
+                # 403, not 401: the session is valid, the supplied password is not
+                raise HTTPException(status_code=403, detail="Current password is incorrect")
 
         await auth_service.set_password(user_id, body.newPassword)
         return {"message": "Password updated"}
+
+    # POST /{user_id}/verify-password — check a user's password, returns {"valid": bool}.
+    # Requires an authenticated session (used by `su` and `passwd` on the client).
+    @router.post("/{user_id}/verify-password")
+    async def verify_password(
+        user_id: str,
+        body: VerifyPasswordRequest,
+        session: Session = Depends(get_current_session),
+    ):
+        if external_auth:
+            return JSONResponse(
+                status_code=501,
+                content={"error": "Authentication is managed by the host application"},
+            )
+        valid = await auth_service.verify_password(user_id, body.password)
+        return {"valid": valid}
 
     return router

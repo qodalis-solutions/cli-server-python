@@ -42,10 +42,10 @@ def admin_token(plugin_and_client):
     """Login as admin and return the bearer token."""
     _, client = plugin_and_client
     res = client.post(
-        "/api/v1/qcli/auth/login",
+        "/api/v1/qcli/sessions",
         json={"username": "root", "password": "admin123"},
     )
-    assert res.status_code == 200
+    assert res.status_code == 201
     return res.json()["token"]
 
 
@@ -54,7 +54,7 @@ def admin_user_id(plugin_and_client):
     """Return the admin user id."""
     _, client = plugin_and_client
     res = client.post(
-        "/api/v1/qcli/auth/login",
+        "/api/v1/qcli/sessions",
         json={"username": "root", "password": "admin123"},
     )
     return res.json()["session"]["userId"]
@@ -73,10 +73,10 @@ class TestAuthLogin:
     def test_valid_credentials(self, plugin_and_client):
         _, client = plugin_and_client
         res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "root", "password": "admin123"},
         )
-        assert res.status_code == 200
+        assert res.status_code == 201
         body = res.json()
         assert "token" in body
         assert "session" in body
@@ -85,7 +85,7 @@ class TestAuthLogin:
     def test_invalid_password(self, plugin_and_client):
         _, client = plugin_and_client
         res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "root", "password": "wrong"},
         )
         assert res.status_code == 401
@@ -93,7 +93,7 @@ class TestAuthLogin:
     def test_unknown_user(self, plugin_and_client):
         _, client = plugin_and_client
         res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "nobody", "password": "pass"},
         )
         assert res.status_code == 401
@@ -101,7 +101,7 @@ class TestAuthLogin:
     def test_missing_username(self, plugin_and_client):
         _, client = plugin_and_client
         res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"password": "admin123"},
         )
         assert res.status_code == 422  # Pydantic validation
@@ -109,7 +109,7 @@ class TestAuthLogin:
     def test_missing_password(self, plugin_and_client):
         _, client = plugin_and_client
         res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "root"},
         )
         assert res.status_code == 422
@@ -136,7 +136,7 @@ class TestAuthLogin:
 
         # Attempt login — should fail with 401
         login_res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "disabled_user", "password": "pass123"},
         )
         assert login_res.status_code == 401
@@ -146,13 +146,13 @@ class TestAuthLogout:
     def test_logout_invalidates_session(self, plugin_and_client):
         _, client = plugin_and_client
         login_res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "root", "password": "admin123"},
         )
         temp_token = login_res.json()["token"]
 
-        logout_res = client.post(
-            "/api/v1/qcli/auth/logout",
+        logout_res = client.delete(
+            "/api/v1/qcli/sessions/current",
             headers=_auth(temp_token),
         )
         assert logout_res.status_code == 204
@@ -166,44 +166,47 @@ class TestAuthLogout:
 
     def test_logout_without_token(self, plugin_and_client):
         _, client = plugin_and_client
-        res = client.post("/api/v1/qcli/auth/logout")
+        res = client.delete("/api/v1/qcli/sessions/current")
         assert res.status_code == 401
 
 
-class TestAuthVerify:
-    def test_correct_password(self, plugin_and_client, admin_user_id):
+class TestVerifyPassword:
+    def test_correct_password(self, plugin_and_client, admin_token, admin_user_id):
         _, client = plugin_and_client
         res = client.post(
-            "/api/v1/qcli/auth/verify",
-            json={"userId": admin_user_id, "password": "admin123"},
+            f"/api/v1/qcli/users/{admin_user_id}/verify-password",
+            headers=_auth(admin_token),
+            json={"password": "admin123"},
         )
         assert res.status_code == 200
         assert res.json()["valid"] is True
 
-    def test_wrong_password(self, plugin_and_client, admin_user_id):
+    def test_wrong_password(self, plugin_and_client, admin_token, admin_user_id):
         _, client = plugin_and_client
         res = client.post(
-            "/api/v1/qcli/auth/verify",
-            json={"userId": admin_user_id, "password": "wrong"},
+            f"/api/v1/qcli/users/{admin_user_id}/verify-password",
+            headers=_auth(admin_token),
+            json={"password": "wrong"},
         )
         assert res.status_code == 200
         assert res.json()["valid"] is False
 
-    def test_missing_user_id(self, plugin_and_client):
+    def test_missing_password_field(self, plugin_and_client, admin_token, admin_user_id):
         _, client = plugin_and_client
         res = client.post(
-            "/api/v1/qcli/auth/verify",
-            json={"password": "admin123"},
+            f"/api/v1/qcli/users/{admin_user_id}/verify-password",
+            headers=_auth(admin_token),
+            json={},
         )
         assert res.status_code == 422
 
-    def test_missing_password_field(self, plugin_and_client, admin_user_id):
+    def test_requires_session(self, plugin_and_client, admin_user_id):
         _, client = plugin_and_client
         res = client.post(
-            "/api/v1/qcli/auth/verify",
-            json={"userId": admin_user_id},
+            f"/api/v1/qcli/users/{admin_user_id}/verify-password",
+            json={"password": "admin123"},
         )
-        assert res.status_code == 422
+        assert res.status_code == 401
 
 
 # -------------------------------------------------------------------------
@@ -344,7 +347,7 @@ class TestPasswordChange:
         _, client = plugin_and_client
         # Login as alice
         login_res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "alice", "password": "newAlicePass"},
         )
         alice_token = login_res.json()["token"]
@@ -360,7 +363,7 @@ class TestPasswordChange:
     def test_self_change_wrong_current_password(self, plugin_and_client):
         _, client = plugin_and_client
         login_res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "alice", "password": "alicepass2"},
         )
         alice_token = login_res.json()["token"]
@@ -371,13 +374,13 @@ class TestPasswordChange:
             headers=_auth(alice_token),
             json={"currentPassword": "wrongcurrent", "newPassword": "newpass"},
         )
-        assert res.status_code == 401
+        assert res.status_code == 403
 
     def test_self_change_missing_current_password(self, plugin_and_client):
         """Non-admin changing own password without currentPassword → 400."""
         _, client = plugin_and_client
         login_res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "alice", "password": "alicepass2"},
         )
         alice_token = login_res.json()["token"]
@@ -413,7 +416,7 @@ class TestSessions:
         _, client = plugin_and_client
         # Login as alice to get a session
         login_res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "alice", "password": "alicepass2"},
         )
         alice_token = login_res.json()["token"]
@@ -614,7 +617,7 @@ class TestNonAdminRestrictions:
         )
         # Bob logs in
         login_res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "bob", "password": "bobpass"},
         )
         data = login_res.json()
@@ -728,7 +731,7 @@ class TestExternalAuthAdapter:
     def test_login_returns_501(self, ext_plugin_and_client):
         _, client = ext_plugin_and_client
         res = client.post(
-            "/api/v1/qcli/auth/login",
+            "/api/v1/qcli/sessions",
             json={"username": "root", "password": "whatever"},
         )
         assert res.status_code == 501
@@ -736,15 +739,16 @@ class TestExternalAuthAdapter:
 
     def test_logout_returns_501(self, ext_plugin_and_client):
         _, client = ext_plugin_and_client
-        res = client.post("/api/v1/qcli/auth/logout")
+        res = client.delete("/api/v1/qcli/sessions/current")
         assert res.status_code == 501
         assert "host application" in res.json()["error"]
 
     def test_verify_returns_501(self, ext_plugin_and_client):
         _, client = ext_plugin_and_client
         res = client.post(
-            "/api/v1/qcli/auth/verify",
-            json={"userId": "x", "password": "y"},
+            "/api/v1/qcli/users/x/verify-password",
+            headers={"X-Test-User": "alice", "X-Test-Admin": "true"},
+            json={"password": "y"},
         )
         assert res.status_code == 501
         assert "host application" in res.json()["error"]

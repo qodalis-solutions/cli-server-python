@@ -10,7 +10,6 @@ from typing import Any, Callable, Optional
 from fastapi import APIRouter
 
 from .controllers.audit_controller import create_audit_router
-from .controllers.auth_controller import create_auth_router
 from .controllers.groups_controller import create_groups_router
 from .controllers.sessions_controller import create_sessions_router
 from .controllers.users_controller import create_users_router
@@ -139,15 +138,13 @@ async def build_users_plugin(
 
     # 6. Build the router
     router = APIRouter()
-    router.include_router(create_auth_router(
-        auth_service, get_current_session, external_auth=use_external_auth,
+    router.include_router(create_sessions_router(
+        session_store, auth_service, get_current_session, require_admin, broadcast_event,
+        external_auth=use_external_auth,
     ))
     router.include_router(create_users_router(
         user_store, auth_service, credential_store, session_store,
-        get_current_session, require_admin,
-    ))
-    router.include_router(create_sessions_router(
-        session_store, get_current_session, require_admin, broadcast_event,
+        get_current_session, require_admin, external_auth=use_external_auth,
     ))
     router.include_router(create_groups_router(
         group_store, user_store, get_current_session, require_admin,

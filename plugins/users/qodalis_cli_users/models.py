@@ -169,8 +169,7 @@ class PasswordChangeRequest(BaseModel):
     newPassword: str  # noqa: N815
 
 
-class VerifyRequest(BaseModel):
-    userId: str  # noqa: N815
+class VerifyPasswordRequest(BaseModel):
     password: str
 
 
