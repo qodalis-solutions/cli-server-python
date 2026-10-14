@@ -87,7 +87,12 @@ def origins_regex(allowed: Iterable[str]) -> str | None:
 
 
 class WebSocketOriginMiddleware:
-    """Rejects WebSocket upgrades whose ``Origin`` is not allowed (close 4403)."""
+    """Rejects WebSocket upgrades whose ``Origin`` is not allowed (close 4403).
+
+    A missing ``Origin`` is accepted: browsers always send one, so its absence
+    means a non-browser client (which still needs a ticket on a protected
+    server). Matches the node and .NET servers.
+    """
 
     def __init__(self, app: Any, allowed_origins: list[str]) -> None:
         self.app = app
@@ -96,7 +101,7 @@ class WebSocketOriginMiddleware:
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
         if scope["type"] == "websocket":
             origin = _header(scope, b"origin")
-            if not origin_allowed(origin, self.allowed_origins):
+            if origin is not None and not origin_allowed(origin, self.allowed_origins):
                 await close_websocket(receive, send, 4403, "origin not allowed")
                 return
         await self.app(scope, receive, send)

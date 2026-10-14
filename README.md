@@ -432,7 +432,7 @@ class CliServerOptions:
     configure: Callable[[CliBuilder], None] | None = None  # Processor registration
 ```
 
-CORS is disabled unless `allowed_origins` (or `cors_origins` / `cors=True`) is set, and `*` is never combined with credentials. When `allowed_origins` is set, every WebSocket upgrade must carry an allowed `Origin` (otherwise it is closed with code 4403).
+CORS is disabled unless `allowed_origins` (or `cors_origins` / `cors=True`) is set, and `*` is never combined with credentials. When `allowed_origins` is set, a WebSocket upgrade whose `Origin` is not allowed is closed with code 4403 (a missing `Origin`, as sent by non-browser clients, is accepted; protected sockets still need a ticket).
 
 Processors may declare `required_permissions` (e.g. `["deploy:run"]`); they are enforced when the server is protected by the users plugin.
 

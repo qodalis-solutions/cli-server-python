@@ -299,6 +299,9 @@ class TestWithoutUsersPlugin:
                 assert exc.value.code == 4403
             with c.websocket_connect("/ws/qcli/events", headers={"origin": ALLOWED}) as ws:
                 assert json.loads(ws.receive_text())["type"] == "connected"
+            # Non-browser clients send no Origin at all: accepted
+            with c.websocket_connect("/ws/qcli/events") as ws:
+                assert json.loads(ws.receive_text())["type"] == "connected"
 
 
 # =========================================================================
