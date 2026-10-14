@@ -236,9 +236,27 @@ def main() -> None:
                 ),
             )
 
+    # Local dev origins (docs/demos on 4200, 4300-4303) plus this server's
+    # own origin (admin dashboard).  Used for CORS and the WebSocket Origin
+    # check.
+    dev_ports = [4200, 4300, 4301, 4302, 4303, port]
+    allowed_origins = [
+        f"http://{h}:{p}" for p in dev_ports for h in ("localhost", "127.0.0.1")
+    ]
+
     result = create_cli_server(
-        CliServerOptions(configure=configure)
+        CliServerOptions(
+            configure=configure,
+            allowed_origins=allowed_origins,
+            enable_shell=True,  # opt-in; requires the shell:execute permission
+        )
     )
+
+    # Users plugin: protects every route and socket of this server (login,
+    # version discovery and health stay public).  Seeded and started in the
+    # app lifespan below.  The demo keeps the well-known 'admin' password.
+    users_plugin = CliUsersBuilder().set_default_admin_password("admin").build()
+    result.mount_plugin(users_plugin)
 
     # Build the jobs plugin
     jobs_plugin = (
@@ -253,9 +271,11 @@ def main() -> None:
 
     result.mount_plugin(jobs_plugin)
 
-    # Build the admin plugin
+    # Build the admin plugin — the dashboard logs in through the users plugin
+    # (requires the admin:access permission; root has '*').
     admin_plugin = (
         CliAdminBuilder()
+        .set_users_plugin(users_plugin)
         .build(AdminBuildDeps(
             registry=result.registry,
             event_socket_manager=result.event_socket_manager,
@@ -266,14 +286,6 @@ def main() -> None:
     )
 
     result.mount_plugin(admin_plugin)
-
-    # Build the users plugin (seeded and started in the app lifespan below)
-    users_plugin = (
-        CliUsersBuilder()
-        .set_default_admin_password("admin")
-        .build(broadcast_fn=lambda msg: result.event_socket_manager.broadcast_message(msg))
-    )
-    result.mount_plugin(users_plugin)
 
     # Register the module registry as a processor filter so that toggling
     # a plugin off in the admin dashboard actually blocks command execution.

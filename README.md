@@ -398,7 +398,7 @@ The server exposes versioned endpoints:
 | GET | `/api/v1/qcli/capabilities` | Server capabilities (OS, shell, features) |
 | WS | `/ws/v1/qcli/events` | WebSocket server-push event broadcast |
 | WS | `/ws/v1/qcli/logs` | WebSocket log streaming (supports `?level=` filter) |
-| WS | `/ws/v1/qcli/shell` | Interactive PTY shell session (supports `?cols=&rows=&cmd=`) |
+| WS | `/ws/v1/qcli/shell` | Interactive PTY shell session (supports `?cols=&rows=&cmd=`); opt-in via `enable_shell=True` |
 
 The Qodalis CLI client auto-negotiates the highest mutually supported version via the `/api/cli/versions` discovery endpoint.
 
@@ -425,10 +425,16 @@ The Qodalis CLI client auto-negotiates the highest mutually supported version vi
 @dataclass
 class CliServerOptions:
     base_path: str = "/api/qcli"           # API base path
-    cors: bool = True                       # Enable CORS
-    cors_origins: list[str] = ["*"]         # Allowed origins
+    cors: bool | None = None                # None: CORS only when origins are configured
+    cors_origins: list[str] | None = None   # Explicit CORS origins (default: allowed_origins)
+    allowed_origins: list[str] | None = None  # CORS + WebSocket Origin check ("*" globs allowed)
+    enable_shell: bool = False              # PTY shell WebSocket (opt-in)
     configure: Callable[[CliBuilder], None] | None = None  # Processor registration
 ```
+
+CORS is disabled unless `allowed_origins` (or `cors_origins` / `cors=True`) is set, and `*` is never combined with credentials. When `allowed_origins` is set, every WebSocket upgrade must carry an allowed `Origin` (otherwise it is closed with code 4403).
+
+Processors may declare `required_permissions` (e.g. `["deploy:run"]`); they are enforced when the server is protected by the users plugin.
 
 `create_cli_server()` returns:
 
@@ -740,9 +746,11 @@ users_plugin = (
     .set_default_admin_password("admin")
     .build(broadcast_fn=result.event_socket_manager.broadcast_message)
 )
-result.mount_plugin(users_plugin)
+result.mount_plugin(users_plugin)  # protects every route and socket of the server
 # In the app lifespan: await users_plugin.startup() / await users_plugin.shutdown()
 ```
+
+Once mounted, every CLI server route and WebSocket requires a users session (login, version discovery and health stay public); WebSockets authenticate with single-use tickets from `POST /api/v1/qcli/sessions/ws-ticket`.
 
 See [`plugins/users/README.md`](plugins/users/README.md) for options, endpoints, custom storage and external auth adapters.
 
