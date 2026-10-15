@@ -50,7 +50,7 @@ result.app.router.lifespan_context = lifespan
 | `set_max_session_lifetime(ms)` | `43200000` (12 h) | Absolute session lifetime |
 | `set_min_password_length(n)` | `8` | Password policy (max length 1024) |
 | `set_rate_limit(n, window_ms)` | `20`, `60000` | Per-IP limit for login, verify-password and self password change |
-| `set_trust_proxy(bool)` | `False` | Use `X-Forwarded-For` for the client IP |
+| `set_trust_proxy(bool \| int)` | `False` | Trusted proxy hops for the client IP: `False`/`0` = socket peer (header ignored), `True` = 1, `n` = n hops; the client is the `X-Forwarded-For` entry at `len - n` (rightmost for one proxy, leftmost if fewer entries) |
 | `set_allowed_origins(list)` | server's `allowed_origins` | Origins accepted for bearer-less state changes (CSRF, adapter mode) |
 | `set_protect_server(bool)` | `True` | Protect every CLI server route and socket when mounted |
 | `set_max_login_attempts(n)` | `5` | Consecutive failures before lockout |

@@ -54,12 +54,49 @@ class _RateLimiter:
 ADMIN_ACCESS = "admin:access"
 
 
-def client_ip(request: Request, trust_proxy: bool) -> str:
-    """Client IP; ``X-Forwarded-For`` is only trusted behind a proxy."""
-    if trust_proxy:
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for and forwarded_for.split(",")[0].strip():
-            return forwarded_for.split(",")[0].strip()
+def trusted_hops(trust_proxy: bool | int | None) -> int:
+    """Number of trusted reverse-proxy hops for a ``trust_proxy`` setting.
+
+    ``False``/``0``/``None`` trust no proxy, ``True`` one hop, an int ``n``
+    ``n`` hops; any other enabled value below 1 (a negative int) counts as
+    one hop.  ``bool`` is checked first (``True == 1`` in Python).
+    """
+    if isinstance(trust_proxy, bool):
+        return 1 if trust_proxy else 0
+    if not trust_proxy:
+        return 0
+    return max(int(trust_proxy), 1)
+
+
+def forwarded_client_ip(headers: Any, trust_proxy: bool | int | None) -> str | None:
+    """Client IP from ``X-Forwarded-For`` behind ``trust_proxy`` trusted hops.
+
+    Every proxy appends the address it saw, so only the rightmost ``n``
+    entries were written by trusted proxies; the ones to their left are
+    client-controlled.  The client IP is the entry at ``len - n`` of the
+    comma-separated, trimmed list (the rightmost entry for one hop), or the
+    leftmost entry when the list has fewer than ``n`` entries.  Returns
+    ``None`` (use the socket peer) when no proxy is trusted, the header is
+    absent/empty, or the selected entry is empty.
+    """
+    hops = trusted_hops(trust_proxy)
+    if hops == 0:
+        return None
+    entries = [
+        entry.strip()
+        for value in headers.getlist("x-forwarded-for")
+        for entry in value.split(",")
+    ]
+    if not entries:
+        return None
+    return entries[max(len(entries) - hops, 0)] or None
+
+
+def client_ip(request: Request, trust_proxy: bool | int | None) -> str:
+    """Client IP; ``X-Forwarded-For`` is only used with ``trust_proxy`` hops."""
+    forwarded = forwarded_client_ip(request.headers, trust_proxy)
+    if forwarded:
+        return forwarded
     return request.client.host if request.client else "127.0.0.1"
 
 
@@ -68,7 +105,7 @@ def create_auth_router(
     jwt_service: JwtService,
     auth_dependency: Any = None,
     *,
-    trust_proxy: bool = False,
+    trust_proxy: bool | int = False,
     users_plugin: Any = None,
 ) -> APIRouter:
     """Create a FastAPI router with ``POST /login`` and ``GET /me``.

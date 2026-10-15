@@ -93,7 +93,7 @@ def _normalize_origin(scheme: str, netloc: str) -> tuple[str, str, int] | None:
     return scheme, host, port if port is not None else _DEFAULT_PORTS[scheme]
 
 
-def is_same_origin(origin: str | None, scope: Any, trust_proxy: bool = False) -> bool:
+def is_same_origin(origin: str | None, scope: Any, trust_proxy: bool | int = False) -> bool:
     """True when ``origin`` equals the request's own origin (scheme + Host).
 
     ``ws``/``wss`` map to ``http``/``https``; default ports are normalized and
@@ -130,7 +130,7 @@ def origin_allowed(
     origin: str | None,
     allowed: Iterable[str] | None,
     scope: Any = None,
-    trust_proxy: bool = False,
+    trust_proxy: bool | int = False,
 ) -> bool:
     """True when ``origin`` matches one of ``allowed`` (``*`` globs allowed,
     e.g. ``http://127.0.0.1:*``), or — when the request ``scope`` is given —
@@ -166,7 +166,7 @@ class WebSocketOriginMiddleware:
     server). Matches the node and .NET servers.
     """
 
-    def __init__(self, app: Any, allowed_origins: list[str], trust_proxy: bool = False) -> None:
+    def __init__(self, app: Any, allowed_origins: list[str], trust_proxy: bool | int = False) -> None:
         self.app = app
         self.allowed_origins = allowed_origins
         self.trust_proxy = trust_proxy

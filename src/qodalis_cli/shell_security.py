@@ -111,9 +111,12 @@ class CliShellOptions:
     #: ``shell:execute`` (default 30 s, capped at 60 s; also re-checked
     #: immediately on session/user/group changes).
     session_check_interval: float = DEFAULT_SESSION_CHECK_INTERVAL
-    #: Use the first ``X-Forwarded-For`` address for per-address limits and
-    #: logs (only behind a trusted reverse proxy).
-    trust_proxy: bool = False
+    #: Trusted reverse-proxy hops for the client address used by per-address
+    #: limits and logs: ``False``/``0`` uses the socket peer (the header is
+    #: ignored), ``True`` = 1 hop, an int ``n`` = ``n`` hops.  The client is
+    #: the ``X-Forwarded-For`` entry at ``len - n`` (the rightmost for one
+    #: proxy); only enable behind trusted reverse proxies.
+    trust_proxy: bool | int = False
 
 
 @dataclass
@@ -223,13 +226,48 @@ async def check_authorize(websocket: Any, authorize: AuthorizeFn) -> None:
         raise ShellRejected(CLOSE_FORBIDDEN, REASON_FORBIDDEN)
 
 
-def remote_address(websocket: Any, trust_proxy: bool = False) -> str:
-    if trust_proxy:
-        forwarded = websocket.headers.get("x-forwarded-for")
-        if forwarded:
-            first = forwarded.split(",")[0].strip()
-            if first:
-                return first
+def trusted_hops(trust_proxy: bool | int | None) -> int:
+    """Number of trusted reverse-proxy hops for a ``trust_proxy`` setting.
+
+    ``False``/``0``/``None`` trust no proxy, ``True`` one hop, an int ``n``
+    ``n`` hops; any other enabled value below 1 (a negative int) counts as
+    one hop.  ``bool`` is checked first (``True == 1`` in Python).
+    """
+    if isinstance(trust_proxy, bool):
+        return 1 if trust_proxy else 0
+    if not trust_proxy:
+        return 0
+    return max(int(trust_proxy), 1)
+
+
+def forwarded_client_ip(headers: Any, trust_proxy: bool | int | None) -> str | None:
+    """Client IP from ``X-Forwarded-For`` behind ``trust_proxy`` trusted hops.
+
+    Every proxy appends the address it saw, so only the rightmost ``n``
+    entries were written by trusted proxies; the ones to their left are
+    client-controlled.  The client IP is the entry at ``len - n`` of the
+    comma-separated, trimmed list (the rightmost entry for one hop), or the
+    leftmost entry when the list has fewer than ``n`` entries.  Returns
+    ``None`` (use the socket peer) when no proxy is trusted, the header is
+    absent/empty, or the selected entry is empty.
+    """
+    hops = trusted_hops(trust_proxy)
+    if hops == 0:
+        return None
+    entries = [
+        entry.strip()
+        for value in headers.getlist("x-forwarded-for")
+        for entry in value.split(",")
+    ]
+    if not entries:
+        return None
+    return entries[max(len(entries) - hops, 0)] or None
+
+
+def remote_address(websocket: Any, trust_proxy: bool | int | None = False) -> str:
+    forwarded = forwarded_client_ip(websocket.headers, trust_proxy)
+    if forwarded:
+        return forwarded
     client = getattr(websocket, "client", None)
     return (client.host if client else None) or "unknown"
 
@@ -247,6 +285,8 @@ __all__ = [
     "ShellRejected",
     "check_authorize",
     "check_token",
+    "forwarded_client_ip",
     "presented_token",
     "resolve_mode",
+    "trusted_hops",
 ]

@@ -25,6 +25,44 @@ def _scope_header(scope: Any, name: str) -> str | None:
     return None
 
 
+def trusted_hops(trust_proxy: bool | int | None) -> int:
+    """Number of trusted reverse-proxy hops for a ``trust_proxy`` setting.
+
+    ``False``/``0``/``None`` trust no proxy, ``True`` one hop, an int ``n``
+    ``n`` hops; any other enabled value below 1 (a negative int) counts as
+    one hop.  ``bool`` is checked first (``True == 1`` in Python).
+    """
+    if isinstance(trust_proxy, bool):
+        return 1 if trust_proxy else 0
+    if not trust_proxy:
+        return 0
+    return max(int(trust_proxy), 1)
+
+
+def forwarded_client_ip(headers: Any, trust_proxy: bool | int | None) -> str | None:
+    """Client IP from ``X-Forwarded-For`` behind ``trust_proxy`` trusted hops.
+
+    Every proxy appends the address it saw, so only the rightmost ``n``
+    entries were written by trusted proxies; the ones to their left are
+    client-controlled.  The client IP is the entry at ``len - n`` of the
+    comma-separated, trimmed list (the rightmost entry for one hop), or the
+    leftmost entry when the list has fewer than ``n`` entries.  Returns
+    ``None`` (use the socket peer) when no proxy is trusted, the header is
+    absent/empty, or the selected entry is empty.
+    """
+    hops = trusted_hops(trust_proxy)
+    if hops == 0:
+        return None
+    entries = [
+        entry.strip()
+        for value in headers.getlist("x-forwarded-for")
+        for entry in value.split(",")
+    ]
+    if not entries:
+        return None
+    return entries[max(len(entries) - hops, 0)] or None
+
+
 def _normalize_origin(scheme: str, netloc: str) -> tuple[str, str, int] | None:
     scheme = _WS_SCHEMES.get(scheme.strip().lower(), scheme.strip().lower())
     if scheme not in _DEFAULT_PORTS or not netloc:
@@ -40,7 +78,7 @@ def _normalize_origin(scheme: str, netloc: str) -> tuple[str, str, int] | None:
     return scheme, host, port if port is not None else _DEFAULT_PORTS[scheme]
 
 
-def is_same_origin(origin: str | None, scope: Any, trust_proxy: bool = False) -> bool:
+def is_same_origin(origin: str | None, scope: Any, trust_proxy: bool | int = False) -> bool:
     """True when ``origin`` equals the request's own origin (scheme + Host).
 
     ``ws``/``wss`` map to ``http``/``https``; default ports are normalized and
@@ -77,7 +115,7 @@ def origin_allowed(
     origin: str | None,
     allowed: Iterable[str] | None,
     scope: Any = None,
-    trust_proxy: bool = False,
+    trust_proxy: bool | int = False,
 ) -> bool:
     """True when ``origin`` matches ``allowed`` (``*`` globs) or, when the
     request ``scope`` is given, equals the request's own origin."""

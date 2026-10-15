@@ -255,6 +255,39 @@ class TestLimits:
                 with c.websocket_connect(SHELL, headers={"x-forwarded-for": "10.0.0.2"}) as b:
                     assert json.loads(b.receive_text())["type"] == "ready"
 
+    def test_spoofed_leftmost_forwarded_for_does_not_bypass_per_address_limit(self):
+        result = _server(allow_anonymous=True, max_sessions_per_user=1, trust_proxy=True)
+        with TestClient(result.app) as c:
+            with c.websocket_connect(SHELL, headers={"x-forwarded-for": "1.1.1.1, 10.0.0.1"}) as a:
+                assert json.loads(a.receive_text())["type"] == "ready"
+                exc = _rejected(c, SHELL, headers={"x-forwarded-for": "1.1.1.2, 10.0.0.1"})
+                assert exc.code == 4429
+
+    @pytest.mark.parametrize("trust,values,expected", [
+        (False, ["1.1.1.1"], "192.0.2.10"),
+        (0, ["1.1.1.1"], "192.0.2.10"),
+        (None, ["1.1.1.1"], "192.0.2.10"),
+        (True, ["1.1.1.1, 10.0.0.1"], "10.0.0.1"),
+        (1, ["1.1.1.1, 10.0.0.1"], "10.0.0.1"),
+        (2, ["1.1.1.1,2.2.2.2 , 10.0.0.1"], "2.2.2.2"),
+        (3, ["1.1.1.1, 10.0.0.1"], "1.1.1.1"),
+        (True, [], "192.0.2.10"),
+        (True, [""], "192.0.2.10"),
+        (True, ["1.1.1.1", "10.0.0.1"], "10.0.0.1"),
+        (-1, ["1.1.1.1, 10.0.0.1"], "10.0.0.1"),
+        (True, ["1.1.1.1, "], "192.0.2.10"),
+    ])
+    def test_remote_address_hop_semantics(self, trust, values, expected):
+        from types import SimpleNamespace
+
+        from starlette.datastructures import Headers
+
+        ws = SimpleNamespace(
+            headers=Headers(raw=[(b"x-forwarded-for", v.encode()) for v in values]),
+            client=SimpleNamespace(host="192.0.2.10"),
+        )
+        assert shell_security.remote_address(ws, trust) == expected
+
     def test_global_limit(self):
         result = _server(allow_anonymous=True, max_sessions=1, trust_proxy=True)
         with TestClient(result.app) as c:

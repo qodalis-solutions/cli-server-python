@@ -517,7 +517,7 @@ Outside users mode each open/close is logged at INFO with the remote address and
 | `env_allow` | `[]` | Extra server environment variables copied into the shell |
 | `env_set` | `{}` | Variables set in the shell environment |
 | `session_check_interval` | `30` | Users mode: periodic session re-check (capped at 60) |
-| `trust_proxy` | `False` | Use `X-Forwarded-For` for per-address limits and logs |
+| `trust_proxy` | `False` | Trusted proxy hops for per-address limits and logs: `False`/`0` = socket peer (header ignored), `True` = 1, `n` = n hops; the client is the `X-Forwarded-For` entry at `len - n` (rightmost for one proxy, leftmost if fewer entries) |
 
 The shell does **not** inherit the server environment: it gets only `PATH`, `HOME`, `USER`, `LANG`, `TERM`, `COLUMNS`, `LINES`, `SHELL`, plus `env_allow` names and `env_set` values, so server secrets (database passwords, API keys) do not leak into it.
 

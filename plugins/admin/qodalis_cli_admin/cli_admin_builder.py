@@ -81,8 +81,13 @@ class CliAdminBuilder:
         self._dashboard_path = path
         return self
 
-    def set_trust_proxy(self, trust: bool = True) -> CliAdminBuilder:
-        """Trust ``X-Forwarded-For`` for login rate limiting (behind a proxy only)."""
+    def set_trust_proxy(self, trust: bool | int = True) -> CliAdminBuilder:
+        """Trust ``X-Forwarded-For`` for login rate limiting (behind a proxy only).
+
+        ``False``/``0`` uses the socket peer, ``True`` = 1 trusted hop, an int
+        ``n`` = ``n`` hops: the client is the entry at ``len - n`` (the
+        rightmost for one proxy), the leftmost if there are fewer entries.
+        """
         self._trust_proxy = trust
         return self
 

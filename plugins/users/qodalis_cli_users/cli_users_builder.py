@@ -269,8 +269,14 @@ class CliUsersBuilder:
         self._rate_limit_window_ms = window_ms
         return self
 
-    def set_trust_proxy(self, trust: bool = True) -> CliUsersBuilder:
-        """Use ``X-Forwarded-For`` for the client IP (only behind a proxy)."""
+    def set_trust_proxy(self, trust: bool | int = True) -> CliUsersBuilder:
+        """Take the client IP from ``X-Forwarded-For`` behind trusted proxies.
+
+        ``False``/``0`` uses the socket peer (header ignored), ``True`` = 1
+        trusted hop, an int ``n`` = ``n`` hops: the client is the entry at
+        ``len - n`` (the rightmost for one proxy), the leftmost if there are
+        fewer than ``n`` entries.  Only enable behind a reverse proxy.
+        """
         self._trust_proxy = trust
         return self
 

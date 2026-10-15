@@ -15,6 +15,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass, replace
 from typing import Any, Awaitable, Callable, Optional, Union
 
+from .._http import forwarded_client_ip
 from ..errors import UsersApiError, forbidden, unauthorized
 from ..models import (
     AuditEntry,
@@ -133,7 +134,10 @@ class AuthServiceOptions:
     lockout_ms: int = DEFAULT_LOCKOUT_MS
     rate_limit_attempts: int = DEFAULT_RATE_LIMIT_ATTEMPTS
     rate_limit_window_ms: int = DEFAULT_RATE_LIMIT_WINDOW_MS
-    trust_proxy: bool = False
+    #: Trusted reverse-proxy hops for the client IP: ``False``/``0`` uses the
+    #: socket peer, ``True`` = 1 hop, an int ``n`` = ``n`` hops (the client is
+    #: the ``X-Forwarded-For`` entry at ``len - n``).
+    trust_proxy: bool | int = False
     #: Origins accepted for state-changing requests without a bearer token
     #: (CSRF protection in adapter/cookie mode).  Same-origin requests are
     #: always accepted.
@@ -286,12 +290,9 @@ class AuthService:
     # ------------------------------------------------------------------
 
     def client_ip(self, request: Any) -> str:
-        if self.options.trust_proxy:
-            forwarded = request.headers.get("x-forwarded-for")
-            if forwarded:
-                first = forwarded.split(",")[0].strip()
-                if first:
-                    return first
+        forwarded = forwarded_client_ip(request.headers, self.options.trust_proxy)
+        if forwarded:
+            return forwarded
         client = getattr(request, "client", None)
         return (client.host if client else None) or "unknown"
 

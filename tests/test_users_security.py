@@ -23,6 +23,7 @@ from qodalis_cli import (
 )
 from qodalis_cli.abstractions import CliCommandProcessor
 from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder
+from qodalis_cli_admin.auth.auth_controller import client_ip as admin_client_ip
 from qodalis_cli_jobs import CliJobsBuilder
 from qodalis_cli_users import (
     AuditEntry,
@@ -40,6 +41,33 @@ from qodalis_cli_users.services.auth_service import hash_token
 BASE = "/api/v1/qcli"
 ROOT_PASS = "rootpass1"
 ALLOWED = "http://allowed.test"
+
+
+PEER = "192.0.2.10"
+#: (trust_proxy, X-Forwarded-For header lines, expected client IP)
+XFF_CASES = [
+    (False, ["1.1.1.1"], PEER),
+    (0, ["1.1.1.1"], PEER),
+    (None, ["1.1.1.1"], PEER),
+    (True, ["1.1.1.1, 10.0.0.1"], "10.0.0.1"),
+    (1, ["1.1.1.1, 10.0.0.1"], "10.0.0.1"),
+    (2, ["1.1.1.1,2.2.2.2 , 10.0.0.1"], "2.2.2.2"),
+    (3, ["1.1.1.1, 10.0.0.1"], "1.1.1.1"),
+    (True, [], PEER),
+    (True, [""], PEER),
+    (True, ["1.1.1.1", "10.0.0.1"], "10.0.0.1"),
+    (-1, ["1.1.1.1, 10.0.0.1"], "10.0.0.1"),
+    (True, ["1.1.1.1, "], PEER),
+]
+
+
+def _xff_request(values: list[str]) -> Any:
+    from types import SimpleNamespace
+
+    from starlette.datastructures import Headers
+
+    raw = [(b"x-forwarded-for", v.encode()) for v in values]
+    return SimpleNamespace(headers=Headers(raw=raw), client=SimpleNamespace(host=PEER))
 
 
 class DeployProcessor(CliCommandProcessor):
@@ -695,9 +723,25 @@ class TestBruteForce:
         assert res.status_code == 201
         token = res.json()["token"]
         sessions = c.get(BASE + "/sessions", headers=_h(token)).json()
-        assert sessions[0]["metadata"]["remoteAddress"] == "203.0.113.7"
+        # The rightmost entry is the one appended by the (single) trusted proxy.
+        assert sessions[0]["metadata"]["remoteAddress"] == "10.0.0.1"
         logins = c.get(BASE + "/audit?event=login", headers=_h(token)).json()
-        assert logins[0]["metadata"]["remoteAddress"] == "203.0.113.7"
+        assert logins[0]["metadata"]["remoteAddress"] == "10.0.0.1"
+
+    def test_spoofed_leftmost_forwarded_for_does_not_bypass_rate_limit(self):
+        app, _ = _users_app(CliUsersBuilder().set_default_admin_password(ROOT_PASS)
+                            .set_rate_limit(2).set_trust_proxy())
+        c = TestClient(app)
+        for i in range(2):
+            c.post(BASE + "/sessions", json={"username": "x", "password": "x"},
+                   headers={"X-Forwarded-For": f"1.1.1.{i}, 10.0.0.1"})
+        assert_error(c.post(BASE + "/sessions", json={"username": "root", "password": ROOT_PASS},
+                            headers={"X-Forwarded-For": "1.1.1.9, 10.0.0.1"}), 429)
+
+    @pytest.mark.parametrize("trust,values,expected", XFF_CASES)
+    def test_client_ip_hop_semantics(self, trust, values, expected):
+        plugin = CliUsersBuilder().set_trust_proxy(trust).build()
+        assert plugin.auth_service.client_ip(_xff_request(values)) == expected
 
     def test_rate_limit_covers_verify_and_self_password_change(self):
         app, _ = _users_app(CliUsersBuilder().set_default_admin_password(ROOT_PASS).set_rate_limit(3))
@@ -1034,6 +1078,19 @@ class TestAdminStandalone:
         res = c.post(BASE + "/auth/login", json={"username": "dashadmin", "password": "dashpass"},
                      headers={"X-Forwarded-For": "10.0.0.2"})
         assert res.status_code == 200
+
+    def test_spoofed_leftmost_xff_does_not_bypass_rate_limit(self):
+        c = self._client(trust_proxy=True)
+        for i in range(5):
+            c.post(BASE + "/auth/login", json={"username": "x", "password": "y"},
+                   headers={"X-Forwarded-For": f"1.1.1.{i}, 10.0.0.1"})
+        res = c.post(BASE + "/auth/login", json={"username": "dashadmin", "password": "dashpass"},
+                     headers={"X-Forwarded-For": "1.1.1.9, 10.0.0.1"})
+        assert res.status_code == 429
+
+    @pytest.mark.parametrize("trust,values,expected", XFF_CASES)
+    def test_client_ip_hop_semantics(self, trust, values, expected):
+        assert admin_client_ip(_xff_request(values), trust) == expected
 
     def test_non_ascii_credentials_do_not_crash(self):
         c = self._client()
