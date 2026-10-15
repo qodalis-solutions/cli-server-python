@@ -141,7 +141,7 @@ async def test_legacy_sha256_hash_accepted_and_upgraded():
 
 async def test_user_store_returns_copies():
     store = InMemoryUserStore()
-    user = await store.create_user("alice", "a@x", ["users"])
+    user = await store.create_user("alice", "a@x.io", ["users"])
     user.groups.append("admin")
     user.disabled = True
     fresh = await store.get_user(user.id)
@@ -154,7 +154,7 @@ async def test_user_store_lookup_and_update():
     assert (await store.get_user("alice")).id == user.id
     assert (await store.get_user_by_email("alice@x.com")).id == user.id
     with pytest.raises(ValueError):
-        await store.create_user("ALICE", "other@x")
+        await store.create_user("ALICE", "other@x.io")
     updated = await store.update_user(user.id, last_login_at=123, home_dir="/h")
     assert updated.last_login_at == 123 and updated.home_dir == "/h"
     with pytest.raises(KeyError):

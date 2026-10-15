@@ -10,7 +10,10 @@ from .errors import bad_request
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]*$")
 NAME_MAX = 64
-EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+$")
+# Email: dot-atom local part (max 64) @ DNS labels ending in a letters-only TLD, or localhost; same rule as web-cli and the other servers.
+EMAIL_RE = re.compile(
+    r"(?=[^@]{1,64}@)[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:localhost|(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63})"
+)
 EMAIL_MAX = 254
 PERMISSION_RE = re.compile(r"^(\*|[a-z0-9_.-]+(:([a-z0-9_.-]+|\*))*)$", re.IGNORECASE)
 PERMISSION_MAX = 128
@@ -58,7 +61,7 @@ def validate_name(value: str, kind: str = "name") -> str:
 def validate_email(value: str) -> str:
     if not value:
         raise bad_request("email is required")
-    if len(value) > EMAIL_MAX or has_control_chars(value) or not EMAIL_RE.match(value):
+    if len(value) > EMAIL_MAX or has_control_chars(value) or not EMAIL_RE.fullmatch(value):
         raise bad_request("invalid email")
     return value
 
