@@ -82,6 +82,12 @@ class CliShellSessionManager:
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
+            # Output EOF usually means the process is exiting: give it a moment
+            # so the client still receives the exit message (one-shot commands)
+            if read_task in done and exit_task in pending:
+                finished, _ = await asyncio.wait([exit_task], timeout=2)
+                pending = {t for t in pending if t not in finished}
+
             for task in pending:
                 task.cancel()
                 try:

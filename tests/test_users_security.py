@@ -367,6 +367,25 @@ class TestWebSockets:
         with srv.c.websocket_connect(f"/ws/qcli/logs?ticket={srv.ticket(reader)}", headers={"origin": ALLOWED}) as ws:
             assert json.loads(ws.receive_text())["type"] == "connected"
 
+    def test_shell_one_shot_streams_output_and_exit(self):
+        result, users = _build(
+            CliUsersBuilder().set_default_admin_password(ROOT_PASS), enable_shell=True,
+        )
+        with TestClient(result.app) as c:
+            s = Server(c, users, result)
+            url = f"/ws/qcli/shell?cols=80&rows=24&cmd=echo%20one-shot-ok&ticket={s.ticket(s.root)}"
+            stdout, exit_code = "", None
+            with c.websocket_connect(url) as ws:
+                for _ in range(50):
+                    msg = json.loads(ws.receive_text())
+                    if msg["type"] == "stdout":
+                        stdout += msg["data"]
+                    elif msg["type"] == "exit":
+                        exit_code = msg["code"]
+                        break
+            assert "one-shot-ok" in stdout
+            assert exit_code == 0
+
     def test_shell_requires_shell_execute(self):
         result, users = _build(
             CliUsersBuilder().set_default_admin_password(ROOT_PASS), enable_shell=True,
