@@ -67,9 +67,11 @@ def _shell_pid(ws) -> int:
         msg = json.loads(ws.receive_text())
         if msg["type"] == "stdout":
             out += msg["data"]
-            for line in out.splitlines():
-                if line.startswith("PID=") and line[4:].strip().isdigit():
-                    return int(line[4:].strip())
+            # The prompt may precede the output ("# PID=123") when the shell
+            # starts after the terminal already echoed the command
+            match = re.search(r"PID=(\d+)", out)
+            if match:
+                return int(match.group(1))
     raise AssertionError(f"no pid in {out!r}")
 
 
