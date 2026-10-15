@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from qodalis_cli import (
     CliServerOptions,
+    CliShellOptions,
     create_cli_server,
     CliSystemCommandProcessor,
     CliHttpCommandProcessor,
@@ -36,12 +37,14 @@ from qodalis_cli import (
     InMemoryFileStorageProvider,
     OsFileStorageProvider,
     OsProviderOptions,
+    install_log_redaction,
 )
 from qodalis_cli_server_abstractions import DataExplorerProviderOptions
 from qodalis_cli_server_abstractions.jobs import CliJobOptions
 
 from qodalis_cli_jobs import CliJobsBuilder
 from qodalis_cli_admin import CliAdminBuilder, AdminBuildDeps
+from qodalis_cli_users import CliUsersBuilder
 
 from processors import (
     CliEchoCommandProcessor,
@@ -235,9 +238,33 @@ def main() -> None:
                 ),
             )
 
+    # Local dev origins (docs/demos on 4200, 4300-4303).  Used for CORS and
+    # the WebSocket Origin check.  The server's own origin (the bundled admin
+    # dashboard) needs no entry: same-origin requests are always allowed.
+    dev_ports = [4200, 4300, 4301, 4302, 4303]
+    allowed_origins = [
+        f"http://{h}:{p}" for p in dev_ports for h in ("localhost", "127.0.0.1")
+    ]
+
     result = create_cli_server(
-        CliServerOptions(configure=configure)
+        CliServerOptions(
+            configure=configure,
+            allowed_origins=allowed_origins,
+            # Opt-in remote shell.  The users plugin is mounted below, so the
+            # shell runs in "users" mode: a WebSocket ticket of a session with
+            # the shell:execute permission (root has '*').  Without the users
+            # plugin, set shell=CliShellOptions(token=os.environ["QCLI_SHELL_TOKEN"])
+            # instead; with neither, the shell would stay locked (4401).
+            enable_shell=True,
+            shell=CliShellOptions(idle_timeout=15 * 60, max_sessions_per_user=3),
+        )
     )
+
+    # Users plugin: protects every route and socket of this server (login,
+    # version discovery and health stay public).  Seeded and started in the
+    # app lifespan below.  The demo keeps the well-known 'admin' password.
+    users_plugin = CliUsersBuilder().set_default_admin_password("admin").build()
+    result.mount_plugin(users_plugin)
 
     # Build the jobs plugin
     jobs_plugin = (
@@ -252,9 +279,11 @@ def main() -> None:
 
     result.mount_plugin(jobs_plugin)
 
-    # Build the admin plugin
+    # Build the admin plugin — the dashboard logs in through the users plugin
+    # (requires the admin:access permission; root has '*').
     admin_plugin = (
         CliAdminBuilder()
+        .set_users_plugin(users_plugin)
         .build(AdminBuildDeps(
             registry=result.registry,
             event_socket_manager=result.event_socket_manager,
@@ -271,26 +300,33 @@ def main() -> None:
     if admin_plugin.module_registry and result.executor:
         result.executor.add_filter(admin_plugin.module_registry)
 
-    # Wire scheduler lifecycle into the app lifespan
+    # Wire the jobs scheduler and users plugin lifecycles into the app lifespan
     original_lifespan = result.app.router.lifespan_context
 
     @asynccontextmanager
-    async def lifespan_with_jobs(app: object) -> AsyncIterator[None]:
+    async def lifespan_with_plugins(app: object) -> AsyncIterator[None]:
         await jobs_plugin.scheduler.start()
-        async with original_lifespan(app) as state:  # type: ignore[arg-type]
-            yield state
-        await jobs_plugin.scheduler.stop()
+        await users_plugin.startup()
+        try:
+            async with original_lifespan(app) as state:  # type: ignore[arg-type]
+                yield state
+        finally:
+            await users_plugin.shutdown()
+            await jobs_plugin.scheduler.stop()
 
-    result.app.router.lifespan_context = lifespan_with_jobs
+    result.app.router.lifespan_context = lifespan_with_plugins
 
     logger.info("Qodalis CLI Demo Server (Python) running on http://%s:%d", host, port)
     logger.info("  API: http://%s:%d/api/qcli", host, port)
+    logger.info("  Users API: http://%s:%d/api/v1/qcli/users", host, port)
     logger.info("  Admin API: http://%s:%d/api/v1/qcli/admin", host, port)
     if admin_plugin.dashboard_app:
         logger.info("  Admin Dashboard: http://%s:%d/qcli/admin", host, port)
     logger.info("  WebSocket: ws://%s:%d/ws/qcli/events", host, port)
     logger.info("  File storage: %s", type(file_storage_provider).__name__)
 
+    # uvicorn logs paths with query strings (tickets, tokens, shell commands).
+    install_log_redaction()
     uvicorn.run(result.app, host=host, port=port)
 
 

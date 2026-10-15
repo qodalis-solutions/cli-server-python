@@ -56,6 +56,13 @@ class ICliCommandProcessor(abc.ABC):
         """Optional parameter descriptors for this command."""
         return None
 
+    @property
+    def required_permissions(self) -> list[str] | None:
+        """Permissions (``resource:action``) a caller must hold to execute
+        this command.  Enforced server-side when the server is protected by
+        the users plugin; ignored otherwise."""
+        return None
+
     @abc.abstractmethod
     async def handle_async(
         self,

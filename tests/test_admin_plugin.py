@@ -15,7 +15,7 @@ from qodalis_cli_admin import (
 )
 from qodalis_cli_admin.auth.jwt_service import JwtService
 from qodalis_cli_admin.services.admin_config import AdminConfig
-from qodalis_cli_admin.services.log_ring_buffer import LogEntry, LogRingBuffer
+from qodalis_cli_admin.services.log_ring_buffer import LogEntry, LogRingBuffer, redact
 from qodalis_cli_admin.services.module_registry import ModuleRegistry
 
 
@@ -179,6 +179,13 @@ class TestAuthLogin:
             json={"username": "wrong", "password": "wrong"},
         )
         assert resp.status_code == 401
+
+    async def test_login_lone_surrogate_is_rejected_not_500(self, client: AsyncClient) -> None:
+        for body in ('{"username": "\\ud800", "password": "x"}', '{"username": "admin", "password": "\\udfff"}'):
+            resp = await client.post(
+                f"{PREFIX}/auth/login", content=body, headers={"content-type": "application/json"},
+            )
+            assert resp.status_code == 401
 
     async def test_login_missing_fields(self, client: AsyncClient) -> None:
         resp = await client.post(f"{PREFIX}/auth/login", json={})
@@ -527,6 +534,11 @@ class TestJwtService:
 
 
 class TestLogRingBuffer:
+    def test_redact_url_encoded_bearer_token(self) -> None:
+        out = redact("GET /ws/qcli/shell?_header_Authorization=Bearer%20abc.def%3D&x=1")
+        assert "abc" not in out and "def" not in out
+        assert "Bearer%20[redacted]&x=1" in out
+
     def test_add_and_query(self) -> None:
         buf = LogRingBuffer(max_size=100)
         buf.add(LogEntry(timestamp="t1", level="INFO", message="hello"))
@@ -681,3 +693,27 @@ class TestRateLimiting:
             json={"username": TEST_USERNAME, "password": TEST_PASSWORD},
         )
         assert resp.status_code == 200
+
+
+class TestModuleRegistryShape:
+    """The plugins API matches the node and .NET servers (dashboard contract)."""
+
+    def test_ids_are_module_names_with_metadata(self) -> None:
+        builder = _StubBuilder(modules=[_StubModule("weather", 1), _StubModule("aws", 1)])
+        registry = ModuleRegistry(builder)
+        listed = registry.list()
+        assert [m["id"] for m in listed] == ["weather", "aws"]
+        assert listed[0]["version"] == "0.1.0"
+        assert listed[0]["description"] == "A stub module"
+
+    def test_toggle_by_name_and_legacy_index(self) -> None:
+        builder = _StubBuilder(modules=[_StubModule("weather", 1), _StubModule("aws", 1)])
+        registry = ModuleRegistry(builder)
+        assert registry.toggle("aws")["enabled"] is False
+        assert registry.toggle("1")["enabled"] is True
+        with pytest.raises(KeyError):
+            registry.toggle("missing")
+
+    def test_duplicate_names_fall_back_to_index(self) -> None:
+        builder = _StubBuilder(modules=[_StubModule("same", 1), _StubModule("same", 1)])
+        assert [m["id"] for m in ModuleRegistry(builder).list()] == ["0", "1"]

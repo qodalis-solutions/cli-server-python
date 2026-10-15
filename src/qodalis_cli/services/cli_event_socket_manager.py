@@ -8,20 +8,33 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from .session_bound_sockets import SessionBoundSockets
+
 logger = logging.getLogger(__name__)
 
 
-class CliEventSocketManager:
-    """Manages WebSocket connections for broadcasting server events to clients."""
+class CliEventSocketManager(SessionBoundSockets):
+    """Manages WebSocket connections for broadcasting server events to clients.
+
+    Authenticated sockets are bound to their session: once it ends (logout,
+    revoke, user disabled/deleted, expiry) the socket is closed with 4401
+    ``session ended`` (see :class:`SessionBoundSockets`)."""
 
     def __init__(self) -> None:
+        super().__init__()
         self._clients: set[WebSocket] = set()
         self._client_info: dict[WebSocket, dict[str, Any]] = {}
         self._next_client_id = 1
 
-    async def handle_connection(self, websocket: WebSocket) -> None:
-        """Accept a WebSocket connection and keep it alive until the client disconnects."""
-        await websocket.accept()
+    async def handle_connection(self, websocket: WebSocket, identity: Any = None) -> None:
+        """Accept a WebSocket connection and keep it alive until the client disconnects.
+
+        ``identity`` is the authenticated caller (an auth context exposing
+        ``user.id`` and optionally ``session.id``) when the server is
+        protected; user-scoped events are only delivered to such sockets.
+        """
+        if websocket.client_state.name == "CONNECTING":
+            await websocket.accept()
         self._clients.add(websocket)
 
         client_id = f"evt-{self._next_client_id}"
@@ -37,6 +50,14 @@ class CliEventSocketManager:
             "remoteAddress": remote_address,
             "type": "events",
         }
+        user = getattr(identity, "user", None)
+        session = getattr(identity, "session", None)
+        if user is not None:
+            self._client_info[websocket]["userId"] = getattr(user, "id", None)
+            self._client_info[websocket]["userName"] = getattr(user, "name", None)
+        if session is not None:
+            self._client_info[websocket]["sessionId"] = getattr(session, "id", None)
+        self.bind(websocket, identity)
 
         logger.info("Event client connected (id=%s)", client_id)
 
@@ -49,9 +70,14 @@ class CliEventSocketManager:
                 except Exception:
                     break
         finally:
+            self.unbind(websocket)
             self._clients.discard(websocket)
             self._client_info.pop(websocket, None)
             logger.info("Event client disconnected (id=%s)", client_id)
+
+    def _on_session_ended(self, websocket: WebSocket) -> None:
+        self._clients.discard(websocket)
+        self._client_info.pop(websocket, None)
 
     async def broadcast_message(self, message: str) -> None:
         """Send a text message to all connected WebSocket clients."""
@@ -60,6 +86,15 @@ class CliEventSocketManager:
                 await client.send_text(message)
             except Exception:
                 logger.debug("Broadcast send failed, removing client")
+
+    async def send_to_user(self, user_id: str, message: str) -> None:
+        """Send a message only to sockets authenticated as ``user_id``."""
+        for client, info in list(self._client_info.items()):
+            if info.get("userId") == user_id:
+                try:
+                    await client.send_text(message)
+                except Exception:
+                    logger.debug("User-scoped send failed")
 
     def get_clients(self) -> list[dict[str, Any]]:
         """Return information about all currently connected event clients."""
