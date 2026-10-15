@@ -523,6 +523,8 @@ The shell does **not** inherit the server environment: it gets only `PATH`, `HOM
 
 Whenever a shell closes (client gone, timeout, session ended, shutdown, error) the server collects the shell's whole descendant tree (`ps -A -o pid=,ppid=`, Linux and macOS) **before** signalling, then sends HUP and TERM to the shell's process group and to every descendant — including `&` jobs in their own process groups and `nohup` / `setsid` children — and KILL after a short grace period. Limitation: a daemon that double-forks and is already re-parented to init (PID 1) when the shell closes is no longer in the tree and cannot be tracked; if that matters, run the shell in a container or cgroup that is torn down with it.
 
+Shell output is forwarded with backpressure: the next chunk is read from the PTY only after the previous one was sent, so a slow client makes the producing process block on the full PTY buffer instead of the server buffering its output in memory.
+
 Refusals are sent after accepting the upgrade, so browsers can read the close code:
 
 | Code | Reason | When |

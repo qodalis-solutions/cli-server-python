@@ -574,29 +574,16 @@ class CliShellSessionManager:
                 await asyncio.wait([exit_task], timeout=2.0)
 
     async def _read_pty_output(self, master_fd: int, websocket: WebSocket) -> None:
-        """Forward PTY output to the WebSocket (event-loop reader, no threads)."""
-        loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        """Forward PTY output to the WebSocket (event-loop reads, no threads).
+
+        Backpressure: the next chunk is read only after the previous one was
+        sent, so a slow client makes the producer block on the full PTY
+        buffer instead of the server buffering its output in memory."""
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-
-        def on_readable() -> None:
-            try:
-                data = os.read(master_fd, 4096)
-            except BlockingIOError:
-                return  # spurious wake-up
-            except OSError:
-                data = b""
-            if not data:
-                loop.remove_reader(master_fd)
-                queue.put_nowait(None)
-            else:
-                queue.put_nowait(data)
-
-        loop.add_reader(master_fd, on_readable)
         try:
             while True:
-                chunk = await queue.get()
-                if chunk is None:
+                chunk = await _read_pty(master_fd)
+                if not chunk:
                     tail = decoder.decode(b"", final=True)
                     if tail:
                         await websocket.send_text(json.dumps({"type": "stdout", "data": tail}))
@@ -606,11 +593,6 @@ class CliShellSessionManager:
                     await websocket.send_text(json.dumps({"type": "stdout", "data": text}))
         except Exception as e:
             logger.debug("PTY output error: %s", e)
-        finally:
-            try:
-                loop.remove_reader(master_fd)
-            except Exception:
-                pass
 
     async def _read_websocket_input(
         self, websocket: WebSocket, master_fd: int, session: _ShellSession,
@@ -762,6 +744,28 @@ def _process_tree(root: int) -> list[int]:
                 result.append(child)
                 stack.append(child)
     return result
+
+
+#: Maximum bytes read from the PTY per WebSocket message.
+_READ_CHUNK = 65536
+
+
+async def _read_pty(fd: int) -> bytes:
+    """Read the next chunk from a non-blocking PTY master, waiting (without
+    blocking the event loop) until it is readable; ``b""`` at EOF (EIO)."""
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            return os.read(fd, _READ_CHUNK)
+        except BlockingIOError:
+            readable = loop.create_future()
+            loop.add_reader(fd, lambda: readable.done() or readable.set_result(None))
+            try:
+                await readable
+            finally:
+                loop.remove_reader(fd)
+        except OSError:
+            return b""
 
 
 async def _write_pty(fd: int, data: bytes) -> None:

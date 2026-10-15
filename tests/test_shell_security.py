@@ -542,6 +542,50 @@ class TestPtyIO:
             _run(c, SHELL + "?cmd=echo%20nb")
         assert seen == [False]
 
+    async def test_output_is_not_read_faster_than_it_is_sent(self):
+        """Backpressure: while a send to a slow client is pending, no more
+        PTY output is read, so the producer blocks instead of the server
+        buffering its output in memory."""
+        import asyncio
+        import threading
+
+        manager = _server(allow_anonymous=True).shell_session_manager
+        r, w = os.pipe()
+        os.set_blocking(r, False)  # a PTY master is non-blocking
+        written = 0
+        chunk = b"y\n" * 8192
+
+        def produce() -> None:  # like `yes`
+            nonlocal written
+            try:
+                while written < 32 * 1024 * 1024:
+                    written += os.write(w, chunk)
+            except OSError:
+                pass
+
+        class _SlowSocket:
+            sent = 0
+
+            async def send_text(self, text: str) -> None:
+                self.sent += 1
+                await asyncio.Event().wait()  # the client never drains
+
+        producer = threading.Thread(target=produce, daemon=True)
+        producer.start()
+        task = asyncio.ensure_future(manager._read_pty_output(r, _SlowSocket()))
+        try:
+            await asyncio.sleep(1.0)
+            assert written < 2 * 1024 * 1024, f"server buffered {written} bytes"
+        finally:
+            task.cancel()
+            try:
+                await task
+            except BaseException:
+                pass
+            os.close(r)
+            producer.join(2)
+            os.close(w)
+
 
 class _FailingReadySocket:
     """Fake WebSocket whose client goes away before ``ready`` is sent."""
