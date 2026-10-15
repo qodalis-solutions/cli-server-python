@@ -32,7 +32,7 @@ from ..stores.interfaces import (
     ISessionStore,
     IUserStore,
 )
-from ..validation import PASSWORD_MAX, sanitize
+from ..validation import PASSWORD_MAX, has_lone_surrogates, sanitize
 from . import password_hasher
 
 logger = logging.getLogger(__name__)
@@ -212,6 +212,8 @@ class AuthService:
             return f"password must be at least {self.options.min_password_length} characters"
         if len(password) > PASSWORD_MAX:
             return f"password must be at most {PASSWORD_MAX} characters"
+        if has_lone_surrogates(password):
+            return "invalid password"
         return None
 
     async def set_password(self, user_id: str, password: str) -> None:

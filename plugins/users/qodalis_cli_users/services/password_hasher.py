@@ -21,7 +21,9 @@ PREFIX = "pbkdf2"
 
 
 def _derive(password: str, salt: bytes, iterations: int, key_len: int = KEY_BYTES) -> bytes:
-    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations, key_len)
+    # surrogatepass: a lone surrogate (never in a stored password) must fail
+    # verification normally instead of raising.
+    return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8", "surrogatepass"), salt, iterations, key_len)
 
 
 def hash_password(password: str) -> tuple[str, str]:
@@ -55,7 +57,7 @@ def verify_password(password: str, encoded: str, legacy_salt: str = "") -> bool:
         actual = _derive(password, salt, iterations, len(expected))
         return hmac.compare_digest(actual, expected)
     # Legacy SHA-256 format
-    legacy = hashlib.sha256((legacy_salt + password).encode("utf-8")).hexdigest()
+    legacy = hashlib.sha256((legacy_salt + password).encode("utf-8", "surrogatepass")).hexdigest()
     return hmac.compare_digest(legacy.encode("ascii"), encoded.encode("utf-8", "replace"))
 
 

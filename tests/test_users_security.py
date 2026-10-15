@@ -819,6 +819,29 @@ class TestValidation:
         res = srv.c.post(BASE + "/users", headers=_h(root), json={"name": "u", "email": "u@x", "data": {"k": huge}})
         assert_error(res, 400, "too large")
 
+    def test_lone_surrogates_rejected_and_never_stored(self, srv: Server):
+        root = srv.root
+        eve = srv.user("eve")
+
+        def raw(method: str, path: str, token: str, body: str):
+            return srv.c.request(method, path, content=body,
+                                 headers={**_h(token), "content-type": "application/json"})
+
+        assert_error(raw("PUT", BASE + "/users/eve", eve, '{"data": {"k": "\\ud800"}}'), 400)
+        assert_error(raw("PUT", BASE + "/users/eve", eve, '{"email": "e\\ud800@x"}'), 400)
+        assert_error(raw("POST", BASE + "/users", root,
+                         '{"name": "u1", "email": "u1@x", "homeDir": "/h\\udfff"}'), 400)
+        assert_error(raw("POST", BASE + "/users", root,
+                         '{"name": "u2", "email": "u2@x", "password": "abcdefgh\\ud800"}'), 400)
+        # Login with such a password / name is a normal failure, not a 500.
+        for body in ('{"username": "root", "password": "\\ud800"}',
+                     '{"username": "ghost", "password": "\\ud800"}',
+                     '{"username": "\\ud800", "password": "x"}'):
+            assert_error(raw("POST", BASE + "/sessions", "", body), 401)
+        # Listings keep working.
+        assert srv.c.get(BASE + "/users", headers=_h(root)).status_code == 200
+        assert srv.c.get(BASE + "/audit", headers=_h(root)).status_code == 200
+
     async def test_chunked_body_limit_stops_reading(self):
         app, _ = _users_app(CliUsersBuilder().set_default_admin_password(ROOT_PASS))
         sent = 0

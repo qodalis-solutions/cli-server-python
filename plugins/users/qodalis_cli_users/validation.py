@@ -20,11 +20,18 @@ DATA_MAX_BYTES = 16 * 1024
 BODY_MAX_BYTES = 1024 * 1024
 PASSWORD_MAX = 1024
 
-_CONTROL_RE = re.compile(r"[\u0000-\u001f\u007f]")
+# Control characters, plus lone UTF-16 surrogates (valid in JSON escapes but
+# not encodable as UTF-8: stored, they make every response containing them fail).
+_CONTROL_RE = re.compile(r"[\u0000-\u001f\u007f\ud800-\udfff]")
+_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 
 
 def has_control_chars(value: str) -> bool:
     return bool(_CONTROL_RE.search(value))
+
+
+def has_lone_surrogates(value: str) -> bool:
+    return bool(_SURROGATE_RE.search(value))
 
 
 def sanitize(value: str | None, max_len: int | None = None) -> str | None:
@@ -85,7 +92,7 @@ def validate_data(data: dict[str, Any] | None) -> dict[str, Any] | None:
     if data is None:
         return None
     try:
-        size = len(json.dumps(data, separators=(",", ":")).encode("utf-8"))
+        size = len(json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
     except (TypeError, ValueError) as exc:
         raise bad_request("invalid data") from exc
     if size > DATA_MAX_BYTES:
