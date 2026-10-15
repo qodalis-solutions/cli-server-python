@@ -528,7 +528,7 @@ class CliShellSessionManager:
         if exit_task is None:
             await asyncio.sleep(0.2)
             _signal_group(pid, signal.SIGKILL)
-            _reap(pid)
+            await _reap(pid)
             return
         await asyncio.wait([exit_task], timeout=1.0)
         if not exit_task.done():
@@ -692,11 +692,18 @@ async def _write_pty(fd: int, data: bytes) -> None:
                 loop.remove_writer(fd)
 
 
-def _reap(pid: int) -> None:
-    try:
-        os.waitpid(pid, os.WNOHANG)
-    except ChildProcessError:
-        pass
+async def _reap(pid: int, timeout: float = 2.0) -> None:
+    """Reap a killed child (polling: it may not have exited yet)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            if os.waitpid(pid, os.WNOHANG)[0] != 0:
+                return
+        except ChildProcessError:
+            return
+        if time.monotonic() >= deadline:
+            return
+        await asyncio.sleep(0.02)
 
 
 def _int_param(websocket: WebSocket, name: str, default: int) -> int:

@@ -429,3 +429,44 @@ class TestPtyIO:
         with TestClient(result.app) as c:
             _run(c, SHELL + "?cmd=echo%20nb")
         assert seen == [False]
+
+
+class _FailingReadySocket:
+    """Fake WebSocket whose client goes away before ``ready`` is sent."""
+
+    async def send_text(self, text: str) -> None:
+        import asyncio
+
+        await asyncio.sleep(0.5)  # let the shell install its traps
+        raise RuntimeError("client gone")
+
+
+class TestPtyReaping:
+    async def test_child_ignoring_hup_and_term_is_reaped_when_setup_fails(self, monkeypatch):
+        from qodalis_cli.services import cli_shell_session_manager as mod
+
+        pids: list[int] = []
+        original_fork = mod.pty.fork
+
+        def fork():
+            pid, fd = original_fork()
+            if pid:
+                pids.append(pid)
+            return pid, fd
+
+        monkeypatch.setattr(mod.pty, "fork", fork)
+        manager = _server(allow_anonymous=True).shell_session_manager
+        await manager.handle_session(
+            _FailingReadySocket(), 80, 24, "trap '' HUP TERM; sleep 30",
+        )
+        assert pids
+        time.sleep(0.5)
+        try:
+            pid, _ = os.waitpid(pids[0], os.WNOHANG)
+        except ChildProcessError:
+            return  # already reaped
+        if pid == 0:
+            os.kill(pids[0], 9)
+            os.waitpid(pids[0], 0)
+            pytest.fail("shell process still running")
+        pytest.fail("shell process left as a zombie")
