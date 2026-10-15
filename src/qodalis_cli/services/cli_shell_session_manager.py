@@ -190,6 +190,16 @@ class CliShellSessionManager:
             await _close(websocket, rejected.code, rejected.reason)
             return
 
+        # A logout/revoke between ticket consumption and registration fired
+        # its change event before this shell existed: re-check once now.
+        ended = await self._end_reason(session)
+        if ended is not None:
+            session.request_close(CLOSE_UNAUTHORIZED, REASON_SESSION_ENDED, ended)
+        if session.close_event.is_set():
+            self._sessions.pop(session.id, None)
+            await _close(websocket, session.close_code or CLOSE_UNAUTHORIZED, session.close_reason or "")
+            return
+
         await self._opened(session)
         exit_code: int | None = None
         try:

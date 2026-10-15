@@ -305,3 +305,58 @@ class TestUsersMode:
             assert _until_closed(ws).code == 1001
         meta = env.audit("shell_closed")[-1].metadata
         assert meta["reason"] == "server shutdown" and "exitCode" not in meta
+
+
+class TestSessionEndsWhileOpening:
+    """A logout/revoke between ticket consumption and shell registration
+    fires its change event before the shell is registered: the shell must
+    still be closed right away, not at the next periodic re-check."""
+
+    @staticmethod
+    def _resolve_then(monkeypatch, action):
+        from qodalis_cli_users import UsersShellAccess
+
+        original = UsersShellAccess.resolve
+
+        async def resolve(self, websocket):
+            principal = await original(self, websocket)
+            await action(principal)
+            return principal
+
+        monkeypatch.setattr(UsersShellAccess, "resolve", resolve)
+
+    def test_session_ended_before_registration_closes_4401(self, make_env, monkeypatch):
+        env = make_env()  # default 30 s periodic re-check
+        alice = env.user("alice", ["shell:execute"])
+        url = env.shell_url(alice)
+
+        async def logout(principal):
+            await env.users.session_store.delete_session_by_id(principal.session_id)
+
+        self._resolve_then(monkeypatch, logout)
+        start = time.monotonic()
+        with env.c.websocket_connect(url) as ws:
+            messages = []
+            while True:
+                try:
+                    messages.append(json.loads(ws.receive_text()))
+                except WebSocketDisconnect as disconnect:
+                    exc = disconnect
+                    break
+        assert (exc.code, exc.reason) == (4401, "session ended")
+        assert time.monotonic() - start < 5
+        assert not any(m["type"] == "ready" for m in messages)
+        assert env.result.shell_session_manager.active_sessions == 0
+
+    def test_permission_removed_before_registration_closes_4401(self, make_env, monkeypatch):
+        env = make_env()
+        alice = env.user("alice", ["shell:execute"])
+        url = env.shell_url(alice)
+
+        async def remove_permission(principal):
+            await env.users.group_store.update_group("alice-g", permissions=["commands:execute"])
+
+        self._resolve_then(monkeypatch, remove_permission)
+        exc = _rejected(env.c, url)
+        assert (exc.code, exc.reason) == (4401, "session ended")
+        assert env.result.shell_session_manager.active_sessions == 0
