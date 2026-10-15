@@ -18,6 +18,7 @@ from .controllers.filesystem_controller import create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemPathValidator
 from .security import WebSocketOriginMiddleware, get_auth_context, origins_regex
+from .shell_security import CliShellOptions, ShellAccessProvider
 from .services import (
     CliCommandExecutorService,
     CliCommandRegistry,
@@ -41,8 +42,13 @@ class CliServerOptions:
     #: Origins accepted for CORS and every WebSocket upgrade (``*`` globs
     #: allowed, e.g. ``http://127.0.0.1:*``).  ``None`` = no Origin check.
     allowed_origins: list[str] | None = None
-    #: Interactive PTY shell WebSocket (``/ws/qcli/shell``) — opt-in.
+    #: Interactive PTY shell WebSocket (``/ws/qcli/shell``) — opt-in.  Once
+    #: enabled, access needs the users plugin, ``shell.token``,
+    #: ``shell.authorize`` or ``shell.allow_anonymous``; otherwise the shell
+    #: is locked (every connection closed with 4401).
     enable_shell: bool = False
+    #: Remote shell security and runtime options (access, limits, env).
+    shell: CliShellOptions = field(default_factory=CliShellOptions)
     configure: Callable[[CliBuilder], None] | None = None
 
 
@@ -57,6 +63,13 @@ class CliServerResult:
     log_socket_manager: CliLogSocketManager
     executor: CliCommandExecutorService | None = None
     options: CliServerOptions = field(default_factory=CliServerOptions)
+    shell_session_manager: CliShellSessionManager | None = None
+
+    def set_shell_access_provider(self, provider: ShellAccessProvider | None) -> None:
+        """Let an auth plugin own shell access (the users plugin calls this
+        when mounted, selecting the ``users`` shell mode)."""
+        if self.shell_session_manager is not None:
+            self.shell_session_manager.set_access_provider(provider)
 
     def mount_plugin(self, plugin: object) -> None:
         """Mount a plugin using its built-in prefix.
@@ -100,14 +113,16 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     event_socket_manager = CliEventSocketManager()
     log_socket_manager = CliLogSocketManager()
-    shell_session_manager = CliShellSessionManager()
+    shell_session_manager = CliShellSessionManager(opts.shell, enabled=opts.enable_shell)
 
     log_handler = WebSocketLogHandler(log_socket_manager)
     logging.getLogger().addHandler(log_handler)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        shell_session_manager.log_startup()
         yield
+        await shell_session_manager.close_all()
         await event_socket_manager.broadcast_disconnect()
         await log_socket_manager.broadcast_disconnect()
         logging.getLogger().removeHandler(log_handler)
@@ -125,8 +140,9 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         opts.configure(builder)
 
     executor = CliCommandExecutorService(registry)
-    router = create_cli_router(registry, executor, enable_shell=opts.enable_shell)
-    version_router = create_cli_version_router(enable_shell=opts.enable_shell)
+    shell_auth = lambda: shell_session_manager.access_mode  # noqa: E731
+    router = create_cli_router(registry, executor, enable_shell=opts.enable_shell, shell_auth=shell_auth)
+    version_router = create_cli_version_router(enable_shell=opts.enable_shell, shell_auth=shell_auth)
 
     app.include_router(router, prefix="/api/v1/qcli")
     app.include_router(version_router, prefix="/api/qcli")
@@ -185,23 +201,14 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     async def websocket_logs(websocket: WebSocket) -> None:
         await _handle_logs(websocket)
 
-    if opts.enable_shell:
-        async def _handle_shell(websocket: WebSocket) -> None:
-            if websocket.client_state.name == "CONNECTING":
-                await websocket.accept()
-            cols = _int_param(websocket, "cols", 80)
-            rows = _int_param(websocket, "rows", 24)
-            cmd = websocket.query_params.get("cmd") or None  # never logged
-            logger.debug("Shell WebSocket connection accepted (cols=%d, rows=%d)", cols, rows)
-            await shell_session_manager.handle_session(websocket, cols, rows, cmd)
+    # Always routed: a disabled shell answers with close 4404 (C5).
+    @app.websocket("/ws/v1/qcli/shell")
+    async def websocket_shell_v1(websocket: WebSocket) -> None:
+        await shell_session_manager.handle_connection(websocket)
 
-        @app.websocket("/ws/v1/qcli/shell")
-        async def websocket_shell_v1(websocket: WebSocket) -> None:
-            await _handle_shell(websocket)
-
-        @app.websocket("/ws/qcli/shell")
-        async def websocket_shell(websocket: WebSocket) -> None:
-            await _handle_shell(websocket)
+    @app.websocket("/ws/qcli/shell")
+    async def websocket_shell(websocket: WebSocket) -> None:
+        await shell_session_manager.handle_connection(websocket)
 
     return CliServerResult(
         app=app,
@@ -211,15 +218,8 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         log_socket_manager=log_socket_manager,
         executor=executor,
         options=opts,
+        shell_session_manager=shell_session_manager,
     )
-
-
-def _int_param(websocket: WebSocket, name: str, default: int) -> int:
-    try:
-        value = int(websocket.query_params.get(name, default))
-    except (TypeError, ValueError):
-        return default
-    return value if 0 < value <= 1000 else default
 
 
 def _configure_cors(app: FastAPI, opts: CliServerOptions) -> None:

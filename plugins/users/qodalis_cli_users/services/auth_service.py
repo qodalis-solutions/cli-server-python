@@ -62,6 +62,9 @@ BroadcastFn = Callable[[str], Union[Awaitable[None], None]]
 #: ``(user_id, json_message)`` — delivers to sockets of that user only.
 UserEventSender = Callable[[str, str], Awaitable[None]]
 
+#: Audit events that never change who may do what (no listener notification).
+_NON_CHANGING_EVENTS = frozenset({"login", "login_failed", "shell_opened", "shell_closed"})
+
 
 def hash_token(token: str) -> str:
     """SHA-256 (hex) of a bearer token or ticket."""
@@ -169,6 +172,7 @@ class AuthService:
         self._lockouts: OrderedDict[str, _LockoutState] = OrderedDict()
         self._rate: OrderedDict[str, deque[int]] = OrderedDict()
         self._tickets: dict[str, _Ticket] = {}
+        self._change_listeners: list[Callable[[], Any]] = []
 
     # ------------------------------------------------------------------
     # Options
@@ -388,6 +392,31 @@ class AuthService:
         except Exception:
             logger.exception("Failed to write audit entry %s", event)
 
+        if event not in _NON_CHANGING_EVENTS:
+            self.notify_change()
+
+    # ------------------------------------------------------------------
+    # Change listeners (e.g. open shells re-check their session)
+    # ------------------------------------------------------------------
+
+    def add_change_listener(self, listener: Callable[[], Any]) -> None:
+        """Call ``listener()`` after sessions, users, groups or permissions
+        change (logout, revoke, disable, delete, group/permission edits,
+        expiry sweep).  Listeners must not block."""
+        if listener not in self._change_listeners:
+            self._change_listeners.append(listener)
+
+    def remove_change_listener(self, listener: Callable[[], Any]) -> None:
+        if listener in self._change_listeners:
+            self._change_listeners.remove(listener)
+
+    def notify_change(self) -> None:
+        for listener in list(self._change_listeners):
+            try:
+                listener()
+            except Exception:
+                logger.exception("Change listener failed")
+
     async def broadcast(self, message: dict[str, Any]) -> None:
         if not self.broadcast_fn:
             return
@@ -466,6 +495,7 @@ class AuthService:
         for session in await self.session_store.get_active_sessions():
             if self.is_expired(session):
                 await self.session_store.delete_session_by_id(session.id)
+        self.notify_change()
         now = now_ms()
         for key, ticket in list(self._tickets.items()):
             if ticket.expires_at <= now:

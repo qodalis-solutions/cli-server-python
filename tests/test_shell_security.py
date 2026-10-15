@@ -1,0 +1,345 @@
+"""Remote shell security (Appendix C) without the users plugin: modes,
+locked default, close codes, limits, timeouts, minimal environment."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import time
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
+from qodalis_cli import CliServerOptions, CliShellOptions, create_cli_server
+from qodalis_cli import shell_security
+
+SHELL = "/ws/qcli/shell"
+SECRET = "s3cret-token"
+BEARER = {"Authorization": f"Bearer {SECRET}"}
+
+
+def _server(enable_shell: bool = True, **shell: Any):
+    shell.setdefault("shell", "/bin/sh")
+    return create_cli_server(CliServerOptions(enable_shell=enable_shell, shell=CliShellOptions(**shell)))
+
+
+def _rejected(client: TestClient, url: str, headers: dict | None = None) -> WebSocketDisconnect:
+    with client.websocket_connect(url, headers=headers or {}) as ws:
+        with pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_text()
+    return exc.value
+
+
+def _run(client: TestClient, url: str, headers: dict | None = None) -> tuple[str, int | None]:
+    """Run a one-shot command; returns (stdout, exit code)."""
+    stdout, code = "", None
+    with client.websocket_connect(url, headers=headers or {}) as ws:
+        assert json.loads(ws.receive_text())["type"] == "ready"
+        for _ in range(500):
+            msg = json.loads(ws.receive_text())
+            if msg["type"] == "stdout":
+                stdout += msg["data"]
+            elif msg["type"] == "exit":
+                code = msg["code"]
+                break
+    return stdout, code
+
+
+def _until_closed(ws) -> tuple[list[dict], WebSocketDisconnect]:
+    messages = []
+    while True:
+        try:
+            messages.append(json.loads(ws.receive_text()))
+        except WebSocketDisconnect as exc:
+            return messages, exc
+
+
+def _shell_pid(ws) -> int:
+    """Ask an interactive shell for its pid."""
+    assert json.loads(ws.receive_text())["type"] == "ready"
+    ws.send_text(json.dumps({"type": "stdin", "data": "echo PID=$$\n"}))
+    out = ""
+    for _ in range(200):
+        msg = json.loads(ws.receive_text())
+        if msg["type"] == "stdout":
+            out += msg["data"]
+            for line in out.splitlines():
+                if line.startswith("PID=") and line[4:].strip().isdigit():
+                    return int(line[4:].strip())
+    raise AssertionError(f"no pid in {out!r}")
+
+
+def _gone(pid: int, timeout: float = 3.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+# ---------------------------------------------------------------------------
+# C1 — enabling and modes
+# ---------------------------------------------------------------------------
+
+class TestModes:
+    def test_disabled_closes_4404(self):
+        result = _server(enable_shell=False)
+        with TestClient(result.app) as c:
+            caps = c.get("/api/qcli/capabilities").json()
+            assert caps["shell"] is False
+            assert "shellAuth" not in caps
+            exc = _rejected(c, SHELL)
+            assert (exc.code, exc.reason) == (4404, "shell disabled")
+            assert _rejected(c, "/ws/v1/qcli/shell").code == 4404
+
+    def test_enabled_without_mode_is_locked(self, caplog):
+        result = create_cli_server(CliServerOptions(enable_shell=True))
+        with caplog.at_level(logging.INFO):
+            with TestClient(result.app) as c:
+                for path in ("/api/qcli/capabilities", "/api/v1/qcli/capabilities"):
+                    caps = c.get(path).json()
+                    assert caps["shell"] is True
+                    assert caps["shellAuth"] == "locked"
+                exc = _rejected(c, SHELL + "?cmd=id")
+                assert exc.code == 4401
+                # Even a bearer header does not open a locked shell.
+                assert _rejected(c, SHELL, headers=BEARER).code == 4401
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR and "no access mode" in r.getMessage()]
+        assert errors, "locked shell must log an ERROR at startup"
+        assert result.shell_session_manager.active_sessions == 0
+
+    def test_anonymous_requires_explicit_opt_in_and_warns(self, caplog):
+        result = _server(allow_anonymous=True)
+        with caplog.at_level(logging.INFO):
+            with TestClient(result.app) as c:
+                assert c.get("/api/qcli/capabilities").json()["shellAuth"] == "anonymous"
+                out, code = _run(c, SHELL + "?cmd=echo%20anon-ok")
+        assert "anon-ok" in out and code == 0
+        assert any(
+            r.levelno == logging.WARNING and "without authentication" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_token_via_header(self):
+        result = _server(token=SECRET)
+        with TestClient(result.app) as c:
+            assert c.get("/api/qcli/capabilities").json()["shellAuth"] == "token"
+            out, code = _run(c, SHELL + "?cmd=echo%20token-ok", headers=BEARER)
+            assert "token-ok" in out and code == 0
+
+    def test_token_via_query_parameter(self):
+        result = _server(token=SECRET)
+        with TestClient(result.app) as c:
+            url = SHELL + f"?cmd=echo%20query-ok&_header_Authorization=Bearer%20{SECRET}"
+            out, code = _run(c, url)
+            assert "query-ok" in out and code == 0
+
+    def test_token_missing_or_wrong(self):
+        result = _server(token=SECRET)
+        with TestClient(result.app) as c:
+            exc = _rejected(c, SHELL)
+            assert (exc.code, exc.reason) == (4401, "login required")
+            exc = _rejected(c, SHELL, headers={"Authorization": "Bearer wrong"})
+            assert (exc.code, exc.reason) == (4403, "forbidden")
+            assert _rejected(c, SHELL + "?_header_Authorization=Bearer%20nope").code == 4403
+            assert _rejected(c, SHELL, headers={"Authorization": SECRET}).code == 4401  # no scheme
+            assert result.shell_session_manager.active_sessions == 0
+
+    def test_token_uses_constant_time_compare(self, monkeypatch):
+        calls = []
+        real = shell_security.hmac.compare_digest
+
+        def spy(a, b):
+            calls.append((a, b))
+            return real(a, b)
+
+        monkeypatch.setattr(shell_security.hmac, "compare_digest", spy)
+        result = _server(token=SECRET)
+        with TestClient(result.app) as c:
+            assert _rejected(c, SHELL, headers={"Authorization": "Bearer wrong"}).code == 4403
+        assert calls == [(b"wrong", SECRET.encode())]
+
+    def test_token_is_never_logged(self, caplog):
+        result = _server(token=SECRET)
+        with caplog.at_level(logging.DEBUG):
+            with TestClient(result.app) as c:
+                _run(c, SHELL + "?cmd=true", headers=BEARER)
+                _rejected(c, SHELL, headers={"Authorization": "Bearer wrong-guess"})
+        text = "\n".join(r.getMessage() for r in caplog.records)
+        assert SECRET not in text and "wrong-guess" not in text
+        assert SECRET not in repr(result.options.shell)
+
+    def test_authorize_sync_and_async(self):
+        seen = []
+
+        def allow_header(ws):
+            seen.append(ws.client.host)
+            return ws.headers.get("x-shell-key") == "ok"
+
+        result = _server(authorize=allow_header)
+        with TestClient(result.app) as c:
+            assert c.get("/api/qcli/capabilities").json()["shellAuth"] == "custom"
+            out, code = _run(c, SHELL + "?cmd=echo%20custom-ok", headers={"x-shell-key": "ok"})
+            assert "custom-ok" in out and code == 0
+            exc = _rejected(c, SHELL, headers={"x-shell-key": "no"})
+            assert (exc.code, exc.reason) == (4403, "forbidden")
+        assert seen
+
+        async def allow_async(ws):
+            return ws.query_params.get("k") == "1"
+
+        result = _server(authorize=allow_async)
+        with TestClient(result.app) as c:
+            out, _ = _run(c, SHELL + "?k=1&cmd=echo%20async-ok")
+            assert "async-ok" in out
+            assert _rejected(c, SHELL + "?k=0").code == 4403
+
+    def test_authorize_exception_denies(self, caplog):
+        def boom(ws):
+            raise RuntimeError("database down")
+
+        async def boom_async(ws):
+            raise ValueError("nope")
+
+        for fn in (boom, boom_async):
+            result = _server(authorize=fn)
+            with TestClient(result.app) as c:
+                assert _rejected(c, SHELL).code == 4403
+
+    def test_token_and_authorize_both_required(self):
+        result = _server(token=SECRET, authorize=lambda ws: ws.headers.get("x-ok") == "1")
+        with TestClient(result.app) as c:
+            assert c.get("/api/qcli/capabilities").json()["shellAuth"] == "token"
+            assert _rejected(c, SHELL, headers={**BEARER, "x-ok": "0"}).code == 4403
+            assert _rejected(c, SHELL, headers={"x-ok": "1"}).code == 4401
+            out, _ = _run(c, SHELL + "?cmd=echo%20both-ok", headers={**BEARER, "x-ok": "1"})
+            assert "both-ok" in out
+
+    def test_anonymous_flag_ignored_when_token_configured(self):
+        result = _server(token=SECRET, allow_anonymous=True)
+        with TestClient(result.app) as c:
+            assert c.get("/api/qcli/capabilities").json()["shellAuth"] == "token"
+            assert _rejected(c, SHELL).code == 4401
+
+
+# ---------------------------------------------------------------------------
+# C3 — limits, timeouts, environment
+# ---------------------------------------------------------------------------
+
+class TestLimits:
+    def test_per_address_limit(self):
+        result = _server(allow_anonymous=True, max_sessions_per_user=2)
+        with TestClient(result.app) as c:
+            with c.websocket_connect(SHELL) as a, c.websocket_connect(SHELL) as b:
+                assert json.loads(a.receive_text())["type"] == "ready"
+                assert json.loads(b.receive_text())["type"] == "ready"
+                exc = _rejected(c, SHELL)
+                assert (exc.code, exc.reason) == (4429, "too many shell sessions")
+            # Slots are released when shells close.
+            out, _ = _run(c, SHELL + "?cmd=echo%20again")
+            assert "again" in out
+
+    def test_per_address_uses_forwarded_for_only_with_trust_proxy(self):
+        result = _server(allow_anonymous=True, max_sessions_per_user=1, trust_proxy=True)
+        with TestClient(result.app) as c:
+            with c.websocket_connect(SHELL, headers={"x-forwarded-for": "10.0.0.1"}) as a:
+                assert json.loads(a.receive_text())["type"] == "ready"
+                assert _rejected(c, SHELL, headers={"x-forwarded-for": "10.0.0.1"}).code == 4429
+                with c.websocket_connect(SHELL, headers={"x-forwarded-for": "10.0.0.2"}) as b:
+                    assert json.loads(b.receive_text())["type"] == "ready"
+
+    def test_global_limit(self):
+        result = _server(allow_anonymous=True, max_sessions=1, trust_proxy=True)
+        with TestClient(result.app) as c:
+            with c.websocket_connect(SHELL, headers={"x-forwarded-for": "10.0.0.1"}) as a:
+                assert json.loads(a.receive_text())["type"] == "ready"
+                assert _rejected(c, SHELL, headers={"x-forwarded-for": "10.0.0.2"}).code == 4429
+
+    def test_idle_timeout_closes_and_kills(self):
+        result = _server(allow_anonymous=True, idle_timeout=0.6)
+        with TestClient(result.app) as c:
+            with c.websocket_connect(SHELL) as ws:
+                pid = _shell_pid(ws)
+                start = time.monotonic()
+                messages, exc = _until_closed(ws)
+                assert (exc.code, exc.reason) == (4408, "shell timed out")
+                assert time.monotonic() - start < 5
+                assert not any(m["type"] == "exit" for m in messages)
+            assert _gone(pid), "shell process must be killed"
+            assert result.shell_session_manager.active_sessions == 0
+
+    def test_stdin_resets_idle_timer(self):
+        result = _server(allow_anonymous=True, idle_timeout=0.8)
+        with TestClient(result.app) as c:
+            with c.websocket_connect(SHELL) as ws:
+                _shell_pid(ws)
+                for _ in range(4):
+                    time.sleep(0.4)
+                    ws.send_text(json.dumps({"type": "stdin", "data": "\n"}))
+                # 1.6 s elapsed, still open: a command still runs.
+                ws.send_text(json.dumps({"type": "stdin", "data": "echo still-open\n"}))
+                out = ""
+                while "still-open" not in out.replace("echo still-open", ""):
+                    msg = json.loads(ws.receive_text())
+                    out += msg.get("data", "")
+                _, exc = _until_closed(ws)
+                assert exc.code == 4408
+
+    def test_max_duration(self):
+        result = _server(allow_anonymous=True, idle_timeout=None, max_duration=0.6)
+        with TestClient(result.app) as c:
+            with c.websocket_connect(SHELL + "?cmd=sleep%2030") as ws:
+                assert json.loads(ws.receive_text())["type"] == "ready"
+                _, exc = _until_closed(ws)
+                assert exc.code == 4408
+
+    def test_minimal_environment(self, monkeypatch):
+        monkeypatch.setenv("SECRET_X", "do-not-leak")
+        monkeypatch.setenv("DATABASE_PASSWORD", "hunter2")
+        monkeypatch.setenv("ALLOWED_X", "visible")
+        result = _server(allow_anonymous=True, env_allow=["ALLOWED_X"], env_set={"FOO": "bar"})
+        with TestClient(result.app) as c:
+            out, code = _run(c, SHELL + "?cols=100&rows=30&cmd=env")
+        assert code == 0
+        names = {line.split("=", 1)[0] for line in out.replace("\r", "").splitlines() if "=" in line}
+        assert "SECRET_X" not in names and "do-not-leak" not in out
+        assert "DATABASE_PASSWORD" not in names
+        assert "ALLOWED_X=visible" in out and "FOO=bar" in out
+        assert "TERM=xterm-256color" in out
+        assert "COLUMNS=100" in out and "LINES=30" in out
+        assert "SHELL=/bin/sh" in out
+        allowed = {"PATH", "HOME", "USER", "LANG", "TERM", "COLUMNS", "LINES", "SHELL", "ALLOWED_X", "FOO",
+                   # set by the shell itself
+                   "PWD", "OLDPWD", "SHLVL", "_", "PS1", "PS2", "PS4", "OPTIND", "IFS", "PPID"}
+        assert names <= allowed, names - allowed
+
+    def test_build_env_ignores_server_secrets(self, monkeypatch):
+        monkeypatch.setenv("SECRET_X", "do-not-leak")
+        env = _server(allow_anonymous=True).shell_session_manager.build_env("/bin/sh", 80, 24)
+        assert "SECRET_X" not in env
+        assert set(env) <= {"PATH", "HOME", "USER", "LANG", "TERM", "COLUMNS", "LINES", "SHELL"}
+
+    def test_cwd_option(self, tmp_path):
+        result = _server(allow_anonymous=True, cwd=str(tmp_path))
+        with TestClient(result.app) as c:
+            out, code = _run(c, SHELL + "?cmd=pwd%20-P")
+        assert code == 0
+        assert os.path.realpath(tmp_path) in out
+
+    def test_logs_open_close_without_command_text(self, caplog):
+        result = _server(token=SECRET)
+        with caplog.at_level(logging.DEBUG):
+            with TestClient(result.app) as c:
+                _run(c, SHELL + "?cmd=echo%20SENTINEL_COMMAND_TEXT", headers=BEARER)
+        messages = [r.getMessage() for r in caplog.records]
+        opened = [m for m in messages if m.startswith("Shell opened")]
+        closed = [m for m in messages if m.startswith("Shell closed")]
+        assert opened and "auth=token" in opened[0] and "remote=testclient" in opened[0]
+        assert closed and "exitCode=0" in closed[0]
+        assert not any("SENTINEL_COMMAND_TEXT" in m for m in messages)

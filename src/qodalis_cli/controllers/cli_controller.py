@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import platform
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -88,6 +88,7 @@ def create_cli_router(
     executor: ICliCommandExecutorService,
     *,
     enable_shell: bool = False,
+    shell_auth: Callable[[], str | None] | None = None,
 ) -> APIRouter:
     """Create a FastAPI router for the v1 CLI API.
 
@@ -119,13 +120,17 @@ def create_cli_router(
             else "/bin/bash"
         )
 
-        return {
+        capabilities: dict[str, Any] = {
             "shell": enable_shell,
             "os": detected_os,
             "shellPath": shell_path,
             "version": SERVER_VERSION,
             "streaming": True,
         }
+        if enable_shell:
+            # users | token | custom | anonymous | locked (Appendix C1)
+            capabilities["shellAuth"] = (shell_auth() if shell_auth else None) or "locked"
+        return capabilities
 
     @router.get("/commands")
     async def get_commands() -> list[dict[str, Any]]:

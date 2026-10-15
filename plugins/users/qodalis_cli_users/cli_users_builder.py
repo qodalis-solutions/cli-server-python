@@ -34,6 +34,7 @@ from .controllers.users_controller import create_users_router
 from .middleware.auth_middleware import create_auth_dependencies
 from .models import ExternalAuthAdapter
 from .server_protection import ServerProtectionMiddleware
+from .shell_access import UsersShellAccess
 from .services.auth_service import (
     DEFAULT_LOCKOUT_MS,
     DEFAULT_MAX_LOGIN_ATTEMPTS,
@@ -141,7 +142,8 @@ class CliUsersPlugin:
     def on_mount(self, server: Any) -> None:
         """Hook called by ``CliServerResult.mount_plugin``: scopes user events
         to the user's own event sockets, adopts the server's allowed origins
-        (CSRF) and protects the whole server unless disabled."""
+        (CSRF), protects the whole server unless disabled and owns access to
+        the remote shell (``users`` shell mode)."""
         manager = getattr(server, "event_socket_manager", None)
         if manager is not None and hasattr(manager, "send_to_user"):
             self.auth_service.user_event_sender = manager.send_to_user
@@ -151,6 +153,10 @@ class CliUsersPlugin:
             self.auth_service.options.allowed_origins = list(origins)
         if self.protect_server:
             self.protect(server.app)
+        # Remote shell: users mode (ticket + shell:execute, session-bound).
+        set_shell_provider = getattr(server, "set_shell_access_provider", None)
+        if callable(set_shell_provider):
+            set_shell_provider(UsersShellAccess(self.auth_service))
 
     async def startup(self) -> None:
         """Seed and start the background session sweep on the running loop."""

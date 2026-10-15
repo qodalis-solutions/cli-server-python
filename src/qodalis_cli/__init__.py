@@ -58,8 +58,12 @@ from .processors import (
     CliBase64CommandProcessor,
 )
 from .create_cli_server import create_cli_server, CliServerOptions, CliServerResult
+from .shell_security import CliShellOptions, ShellAccessProvider, ShellPrincipal
 
 __all__ = [
+    "CliShellOptions",
+    "ShellAccessProvider",
+    "ShellPrincipal",
     "ICliCommandAuthor",
     "CliCommandAuthor",
     "DEFAULT_LIBRARY_AUTHOR",

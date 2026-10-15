@@ -29,6 +29,7 @@ from .services.auth_service import (
 )
 from .services.users_service import UsersService
 from .server_protection import ServerProtectionMiddleware
+from .shell_access import UsersShellAccess
 from .stores.in_memory_audit_store import InMemoryAuditStore
 from .stores.in_memory_credential_store import InMemoryCredentialStore
 from .stores.in_memory_group_store import InMemoryGroupStore
@@ -72,6 +73,7 @@ __all__ = [
     "UsersPluginOptions",
     "UsersPluginResult",
     "UsersService",
+    "UsersShellAccess",
     "build_users_plugin",
     "has_permission",
     "merge_permissions",

@@ -286,9 +286,10 @@ class TestWithoutUsersPlugin:
         result, _ = _build()
         with TestClient(result.app) as c:
             assert c.get("/api/qcli/capabilities").json()["shell"] is False
-            with pytest.raises(WebSocketDisconnect):
+            with pytest.raises(WebSocketDisconnect) as exc:
                 with c.websocket_connect("/ws/qcli/shell") as ws:
                     ws.receive_text()
+            assert exc.value.code == 4404
 
     def test_ws_origin_check_without_users(self):
         result, _ = _build(allowed_origins=[ALLOWED])
