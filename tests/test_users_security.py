@@ -819,6 +819,22 @@ class TestValidation:
         res = srv.c.post(BASE + "/users", headers=_h(root), json={"name": "u", "email": "u@x", "data": {"k": huge}})
         assert_error(res, 400, "too large")
 
+    async def test_chunked_body_limit_stops_reading(self):
+        app, _ = _users_app(CliUsersBuilder().set_default_admin_password(ROOT_PASS))
+        sent = 0
+
+        async def body():
+            nonlocal sent
+            for _ in range(800):  # 50 MB, no Content-Length
+                sent += 65536
+                yield b"x" * 65536
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+            res = await c.post(BASE + "/sessions", content=body(),
+                               headers={"content-type": "application/json"})
+        assert_error(res, 400, "too large")
+        assert sent <= 2 * 1024 * 1024, f"read {sent} bytes before refusing"
+
     def test_name_email_shared_namespace(self, srv: Server):
         root = srv.root
         srv.c.post(BASE + "/users", headers=_h(root), json={"name": "alice", "email": "alice@corp"})

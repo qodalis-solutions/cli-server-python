@@ -69,6 +69,21 @@ def _validation_message(exc: RequestValidationError) -> str:
     return f"invalid {field}: {first.get('msg', 'invalid value')}"
 
 
+async def _read_body_capped(request: Request) -> bool:
+    """Read the body, stopping as soon as it exceeds ``BODY_MAX_BYTES``
+    (chunked bodies have no Content-Length).  ``False`` when too large;
+    otherwise the body is cached on the request for the handler."""
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > BODY_MAX_BYTES:
+            return False
+        chunks.append(chunk)
+    request._body = b"".join(chunks)
+    return True
+
+
 class UsersApiRoute(APIRoute):
     """Route class converting validation/HTTP errors to ``{error}`` bodies."""
 
@@ -83,7 +98,7 @@ class UsersApiRoute(APIRoute):
                 too_large = True
             if too_large or (
                 request.method in ("POST", "PUT", "PATCH")
-                and len(await request.body()) > BODY_MAX_BYTES
+                and not await _read_body_capped(request)
             ):
                 return error_response(400, "request body too large")
             try:
