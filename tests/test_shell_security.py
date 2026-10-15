@@ -470,3 +470,35 @@ class TestPtyReaping:
             os.waitpid(pids[0], 0)
             pytest.fail("shell process still running")
         pytest.fail("shell process left as a zombie")
+
+
+class TestStdinEncoding:
+    async def test_lone_surrogate_in_stdin_does_not_end_the_shell(self):
+        import asyncio
+
+        from qodalis_cli.services.cli_shell_session_manager import _ShellSession
+
+        manager = _server(allow_anonymous=True).shell_session_manager
+        r, w = os.pipe()
+        os.set_blocking(w, False)
+        session = _ShellSession(
+            id="t", mode="anonymous", kind="interactive", key="k", address="a",
+            websocket=None, loop=asyncio.get_running_loop(),
+        )
+        socket = _StdinSocket([
+            '{"type": "stdin", "data": "a\\ud800"}',
+            json.dumps({"type": "stdin", "data": "next"}),
+        ])
+        task = asyncio.ensure_future(manager._read_websocket_input(socket, w, session))
+        try:
+            await asyncio.sleep(0.2)
+            assert not task.done(), task.exception() if task.done() else None
+            assert os.read(r, 100).endswith(b"next")
+        finally:
+            task.cancel()
+            try:
+                await task
+            except BaseException:
+                pass
+            os.close(r)
+            os.close(w)

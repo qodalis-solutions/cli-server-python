@@ -597,7 +597,9 @@ class CliShellSessionManager:
                     data = msg.get("data", "")
                     if isinstance(data, str) and data:
                         session.last_input = time.monotonic()
-                        await _write_pty(master_fd, data.encode("utf-8"))
+                        # "replace": a lone surrogate (valid JSON escape) must
+                        # not end the shell.
+                        await _write_pty(master_fd, data.encode("utf-8", "replace"))
                 elif msg_type == "resize":
                     self._set_pty_size(master_fd, _dim(msg.get("cols"), 80), _dim(msg.get("rows"), 24))
             except OSError as e:
