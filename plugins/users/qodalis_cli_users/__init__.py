@@ -10,6 +10,7 @@ from typing import Any, Callable, Optional
 from .cli_users_builder import CliUsersBuilder, CliUsersPlugin
 from .errors import UsersApiError
 from .models import (
+    ApiToken,
     AuditEntry,
     AuditQueryOptions,
     Credentials,
@@ -30,12 +31,14 @@ from .services.auth_service import (
 from .services.users_service import UsersService
 from .server_protection import ServerProtectionMiddleware
 from .shell_access import UsersShellAccess
+from .stores.in_memory_api_token_store import InMemoryApiTokenStore
 from .stores.in_memory_audit_store import InMemoryAuditStore
 from .stores.in_memory_credential_store import InMemoryCredentialStore
 from .stores.in_memory_group_store import InMemoryGroupStore
 from .stores.in_memory_session_store import InMemorySessionStore
 from .stores.in_memory_user_store import InMemoryUserStore
 from .stores.interfaces import (
+    IApiTokenStore,
     IAuditStore,
     ICredentialStore,
     IGroupStore,
@@ -44,6 +47,7 @@ from .stores.interfaces import (
 )
 
 __all__ = [
+    "ApiToken",
     "AuditEntry",
     "AuditQueryOptions",
     "AuthContext",
@@ -55,11 +59,13 @@ __all__ = [
     "ExternalAuthAdapter",
     "ExternalAuthResult",
     "Group",
+    "IApiTokenStore",
     "IAuditStore",
     "ICredentialStore",
     "IGroupStore",
     "ISessionStore",
     "IUserStore",
+    "InMemoryApiTokenStore",
     "InMemoryAuditStore",
     "InMemoryCredentialStore",
     "InMemoryGroupStore",

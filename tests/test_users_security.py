@@ -334,7 +334,7 @@ class TestServerProtection:
         token = c.post(BASE + "/sessions", json={"username": "root", "password": ROOT_PASS}).json()["token"]
         assert c.get("/host/me", headers=_h(token)).json() == {"name": "root"}
         assert c.get("/host/deploy", headers=_h(token)).status_code == 200
-        c.post(BASE + "/users", headers=_h(token), json={"name": "al", "email": "al@x", "password": "pass1234"})
+        c.post(BASE + "/users", headers=_h(token), json={"name": "al", "email": "al@x.io", "password": "pass1234"})
         al = c.post(BASE + "/sessions", json={"username": "al", "password": "pass1234"}).json()["token"]
         assert c.get("/host/deploy", headers=_h(al)).status_code == 403
 
@@ -630,7 +630,7 @@ class TestEscalation:
         assert_error(srv.c.post(BASE + "/groups/admin/members/mgr", headers=_h(mgr)), 403)
         assert_error(srv.c.put(BASE + "/users/mgr", headers=_h(mgr), json={"groups": ["admin", "mgr-g"]}), 403)
         res = srv.c.post(BASE + "/users", headers=_h(mgr), json={
-            "name": "evil", "email": "evil@x", "password": "pass1234", "groups": ["admin"]})
+            "name": "evil", "email": "evil@x.io", "password": "pass1234", "groups": ["admin"]})
         assert_error(res, 403, "cannot grant permissions you do not hold")
 
     def test_cannot_act_on_more_privileged_user(self, srv: Server, mgr: str):
@@ -732,11 +732,11 @@ class TestDefaultCredentials:
     def test_password_policy(self, srv: Server):
         root = srv.root
         assert_error(srv.c.post(BASE + "/users", headers=_h(root), json={
-            "name": "a", "email": "a@x", "password": "short12"}), 400, "at least 8")
+            "name": "a", "email": "a@x.io", "password": "short12"}), 400, "at least 8")
         assert_error(srv.c.post(BASE + "/users", headers=_h(root), json={
-            "name": "a", "email": "a@x", "password": "x" * 1025}), 400, "at most 1024")
+            "name": "a", "email": "a@x.io", "password": "x" * 1025}), 400, "at most 1024")
         assert srv.c.post(BASE + "/users", headers=_h(root), json={
-            "name": "a", "email": "a@x", "password": "x" * 1024}).status_code == 201
+            "name": "a", "email": "a@x.io", "password": "x" * 1024}).status_code == 201
 
 
 # =========================================================================
@@ -913,12 +913,12 @@ class TestTokens:
 class TestValidation:
     @pytest.mark.parametrize("name", ["-x", "a b", "a" * 65, "a\x1b[31m", "a/b", "é"])
     def test_bad_user_names(self, srv: Server, name):
-        res = srv.c.post(BASE + "/users", headers=_h(srv.root), json={"name": name, "email": "n@x"})
+        res = srv.c.post(BASE + "/users", headers=_h(srv.root), json={"name": name, "email": "n@x.io"})
         assert_error(res, 400)
 
     @pytest.mark.parametrize("name", ["a", "A.b_c-d@e", "x" * 64, "0day"])
     def test_good_user_names(self, srv: Server, name):
-        res = srv.c.post(BASE + "/users", headers=_h(srv.root), json={"name": name, "email": "mail@x"})
+        res = srv.c.post(BASE + "/users", headers=_h(srv.root), json={"name": name, "email": "mail@x.io"})
         assert res.status_code == 201, res.text
 
     @pytest.mark.parametrize("email", ["nope", "a@", "@b", "a b@c", "a@b c", "a\x00@b", ("a" * 250) + "@b.io"])
@@ -952,9 +952,9 @@ class TestValidation:
     def test_data_and_body_limits(self, srv: Server):
         root = srv.root
         big = {"k": "x" * (16 * 1024)}
-        assert_error(srv.c.post(BASE + "/users", headers=_h(root), json={"name": "u", "email": "u@x", "data": big}), 400)
+        assert_error(srv.c.post(BASE + "/users", headers=_h(root), json={"name": "u", "email": "u@x.io", "data": big}), 400)
         huge = "x" * (1024 * 1024 + 10)
-        res = srv.c.post(BASE + "/users", headers=_h(root), json={"name": "u", "email": "u@x", "data": {"k": huge}})
+        res = srv.c.post(BASE + "/users", headers=_h(root), json={"name": "u", "email": "u@x.io", "data": {"k": huge}})
         assert_error(res, 400, "too large")
 
     def test_lone_surrogates_rejected_and_never_stored(self, srv: Server):
@@ -968,9 +968,9 @@ class TestValidation:
         assert_error(raw("PUT", BASE + "/users/eve", eve, '{"data": {"k": "\\ud800"}}'), 400)
         assert_error(raw("PUT", BASE + "/users/eve", eve, '{"email": "e\\ud800@x"}'), 400)
         assert_error(raw("POST", BASE + "/users", root,
-                         '{"name": "u1", "email": "u1@x", "homeDir": "/h\\udfff"}'), 400)
+                         '{"name": "u1", "email": "u1@x.io", "homeDir": "/h\\udfff"}'), 400)
         assert_error(raw("POST", BASE + "/users", root,
-                         '{"name": "u2", "email": "u2@x", "password": "abcdefgh\\ud800"}'), 400)
+                         '{"name": "u2", "email": "u2@x.io", "password": "abcdefgh\\ud800"}'), 400)
         # Login with such a password / name is a normal failure, not a 500.
         for body in ('{"username": "root", "password": "\\ud800"}',
                      '{"username": "ghost", "password": "\\ud800"}',
@@ -998,12 +998,12 @@ class TestValidation:
 
     def test_name_email_shared_namespace(self, srv: Server):
         root = srv.root
-        srv.c.post(BASE + "/users", headers=_h(root), json={"name": "alice", "email": "alice@corp"})
-        assert_error(srv.c.post(BASE + "/users", headers=_h(root), json={"name": "alice@corp", "email": "z@z"}), 409)
+        srv.c.post(BASE + "/users", headers=_h(root), json={"name": "alice", "email": "alice@corp.io"})
+        assert_error(srv.c.post(BASE + "/users", headers=_h(root), json={"name": "alice@corp.io", "email": "z@z.io"}), 409)
         assert_error(srv.c.post(BASE + "/users", headers=_h(root), json={"name": "bob", "email": "ALICE"}), 400)
-        srv.c.post(BASE + "/users", headers=_h(root), json={"name": "carol@corp", "email": "carol@x"})
-        assert_error(srv.c.post(BASE + "/users", headers=_h(root), json={"name": "dave", "email": "carol@corp"}), 409)
-        assert_error(srv.c.put(BASE + "/users/alice", headers=_h(root), json={"name": "carol@x"}), 409)
+        srv.c.post(BASE + "/users", headers=_h(root), json={"name": "carol@corp.io", "email": "carol@x.io"})
+        assert_error(srv.c.post(BASE + "/users", headers=_h(root), json={"name": "dave", "email": "carol@corp.io"}), 409)
+        assert_error(srv.c.put(BASE + "/users/alice", headers=_h(root), json={"name": "carol@x.io"}), 409)
 
     def test_audit_sanitizes_attempted_names(self, srv: Server):
         srv.c.post(BASE + "/sessions", json={"username": "\x1b[31mevil" + "y" * 100, "password": "x"})
@@ -1022,7 +1022,7 @@ class TestAudit:
     def test_user_and_actor_ids(self, srv: Server):
         root = srv.root
         root_id = srv.c.get(BASE + "/sessions/current", headers=_h(root)).json()["user"]["id"]
-        user = srv.c.post(BASE + "/users", headers=_h(root), json={"name": "al", "email": "al@x"}).json()
+        user = srv.c.post(BASE + "/users", headers=_h(root), json={"name": "al", "email": "al@x.io"}).json()
         entry = srv.c.get(BASE + "/audit?event=user_created", headers=_h(root)).json()[0]
         assert entry["userId"] == user["id"]
         assert entry["actorId"] == root_id

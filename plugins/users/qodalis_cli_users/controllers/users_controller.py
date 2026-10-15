@@ -20,6 +20,7 @@ from ..services.users_service import UsersService
 from ._routing import collection, new_router
 
 MANAGED_BY_HOST = "Authentication is managed by the host application"
+API_TOKENS_CANNOT_CHANGE_PASSWORDS = "forbidden: API tokens cannot change passwords"
 
 
 def create_users_router(
@@ -148,6 +149,8 @@ def create_users_router(
         request: Request,
         ctx: AuthContext = Depends(get_auth_pending),
     ):
+        if ctx.api_token is not None:
+            raise forbidden(API_TOKENS_CANNOT_CHANGE_PASSWORDS)
         target = await user_store.get_user(id_or_name)
         is_self = ctx.is_self(target)
         # While a password change is pending only the own password may change.

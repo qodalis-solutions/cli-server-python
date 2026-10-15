@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from qodalis_cli import (
+    CliMcpOptions,
     CliServerOptions,
     CliShellOptions,
     create_cli_server,
@@ -257,6 +258,15 @@ def main() -> None:
             # instead; with neither, the shell would stay locked (4401).
             enable_shell=True,
             shell=CliShellOptions(idle_timeout=15 * 60, max_sessions_per_user=3),
+            # MCP endpoint (POST /api/qcli/mcp): commands, files, data explorer
+            # and jobs as MCP tools.  The users plugin authenticates it — use an
+            # API token (`token create mcp` in the CLI, or POST /api/v1/qcli/tokens):
+            #   claude mcp add --transport http qcli http://localhost:8048/api/qcli/mcp \
+            #     --header "Authorization: Bearer <token>"
+            mcp=CliMcpOptions(
+                instructions="Qodalis CLI demo server: run CLI commands, browse files, "
+                             "query data sources and manage background jobs.",
+            ),
         )
     )
 
@@ -322,6 +332,7 @@ def main() -> None:
     logger.info("  Admin API: http://%s:%d/api/v1/qcli/admin", host, port)
     if admin_plugin.dashboard_app:
         logger.info("  Admin Dashboard: http://%s:%d/qcli/admin", host, port)
+    logger.info("  MCP: http://%s:%d/api/qcli/mcp", host, port)
     logger.info("  WebSocket: ws://%s:%d/ws/qcli/events", host, port)
     logger.info("  File storage: %s", type(file_storage_provider).__name__)
 

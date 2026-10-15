@@ -21,6 +21,7 @@ from ..services.auth_service import AuthContext, AuthService
 from ._routing import collection, new_router
 
 MANAGED_BY_HOST = "Authentication is managed by the host application"
+NOT_A_SESSION = "not a session"
 
 
 def create_sessions_router(
@@ -63,6 +64,8 @@ def create_sessions_router(
 
         @router.delete("/current", status_code=204)
         async def logout(ctx: AuthContext = Depends(get_auth_pending)):
+            if ctx.api_token is not None:
+                raise not_found(NOT_A_SESSION)
             if ctx.token:
                 await auth_service.logout(ctx.token)
             return Response(status_code=204)
@@ -74,7 +77,8 @@ def create_sessions_router(
 
     @router.get("/current")
     async def current_session(ctx: AuthContext = Depends(get_auth_pending)):
-        assert ctx.session is not None
+        if ctx.session is None:
+            raise not_found(NOT_A_SESSION)
         return auth_service.session_payload(ctx.session, ctx.user, ctx.permissions)
 
     @collection(router, "GET")

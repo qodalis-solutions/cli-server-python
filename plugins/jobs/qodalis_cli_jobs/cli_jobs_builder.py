@@ -26,6 +26,15 @@ class CliJobsPlugin:
     router: APIRouter
     scheduler: CliJobScheduler
 
+    def on_mount(self, server: object) -> None:
+        """Hook called by ``CliServerResult.mount_plugin``: registers the
+        ``jobs_*`` MCP tools on the server's MCP tool registry."""
+        mcp = getattr(server, "mcp", None)
+        if mcp is not None and hasattr(mcp, "add_provider"):
+            from .mcp_tools import JobsMcpToolProvider
+
+            mcp.add_provider(JobsMcpToolProvider(self.scheduler), builtin=True)
+
 
 class CliJobsBuilder:
     """Fluent builder for configuring and creating the jobs plugin."""
