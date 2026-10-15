@@ -8,13 +8,20 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from .session_bound_sockets import SessionBoundSockets
+
 logger = logging.getLogger(__name__)
 
 
-class CliEventSocketManager:
-    """Manages WebSocket connections for broadcasting server events to clients."""
+class CliEventSocketManager(SessionBoundSockets):
+    """Manages WebSocket connections for broadcasting server events to clients.
+
+    Authenticated sockets are bound to their session: once it ends (logout,
+    revoke, user disabled/deleted, expiry) the socket is closed with 4401
+    ``session ended`` (see :class:`SessionBoundSockets`)."""
 
     def __init__(self) -> None:
+        super().__init__()
         self._clients: set[WebSocket] = set()
         self._client_info: dict[WebSocket, dict[str, Any]] = {}
         self._next_client_id = 1
@@ -50,6 +57,7 @@ class CliEventSocketManager:
             self._client_info[websocket]["userName"] = getattr(user, "name", None)
         if session is not None:
             self._client_info[websocket]["sessionId"] = getattr(session, "id", None)
+        self.bind(websocket, identity)
 
         logger.info("Event client connected (id=%s)", client_id)
 
@@ -62,9 +70,14 @@ class CliEventSocketManager:
                 except Exception:
                     break
         finally:
+            self.unbind(websocket)
             self._clients.discard(websocket)
             self._client_info.pop(websocket, None)
             logger.info("Event client disconnected (id=%s)", client_id)
+
+    def _on_session_ended(self, websocket: WebSocket) -> None:
+        self._clients.discard(websocket)
+        self._client_info.pop(websocket, None)
 
     async def broadcast_message(self, message: str) -> None:
         """Send a text message to all connected WebSocket clients."""

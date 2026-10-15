@@ -505,6 +505,23 @@ class AuthService:
             if ticket.expires_at <= now:
                 self._tickets.pop(key, None)
 
+    async def is_context_active(self, ctx: Any) -> bool:
+        """Whether the session behind an authenticated WebSocket is still
+        alive (not logged out, revoked, expired; user neither disabled nor
+        deleted).  Never extends the session.  Adapter identities have no
+        stored session and stay valid."""
+        if not isinstance(ctx, AuthContext):
+            return True
+        if ctx.external:
+            return True
+        if ctx.session is None:
+            return False
+        session = await self.session_store.get_session_by_id(ctx.session.id)
+        if session is None or session.user_id != ctx.user.id or self.is_expired(session):
+            return False
+        user = await self.user_store.get_user(ctx.user.id)
+        return user is not None and user.id == ctx.user.id and not user.disabled
+
     def session_payload(
         self, session: Session, user: User, permissions: list[str],
     ) -> dict[str, Any]:

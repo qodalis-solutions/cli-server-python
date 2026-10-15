@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from fastapi import WebSocket
 
 from ..security import is_sensitive_record, redact
+from .session_bound_sockets import SessionBoundSockets
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +22,15 @@ _LEVEL_ORDER = {
 }
 
 
-class CliLogSocketManager:
-    """Manages WebSocket connections for streaming log messages to clients."""
+class CliLogSocketManager(SessionBoundSockets):
+    """Manages WebSocket connections for streaming log messages to clients.
+
+    Authenticated sockets are bound to their session: once it ends (logout,
+    revoke, user disabled/deleted, expiry) the socket is closed with 4401
+    ``session ended`` (see :class:`SessionBoundSockets`)."""
 
     def __init__(self) -> None:
+        super().__init__()
         self._clients: dict[int, tuple[WebSocket, str | None]] = {}
         self._next_id = 0
 
@@ -36,12 +42,15 @@ class CliLogSocketManager:
         Args:
             websocket: The incoming WebSocket connection.
             level_filter: Optional minimum log level to send to this client.
+            identity: The authenticated caller on a protected server; the
+                socket is closed when its session ends.
         """
         if websocket.client_state.name == "CONNECTING":
             await websocket.accept()
         client_id = self._next_id
         self._next_id += 1
         self._clients[client_id] = (websocket, level_filter)
+        self.bind(websocket, identity)
         logger.info("Log client connected (id=%s, level=%s)", client_id, level_filter or "all")
 
         try:
@@ -53,8 +62,14 @@ class CliLogSocketManager:
                 except Exception:
                     break
         finally:
+            self.unbind(websocket)
             self._clients.pop(client_id, None)
             logger.info("Log client disconnected (id=%s)", client_id)
+
+    def _on_session_ended(self, websocket: WebSocket) -> None:
+        for client_id, (ws, _) in list(self._clients.items()):
+            if ws is websocket:
+                self._clients.pop(client_id, None)
 
     @staticmethod
     def should_send_log(filter_level: str | None, log_level: str) -> bool:

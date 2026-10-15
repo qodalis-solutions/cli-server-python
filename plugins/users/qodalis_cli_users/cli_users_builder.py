@@ -143,9 +143,10 @@ class CliUsersPlugin:
 
     def on_mount(self, server: Any) -> None:
         """Hook called by ``CliServerResult.mount_plugin``: scopes user events
-        to the user's own event sockets, adopts the server's allowed origins
-        (CSRF), protects the whole server unless disabled and owns access to
-        the remote shell (``users`` shell mode)."""
+        to the user's own event sockets, closes events/logs sockets whose session
+        ended, adopts the server's allowed origins (CSRF), protects the whole
+        server unless disabled and owns access to the remote shell (``users``
+        shell mode)."""
         manager = getattr(server, "event_socket_manager", None)
         if manager is not None and hasattr(manager, "send_to_user"):
             self.auth_service.user_event_sender = manager.send_to_user
@@ -161,6 +162,13 @@ class CliUsersPlugin:
                 self._base_paths.append(base)
         if self.protect_server:
             self.protect(server.app)
+        # Events/logs sockets are bound to their session: closed (4401
+        # "session ended") on logout, revoke, disable/delete and expiry.
+        for name in ("event_socket_manager", "log_socket_manager"):
+            sockets = getattr(server, name, None)
+            if sockets is not None and hasattr(sockets, "set_session_check"):
+                sockets.set_session_check(self.auth_service.is_context_active)
+                self.auth_service.add_change_listener(sockets.request_recheck)
         # Remote shell: users mode (ticket + shell:execute, session-bound).
         set_shell_provider = getattr(server, "set_shell_access_provider", None)
         if callable(set_shell_provider):

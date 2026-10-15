@@ -514,6 +514,100 @@ class TestWebSockets:
             assert json.loads(wb.receive_text())["data"]["sessionId"] == bob_sid
 
 
+def _messages_until_closed(ws) -> tuple[list[dict], WebSocketDisconnect]:
+    messages: list[dict] = []
+    while True:
+        try:
+            messages.append(json.loads(ws.receive_text()))
+        except WebSocketDisconnect as exc:
+            return messages, exc
+
+
+class TestSocketsCloseWhenSessionEnds:
+    """Events and logs sockets are bound to the session behind their ticket:
+    logout, revoke, disable/delete and expiry close them with 4401
+    ``session ended`` (after ``session-kicked`` for revocations)."""
+
+    def _open(self, srv: Server, path: str, token: str):
+        ws = srv.c.websocket_connect(f"{path}?ticket={srv.ticket(token)}", headers={"origin": ALLOWED})
+        conn = ws.__enter__()
+        assert json.loads(conn.receive_text())["type"] == "connected"
+        return ws, conn
+
+    def _sid(self, srv: Server, token: str) -> str:
+        return srv.c.get(BASE + "/sessions/current", headers=_h(token)).json()["id"]
+
+    @pytest.mark.parametrize("path", ["/ws/qcli/events", "/ws/qcli/logs"])
+    def test_logout_closes_socket(self, srv: Server, path: str):
+        token = srv.root
+        ctx, ws = self._open(srv, path, token)
+        try:
+            assert srv.c.delete(BASE + "/sessions/current", headers=_h(token)).status_code == 204
+            _, exc = _messages_until_closed(ws)
+            assert (exc.code, exc.reason) == (4401, "session ended")
+        finally:
+            ctx.__exit__(None, None, None)
+
+    def test_revoke_sends_session_kicked_then_closes_only_that_session(self, srv: Server):
+        alice = srv.user("alice", ["logs:read"])
+        alice2 = srv.login("alice", "pass1234")
+        sid = self._sid(srv, alice)
+        opened = [
+            self._open(srv, "/ws/qcli/events", alice),
+            self._open(srv, "/ws/qcli/logs", alice),
+            self._open(srv, "/ws/qcli/events", alice2),
+        ]
+        try:
+            assert srv.c.delete(f"{BASE}/sessions/{sid}", headers=_h(srv.root)).status_code == 204
+            messages, exc = _messages_until_closed(opened[0][1])
+            assert (exc.code, exc.reason) == (4401, "session ended")
+            assert any(m["type"] == "session-kicked" and m["data"]["sessionId"] == sid for m in messages)
+            _, exc = _messages_until_closed(opened[1][1])
+            assert (exc.code, exc.reason) == (4401, "session ended")
+            # The user's other session keeps its socket.
+            other = opened[2][1]
+            kicked = json.loads(other.receive_text())
+            assert kicked["type"] == "session-kicked" and kicked["data"]["sessionId"] == sid
+            assert srv.result.event_socket_manager.get_clients()[-1]["sessionId"] == self._sid(srv, alice2)
+        finally:
+            for ctx, _ in opened:
+                ctx.__exit__(None, None, None)
+
+    @pytest.mark.parametrize("action", ["disable", "delete"])
+    def test_disable_or_delete_user_closes_socket(self, srv: Server, action: str):
+        alice = srv.user("alice", ["logs:read"])
+        ctx, ws = self._open(srv, "/ws/qcli/events", alice)
+        lctx, logs = self._open(srv, "/ws/qcli/logs", alice)
+        try:
+            if action == "disable":
+                res = srv.c.put(BASE + "/users/alice", headers=_h(srv.root), json={"disabled": True})
+                assert res.status_code == 200, res.text
+            else:
+                assert srv.c.delete(BASE + "/users/alice", headers=_h(srv.root)).status_code == 204
+            messages, exc = _messages_until_closed(ws)
+            assert (exc.code, exc.reason) == (4401, "session ended")
+            assert any(m["type"] == "session-kicked" for m in messages)
+            _, exc = _messages_until_closed(logs)
+            assert (exc.code, exc.reason) == (4401, "session ended")
+        finally:
+            ctx.__exit__(None, None, None)
+            lctx.__exit__(None, None, None)
+
+    def test_expired_session_closes_socket_on_sweep(self, srv: Server):
+        import time
+
+        alice = srv.user("alice")
+        ctx, ws = self._open(srv, "/ws/qcli/events", alice)
+        try:
+            srv.users.auth_service.options.session_timeout_ms = 1
+            time.sleep(0.01)
+            srv.c.portal.call(srv.users.auth_service.cleanup_sessions)
+            _, exc = _messages_until_closed(ws)
+            assert (exc.code, exc.reason) == (4401, "session ended")
+        finally:
+            ctx.__exit__(None, None, None)
+
+
 # =========================================================================
 # B3 — no privilege escalation
 # =========================================================================
