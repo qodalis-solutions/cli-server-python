@@ -96,6 +96,8 @@ When mounted on a CLI server, every route and socket requires a users session ex
 
 WebSockets authenticate with a single-use ticket: `POST /sessions/ws-ticket` → `201 { ticket, expiresIn: 30 }`, then connect with `?ticket=<ticket>`. Missing/invalid tickets close with 4401, missing permissions with 4403. Bearer tokens are not accepted in query strings.
 
+Remote shell: when mounted, the plugin owns shell access (`shellAuth: "users"`). A shell is bound to the session that opened it and is closed with 4401 `session ended` after logout, expiry, revoke, user disable/delete or loss of `shell:execute` (re-checked on every change and at least every 60 s). Opens and closes are audited as `shell_opened` / `shell_closed` (`metadata: { mode, sessionId, durationMs, exitCode, reason }`, never the command). See the main README, *Remote Shell Security*.
+
 While `mustChangePassword` is true a session may only use `GET`/`DELETE /sessions/current` and `PUT /users/{self}/password`; everything else returns `403 password change required`.
 
 ## API Endpoints

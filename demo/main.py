@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from qodalis_cli import (
     CliServerOptions,
+    CliShellOptions,
     create_cli_server,
     CliSystemCommandProcessor,
     CliHttpCommandProcessor,
@@ -248,7 +249,13 @@ def main() -> None:
         CliServerOptions(
             configure=configure,
             allowed_origins=allowed_origins,
-            enable_shell=True,  # opt-in; requires the shell:execute permission
+            # Opt-in remote shell.  The users plugin is mounted below, so the
+            # shell runs in "users" mode: a WebSocket ticket of a session with
+            # the shell:execute permission (root has '*').  Without the users
+            # plugin, set shell=CliShellOptions(token=os.environ["QCLI_SHELL_TOKEN"])
+            # instead; with neither, the shell would stay locked (4401).
+            enable_shell=True,
+            shell=CliShellOptions(idle_timeout=15 * 60, max_sessions_per_user=3),
         )
     )
 
