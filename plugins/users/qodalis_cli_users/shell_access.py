@@ -4,6 +4,9 @@ Registered on the CLI server when the plugin is mounted.  An open shell is
 bound to the session that opened it: the server re-checks it periodically and
 on every session/user/group change, and closes it (4401 ``session ended``)
 after logout, expiry, revoke, disable/delete or loss of ``shell:execute``.
+Identities from an external auth adapter are re-validated by calling the
+adapter again with the shell's WebSocket request, so the adapter must be able
+to authenticate it from its headers/cookies.
 """
 
 from __future__ import annotations
@@ -29,6 +32,9 @@ class UsersShellPrincipal:
     user_name: str
     session_id: str | None
     context: AuthContext
+    #: The shell's WebSocket: adapter identities are re-validated by calling
+    #: the external auth adapter again with it.
+    connection: Any = None
 
 
 class UsersShellAccess:
@@ -52,6 +58,7 @@ class UsersShellAccess:
             user_name=ctx.user.name,
             session_id=ctx.session.id if ctx.session else None,
             context=ctx,
+            connection=websocket,
         )
 
     def can_open(self, principal: UsersShellPrincipal) -> bool:
@@ -63,8 +70,7 @@ class UsersShellAccess:
         ``"permission removed"`` otherwise.  Never extends the session."""
         ctx = principal.context
         if ctx.external:
-            # Adapter identities have no stored session to re-check.
-            return True
+            return await self._adapter_active(principal)
         if principal.session_id is None:
             return False
         session = await self.auth.session_store.get_session_by_id(principal.session_id)
@@ -74,6 +80,23 @@ class UsersShellAccess:
         if user is None or user.id != principal.user_id or user.disabled or user.must_change_password:
             return False
         if not has_permission(await self.auth.user_permissions(user), SHELL_PERMISSION):
+            return PERMISSION_REMOVED
+        return True
+
+    async def _adapter_active(self, principal: UsersShellPrincipal) -> bool | str:
+        """Adapter identities have no stored session: ask the external auth
+        adapter again with the shell's WebSocket (its headers and cookies).
+        ``None`` or an exception ends the shell; a different user or one
+        without ``shell:execute`` too."""
+        if principal.connection is None or not self.auth.external_auth:
+            return False
+        try:
+            fresh = await self.auth.authenticate_external(principal.connection)
+        except Exception:
+            return False
+        if fresh.user.id != principal.user_id or fresh.must_change_password:
+            return False
+        if not fresh.can(SHELL_PERMISSION):
             return PERMISSION_REMOVED
         return True
 

@@ -164,6 +164,8 @@ users_plugin = CliUsersBuilder().set_user_store(PostgresUserStore(pool)).build()
 
 If the host application already authenticates requests, call `set_auth_adapter(adapter)`. The adapter (sync or async) receives the request and returns an `ExternalAuthResult` (user + admin flag) or `None`. Login, logout, password change and `verify-password` then answer `501`; no `root` user is seeded (the built-in groups still are), and adapter sessions are not stored or listed.
 
+An open remote shell of an adapter identity has no stored session to re-check, so at every shell re-check (right after the shell opens, on every change event and every `session_check_interval`) the adapter is **called again with the shell's original WebSocket upgrade request** — only its headers, cookies and query string, without any state set by middleware. The adapter must therefore be able to authenticate that request on its own (e.g. from a session cookie the browser sends with the upgrade); a header the browser cannot attach to a WebSocket is not enough. `None` or an exception closes the shell with 4401 `session ended` (audit reason `session ended`); a different user, or one without `shell:execute`, closes it too (audit reason `permission removed` for the latter).
+
 ## Client
 
 Point the browser plugin at this server:

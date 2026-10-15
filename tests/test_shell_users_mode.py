@@ -360,3 +360,90 @@ class TestSessionEndsWhileOpening:
         exc = _rejected(env.c, url)
         assert (exc.code, exc.reason) == (4401, "session ended")
         assert env.result.shell_session_manager.active_sessions == 0
+
+
+class TestAdapterMode:
+    """Shells of users resolved by an external auth adapter (not in the user
+    store) are re-validated by calling the adapter again with the shell's
+    WebSocket request."""
+
+    ORIGIN = "http://app.test"
+
+    @pytest.fixture()
+    def adapter_env(self):
+        from qodalis_cli_users import ExternalAuthResult, User
+
+        state: dict[str, Any] = {"groups": ["shellers"], "mode": "ok"}
+
+        def adapter(request):
+            if state["mode"] == "raise":
+                raise RuntimeError("identity provider down")
+            name = request.headers.get("x-user")
+            if not name or state["mode"] == "none":
+                return None
+            return ExternalAuthResult(user=User(
+                id=f"ext-{name}", name=name, email=f"{name}@x", groups=list(state["groups"]),
+            ))
+
+        clients = []
+
+        def factory(**shell: Any):
+            shell.setdefault("shell", "/bin/sh")
+            result = create_cli_server(CliServerOptions(
+                enable_shell=True, shell=CliShellOptions(**shell), allowed_origins=[self.ORIGIN],
+            ))
+            users = CliUsersBuilder().set_auth_adapter(adapter).build()
+            result.mount_plugin(users)
+            client = TestClient(result.app)
+            client.__enter__()
+            clients.append(client)
+            client.portal.call(users.group_store.create_group, "shellers", "", ["shell:execute"])
+            return client, users
+
+        yield factory, state
+        for client in clients:
+            client.__exit__(None, None, None)
+
+    def _connect(self, client: TestClient):
+        headers = {"x-user": "ext", "origin": self.ORIGIN}
+        res = client.post(BASE + "/sessions/ws-ticket", headers=headers)
+        assert res.status_code == 201, res.text
+        return client.websocket_connect(f"{SHELL}?ticket={res.json()['ticket']}", headers=headers)
+
+    @staticmethod
+    def _echo(ws, word: str) -> None:
+        ws.send_text(json.dumps({"type": "stdin", "data": f"echo {word}\n"}))
+        out = ""
+        while word not in out.replace(f"echo {word}", ""):
+            out += json.loads(ws.receive_text()).get("data", "")
+
+    def test_adapter_shell_survives_periodic_rechecks(self, adapter_env):
+        factory, _ = adapter_env
+        client, _ = factory(session_check_interval=0.2)
+        with self._connect(client) as ws:
+            _ready(ws)
+            time.sleep(0.8)  # several re-checks
+            self._echo(ws, "still-open")
+
+    @pytest.mark.parametrize("mode", ["none", "raise"])
+    def test_adapter_rejecting_closes_session_ended(self, adapter_env, mode):
+        factory, state = adapter_env
+        client, users = factory(session_check_interval=0.2)
+        with self._connect(client) as ws:
+            _ready(ws)
+            state["mode"] = mode
+            exc = _until_closed(ws)
+            assert (exc.code, exc.reason) == (4401, "session ended")
+        closed = client.portal.call(users.audit_store.get_entries, AuditQueryOptions(event="shell_closed"))
+        assert closed[-1].metadata["reason"] == "session ended"
+
+    def test_adapter_without_shell_permission_closes(self, adapter_env):
+        factory, state = adapter_env
+        client, users = factory(session_check_interval=0.2)
+        with self._connect(client) as ws:
+            _ready(ws)
+            state["groups"] = ["users"]
+            exc = _until_closed(ws)
+            assert (exc.code, exc.reason) == (4401, "session ended")
+        closed = client.portal.call(users.audit_store.get_entries, AuditQueryOptions(event="shell_closed"))
+        assert closed[-1].metadata["reason"] == "permission removed"
