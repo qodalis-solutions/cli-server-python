@@ -730,8 +730,9 @@ class TestProviders:
             tools = c.tools()
             # Built-in feature tools win over commands.
             assert tools["server_info"]["description"] != "command"
-            # Command tools beat plugin tools.
-            assert tools["dup"]["description"] == "command dup"
+            # Plugin tools beat command tools.
+            assert tools["dup"]["description"] == "custom"
+            assert c.call("dup", {"n": 1})["result"]["content"][0]["text"] == "first-plugin:1"
             # Between plugin providers the first registered wins.
             result.mcp.add_provider(EchoToolProvider("dup2", "first-plugin"))
             result.mcp.add_provider(EchoToolProvider("dup2", "second-plugin"))

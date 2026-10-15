@@ -471,7 +471,7 @@ class CliServerResult:
 
 ## MCP endpoint
 
-The server can expose **the whole system** to AI clients (Claude Code, Claude Desktop, Cursor, …) as [MCP](https://modelcontextprotocol.io) tools: CLI commands, the filesystem API, the data explorer, background jobs and tools contributed by plugins — each with the same permissions as a CLI user. It works with or without the users plugin (which only supplies identities and API tokens).
+The server can expose **the whole system** to AI clients such as Claude Code as [MCP](https://modelcontextprotocol.io) tools: CLI commands, the filesystem API, the data explorer, background jobs and tools contributed by plugins — each with the same permissions as a CLI user. It works with or without the users plugin (which only supplies identities and API tokens).
 
 ### Enabling
 
@@ -520,7 +520,7 @@ Read-only tools carry the MCP annotation `readOnlyHint`, `fs_delete` / `jobs_sto
 
 **Command tools.** Every root processor and its sub-processors are walked; a node becomes a tool when it has no sub-processors, declares `parameters`, or takes a value (`value_required` is `True` — required — or `False` — optional). The name is the command path joined with `_` (`weather`, `weather_current`), lower-cased, characters outside `[a-z0-9_-]` replaced by `-`, at most 64 characters. The input schema has one property per parameter (`string`/`number`/`boolean`, `array` → array of strings, anything else → string; with `description`, `default` and `required`) plus `value` (the positional input) when the command takes a value, and `additionalProperties: false`. A call is validated against the schema, then runs through the same executor as `/execute`; the result is `{ content: [{ type: "text", text }], isError }` with the outputs rendered as text (tables as `a | b` rows, lists one item per line, JSON pretty-printed, key-value as `key: value`) and `isError` = `exitCode != 0`. A single JSON-object output is also returned as `structuredContent`.
 
-Name collisions: built-in feature tools (server, filesystem, data explorer, jobs) win, then command tools, then plugin/host providers in registration order (a warning is logged for each skipped tool).
+Name collisions: built-in feature tools (server, filesystem, data explorer, jobs) win, then plugin/host providers in registration order, then command tools (a warning is logged for each skipped tool).
 
 ### Adding tools (provider API)
 
@@ -592,47 +592,24 @@ Add `"permissions": ["commands:execute", "files:read"]` to the token body to res
 
 **Without the users plugin**, set a static token with `mcp=CliMcpOptions(token="<long random secret>")` and use it as `<token>` below. With neither, the endpoint is open (as open as `/execute`) and the `Authorization` header can be left out.
 
-#### 3. Connect a client
+#### 3. Connect Claude Code
 
-**Claude Code**:
+**a) Directly over HTTP** with the API token (Claude Code speaks Streamable HTTP):
 
 ```bash
 claude mcp add --transport http qcli http://localhost:8048/api/qcli/mcp \
   --header "Authorization: Bearer <token>"
 ```
 
-**Cursor** (and other clients that speak Streamable HTTP; e.g. `~/.cursor/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "qcli": {
-      "type": "http",
-      "url": "http://localhost:8048/api/qcli/mcp",
-      "headers": { "Authorization": "Bearer <token>" }
-    }
-  }
-}
-```
-
-**Claude Desktop** only starts local programs from its config file, so it connects through the `@qodalis/cli-mcp` bridge. Sign in once, then register the bridge in `claude_desktop_config.json`:
+**b) Through the [`@qodalis/mcp-cli`](https://github.com/qodalis-solutions/mcp-cli) bridge**, a local stdio MCP server configured with environment variables:
 
 ```bash
-npx -y @qodalis/cli-mcp login --server http://localhost:8048
+claude mcp add qcli -e QCLI_URL=http://localhost:8048 -e QCLI_TOKEN=<token> -- npx -y @qodalis/mcp-cli
 ```
 
-```json
-{
-  "mcpServers": {
-    "qcli": {
-      "command": "npx",
-      "args": ["-y", "@qodalis/cli-mcp", "--server", "http://localhost:8048"]
-    }
-  }
-}
-```
+Use `-e QCLI_USER=<name> -e QCLI_PASSWORD=<password>` instead of `QCLI_TOKEN` to sign in with a user, and `-e QCLI_READ_ONLY=true` to expose only read-only tools.
 
-**MCP Inspector** (interactive testing): run `npx @modelcontextprotocol/inspector`, choose the *Streamable HTTP* transport, URL `http://localhost:8048/api/qcli/mcp`, and add the header `Authorization: Bearer <token>`.
+Check the connection with `claude mcp list` (or `/mcp` inside Claude Code); `qcli` should be listed as connected, with the server's tools.
 
 #### 4. Raw requests with curl
 
@@ -681,6 +658,7 @@ Responses (abridged):
 | A tool is missing from `tools/list` | The caller lacks the tool's permissions (`files:read`/`files:write`, `data:query`, `jobs:read`/`jobs:manage`, a command's `required_permissions`, or the token's scope), the tool is filtered by the `tools`/`exclude` options, or its feature is not enabled (filesystem, data explorer, jobs plugin). |
 | `-32602 Unknown tool: <name>` | Same as above: the tool is not visible to this caller. |
 | `-32602 Invalid arguments for tool <name>: …` | The arguments do not match the tool's `inputSchema`. |
+| `claude mcp list` shows `qcli` as failed, or `/mcp` lists no tools | Run the curl checks of step 4 with the same URL and token: they show the HTTP status and error. Re-add the server after creating a new token (`claude mcp remove qcli`, then `claude mcp add …`). |
 
 ## Remote Shell Security
 

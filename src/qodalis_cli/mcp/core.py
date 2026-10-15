@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 TOOL_NAME_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 
 #: Provider tiers — on a name collision the lower tier wins: built-in
-#: feature tools, then command tools, then plugin/host providers in
-#: registration order.
+#: feature tools, then plugin/host providers in registration order, then
+#: command tools.
 TIER_BUILTIN = 0
-TIER_COMMANDS = 1
-TIER_PLUGIN = 2
+TIER_PLUGIN = 1
+TIER_COMMANDS = 2
 
 
 @dataclass
@@ -161,8 +161,8 @@ class McpToolRegistry:
 
     def add_provider(self, provider: IMcpToolProvider, *, builtin: bool = False) -> "McpToolRegistry":
         """Register a tool provider.  ``builtin`` marks a server feature
-        (its tools win name collisions); other providers come after the
-        command tools, in registration order."""
+        (its tools win name collisions); other providers come next, in
+        registration order, and command tools last."""
         tier = getattr(provider, "mcp_tier", None)
         if tier is None:
             tier = TIER_BUILTIN if builtin else TIER_PLUGIN
