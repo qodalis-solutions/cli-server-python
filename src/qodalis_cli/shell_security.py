@@ -23,6 +23,7 @@ must pass exactly one access mode:
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import inspect
 import logging
@@ -44,7 +45,7 @@ REASON_LOGIN_REQUIRED = "login required"
 REASON_SESSION_ENDED = "session ended"
 REASON_FORBIDDEN = "forbidden"
 REASON_DISABLED = "shell disabled"
-REASON_LOCKED = "shell locked"
+REASON_LOCKED = "shell access is not configured"
 REASON_TIMEOUT = "shell timed out"
 REASON_LIMIT = "too many shell sessions"
 
@@ -59,6 +60,19 @@ BASE_ENV_NAMES = ("PATH", "HOME", "USER", "LANG")
 
 #: Upper bound for the periodic session re-check (C2: at least every 60 s).
 MAX_SESSION_CHECK_INTERVAL = 60.0
+DEFAULT_SESSION_CHECK_INTERVAL = 30.0
+
+# ``shell_closed`` audit ``metadata.reason`` values.
+END_EXITED = "exited"
+END_CLOSED = "closed"
+END_SESSION_ENDED = "session ended"
+END_PERMISSION_REMOVED = "permission removed"
+END_TIMED_OUT = "shell timed out"
+END_SHUTDOWN = "server shutdown"
+END_ERROR = "error"
+
+#: Stdin touches the owning session at most this often (seconds).
+TOUCH_INTERVAL = 30.0
 
 AuthorizeFn = Callable[[Any], Union[bool, Awaitable[bool]]]
 
@@ -94,8 +108,9 @@ class CliShellOptions:
     #: Variables set in the shell environment (override everything else).
     env_set: dict[str, str] = field(default_factory=dict)
     #: Users mode: how often an open shell re-checks its session and
-    #: ``shell:execute`` (capped at 60 s; also re-checked on session events).
-    session_check_interval: float = MAX_SESSION_CHECK_INTERVAL
+    #: ``shell:execute`` (default 30 s, capped at 60 s; also re-checked
+    #: immediately on session/user/group changes).
+    session_check_interval: float = DEFAULT_SESSION_CHECK_INTERVAL
     #: Use the first ``X-Forwarded-For`` address for per-address limits and
     #: logs (only behind a trusted reverse proxy).
     trust_proxy: bool = False
@@ -125,8 +140,15 @@ class ShellAccessProvider(Protocol):
     def can_open(self, principal: ShellPrincipal) -> bool:
         """Whether the caller may open a shell (``False`` closes 4403)."""
 
-    async def is_active(self, principal: ShellPrincipal) -> bool:
-        """Whether the caller's session is still alive and allowed."""
+    async def is_active(self, principal: ShellPrincipal) -> bool | str:
+        """``True`` while the caller's session is alive and allowed; ``False``
+        (audit reason ``session ended``) or a ``shell_closed`` audit reason
+        string such as ``"permission removed"`` otherwise.  Must not extend
+        the session by itself."""
+
+    async def touch(self, principal: ShellPrincipal) -> None:
+        """Optional: record session activity (called after a successful
+        re-check when stdin arrived since the previous one)."""
 
     async def audit(self, event: str, principal: ShellPrincipal, metadata: dict[str, Any]) -> None:
         """Record ``shell_opened`` / ``shell_closed``."""
@@ -171,12 +193,20 @@ def presented_token(websocket: Any) -> str | None:
     return value[7:].strip() or None
 
 
+def tokens_equal(presented: str, expected: str) -> bool:
+    """Constant-time comparison of SHA-256 digests (no length leak)."""
+    return hmac.compare_digest(
+        hashlib.sha256(presented.encode("utf-8")).digest(),
+        hashlib.sha256(expected.encode("utf-8")).digest(),
+    )
+
+
 def check_token(websocket: Any, expected: str) -> None:
     """Raise :class:`ShellRejected` unless the caller presents ``expected``."""
     presented = presented_token(websocket)
     if presented is None:
         raise ShellRejected(CLOSE_UNAUTHORIZED, REASON_LOGIN_REQUIRED)
-    if not hmac.compare_digest(presented.encode("utf-8"), expected.encode("utf-8")):
+    if not tokens_equal(presented, expected):
         raise ShellRejected(CLOSE_FORBIDDEN, REASON_FORBIDDEN)
 
 

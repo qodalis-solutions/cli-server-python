@@ -17,6 +17,8 @@ from .permissions import has_permission
 from .services.auth_service import AuthContext, AuthService
 
 SHELL_PERMISSION = "shell:execute"
+#: ``shell_closed`` audit reason when ``shell:execute`` is lost.
+PERMISSION_REMOVED = "permission removed"
 
 
 @dataclass
@@ -56,7 +58,9 @@ class UsersShellAccess:
         ctx = principal.context
         return not ctx.must_change_password and ctx.can(SHELL_PERMISSION)
 
-    async def is_active(self, principal: UsersShellPrincipal) -> bool:
+    async def is_active(self, principal: UsersShellPrincipal) -> bool | str:
+        """``True`` while valid; ``False`` (session ended) or
+        ``"permission removed"`` otherwise.  Never extends the session."""
         ctx = principal.context
         if ctx.external:
             # Adapter identities have no stored session to re-check.
@@ -69,7 +73,17 @@ class UsersShellAccess:
         user = await self.auth.user_store.get_user(principal.user_id)
         if user is None or user.id != principal.user_id or user.disabled or user.must_change_password:
             return False
-        return has_permission(await self.auth.user_permissions(user), SHELL_PERMISSION)
+        if not has_permission(await self.auth.user_permissions(user), SHELL_PERMISSION):
+            return PERMISSION_REMOVED
+        return True
+
+    async def touch(self, principal: UsersShellPrincipal) -> None:
+        """Count shell input as session activity (idle timeout)."""
+        if principal.context.external or principal.session_id is None:
+            return
+        session = await self.auth.session_store.get_session_by_id(principal.session_id)
+        if session is not None and session.token_hash:
+            await self.auth.session_store.update_last_activity(session.token_hash)
 
     async def audit(self, event: str, principal: UsersShellPrincipal, metadata: dict[str, Any]) -> None:
         await self.auth.audit(

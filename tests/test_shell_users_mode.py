@@ -159,8 +159,9 @@ class TestUsersMode:
         assert all(e.metadata["sessionId"] == sid for e in opened + closed)
         by_mode = {e.metadata["mode"]: e.metadata for e in closed}
         assert by_mode["command"]["exitCode"] == 3
-        assert by_mode["command"]["reason"] == "exit"
-        assert by_mode["interactive"]["reason"] == "client_disconnected"
+        assert by_mode["command"]["reason"] == "exited"
+        assert by_mode["interactive"]["reason"] == "closed"
+        assert "exitCode" not in by_mode["interactive"]
         assert all(isinstance(e.metadata["durationMs"], int) for e in closed)
         dump = repr(opened + closed)
         assert "SENTINEL" not in dump and "echo" not in dump
@@ -174,7 +175,8 @@ class TestUsersMode:
             exc = _until_closed(ws)
             assert (exc.code, exc.reason) == (4401, "session ended")
         closed = env.audit("shell_closed")
-        assert closed[-1].metadata["reason"] == "session_ended"
+        assert closed[-1].metadata["reason"] == "session ended"
+        assert "exitCode" not in closed[-1].metadata
         assert env.result.shell_session_manager.active_sessions == 0
 
     def test_kick_closes_only_that_session(self, make_env):
@@ -201,7 +203,9 @@ class TestUsersMode:
             _ready(ws)
             res = env.c.put(BASE + "/groups/alice-g", headers=_h(env.root), json={"permissions": ["commands:execute"]})
             assert res.status_code == 200, res.text
-            assert _until_closed(ws).code == 4401
+            exc = _until_closed(ws)
+            assert (exc.code, exc.reason) == (4401, "session ended")
+        assert env.audit("shell_closed")[-1].metadata["reason"] == "permission removed"
 
     def test_disable_user_closes_shell(self, make_env):
         env = make_env()
@@ -236,7 +240,9 @@ class TestUsersMode:
         env = make_env(session_check_interval=3600)
         assert env.result.shell_session_manager.session_check_interval == 60
         env = make_env(session_check_interval=0)
-        assert env.result.shell_session_manager.session_check_interval == 60
+        assert env.result.shell_session_manager.session_check_interval == 30
+        env = make_env()
+        assert env.result.shell_session_manager.session_check_interval == 30
 
     def test_per_user_limit(self, make_env):
         env = make_env(max_sessions_per_user=1)
@@ -255,4 +261,47 @@ class TestUsersMode:
             _ready(ws)
             exc = _until_closed(ws)
             assert (exc.code, exc.reason) == (4408, "shell timed out")
-        assert env.audit("shell_closed")[-1].metadata["reason"] == "idle_timeout"
+        assert env.audit("shell_closed")[-1].metadata["reason"] == "shell timed out"
+
+    def test_periodic_check_does_not_extend_session(self, make_env):
+        env = make_env(session_check_interval=0.1)
+        alice = env.user("alice", ["shell:execute"])
+        sid = env.session_id(alice)
+
+        def last_activity():
+            return env.c.portal.call(env.users.session_store.get_session_by_id, sid).last_activity
+
+        with env.c.websocket_connect(env.shell_url(alice)) as ws:
+            _ready(ws)
+            before = last_activity()
+            time.sleep(0.5)  # several re-checks without stdin
+            assert last_activity() == before
+
+    def test_stdin_touches_session_at_most_every_30s(self, make_env, monkeypatch):
+        import qodalis_cli.services.cli_shell_session_manager as mod
+        monkeypatch.setattr(mod, "TOUCH_INTERVAL", 0.2)
+        env = make_env(session_check_interval=0.1)
+        alice = env.user("alice", ["shell:execute"])
+        sid = env.session_id(alice)
+
+        def last_activity():
+            return env.c.portal.call(env.users.session_store.get_session_by_id, sid).last_activity
+
+        with env.c.websocket_connect(env.shell_url(alice)) as ws:
+            _ready(ws)
+            before = last_activity()
+            time.sleep(0.25)
+            ws.send_text(json.dumps({"type": "stdin", "data": "\n"}))
+            deadline = time.monotonic() + 3
+            while last_activity() == before and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert last_activity() > before
+
+    def test_server_shutdown_closes_1001(self, make_env):
+        env = make_env()
+        with env.c.websocket_connect(env.shell_url(env.root)) as ws:
+            _ready(ws)
+            env.c.portal.call(env.result.shell_session_manager.close_all)
+            assert _until_closed(ws).code == 1001
+        meta = env.audit("shell_closed")[-1].metadata
+        assert meta["reason"] == "server shutdown" and "exitCode" not in meta

@@ -475,7 +475,7 @@ result = create_cli_server(CliServerOptions(enable_shell=True, allowed_origins=[
 result.mount_plugin(CliUsersBuilder().build())  # shell needs a ticket + shell:execute
 ```
 
-An open shell belongs to the session that opened it: logout, session expiry, an admin revoke (kick), the user being disabled or deleted, or losing `shell:execute` closes it with 4401 `session ended` and kills its process group (checked on every session/user/group change and at least every 60 s). Opens and closes are audited as `shell_opened` / `shell_closed` with `userId`, `actorId` and `metadata: { mode: "interactive"|"command", sessionId, durationMs, exitCode, reason }` — never the command text or stdin.
+An open shell belongs to the session that opened it: logout, session expiry, an admin revoke (kick), the user being disabled or deleted, or losing `shell:execute` closes it with 4401 `session ended` and kills its process group (checked immediately on every session/user/group change and every `session_check_interval`, default 30 s, at most 60 s). Opens and closes are audited as `shell_opened` / `shell_closed` with `userId`, `actorId` and `metadata: { mode: "interactive"|"command", sessionId, durationMs, exitCode, reason }` — never the command text or stdin. `reason` is one of `exited`, `closed` (by the client), `session ended`, `permission removed`, `shell timed out`, `server shutdown`, `error`; `exitCode` is only present for `exited`. Re-checks never extend the session, but stdin since the last check touches it (at most once per 30 s) so an active shell user is not logged out for inactivity.
 
 **Without the users plugin**, use a shared token (keep it out of source control):
 
@@ -503,7 +503,7 @@ Outside users mode each open/close is logged at INFO with the remote address and
 
 | Option | Default | Description |
 |---|---|---|
-| `token` | `None` | Shared secret for `token` mode (constant-time compare, never logged) |
+| `token` | `None` | Shared secret for `token` mode (SHA-256 + constant-time compare, never logged) |
 | `authorize` | `None` | `callable(websocket) -> bool \| Awaitable[bool]` for `custom` mode |
 | `allow_anonymous` | `False` | Open shell without authentication (`anonymous` mode) |
 | `max_sessions_per_user` | `3` | Concurrent shells per user (users mode) or per remote address |
@@ -514,7 +514,7 @@ Outside users mode each open/close is logged at INFO with the remote address and
 | `shell` | `None` | Shell executable (default: `$SHELL`, then bash, then sh) |
 | `env_allow` | `[]` | Extra server environment variables copied into the shell |
 | `env_set` | `{}` | Variables set in the shell environment |
-| `session_check_interval` | `60` | Users mode: periodic session re-check (capped at 60) |
+| `session_check_interval` | `30` | Users mode: periodic session re-check (capped at 60) |
 | `trust_proxy` | `False` | Use `X-Forwarded-For` for per-address limits and logs |
 
 The shell does **not** inherit the server environment: it gets only `PATH`, `HOME`, `USER`, `LANG`, `TERM`, `COLUMNS`, `LINES`, `SHELL`, plus `env_allow` names and `env_set` values, so server secrets (database passwords, API keys) do not leak into it.
@@ -523,11 +523,12 @@ Refusals are sent after accepting the upgrade, so browsers can read the close co
 
 | Code | Reason | When |
 |---|---|---|
-| 4401 | `login required` / `session ended` / `shell locked` | no/invalid credentials, session ended, no access mode configured |
+| 4401 | `login required` / `session ended` / `shell access is not configured` | no ticket or no/non-Bearer token; session ended or `shell:execute` removed; no access mode configured |
 | 4403 | `forbidden` | missing `shell:execute`, wrong token, `authorize` returned false or raised |
 | 4404 | `shell disabled` | `enable_shell` is false |
 | 4408 | `shell timed out` | idle timeout or max duration reached |
 | 4429 | `too many shell sessions` | per-user/per-address or global limit reached |
+| 1001 | `server shutdown` | the server is stopping |
 
 A disallowed `Origin` (when `allowed_origins` is set) is closed with 4403 before any of the above.
 

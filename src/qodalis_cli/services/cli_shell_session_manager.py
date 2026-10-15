@@ -41,6 +41,14 @@ from ..shell_security import (
     REASON_LOGIN_REQUIRED,
     REASON_SESSION_ENDED,
     REASON_TIMEOUT,
+    DEFAULT_SESSION_CHECK_INTERVAL,
+    END_CLOSED,
+    END_ERROR,
+    END_EXITED,
+    END_SESSION_ENDED,
+    END_SHUTDOWN,
+    END_TIMED_OUT,
+    TOUCH_INTERVAL,
     CliShellOptions,
     ShellAccessProvider,
     ShellPrincipal,
@@ -81,7 +89,9 @@ class _ShellSession:
     close_event: asyncio.Event = field(default_factory=asyncio.Event)
     close_code: int | None = None
     close_reason: str | None = None
-    end_reason: str = "exit"
+    end_reason: str = END_EXITED
+    #: monotonic time of the last session activity reported to the provider
+    last_touch: float = field(default_factory=time.monotonic)
 
     def request_close(self, code: int, reason: str, end_reason: str) -> None:
         if self.close_event.is_set():
@@ -130,10 +140,11 @@ class CliShellSessionManager:
 
     @property
     def session_check_interval(self) -> float:
-        """Seconds between session re-checks of users-mode shells (<= 60)."""
+        """Seconds between session re-checks of users-mode shells (default
+        30, at most 60)."""
         value = self.options.session_check_interval
         if not value or value <= 0:
-            return MAX_SESSION_CHECK_INTERVAL
+            return DEFAULT_SESSION_CHECK_INTERVAL
         return min(value, MAX_SESSION_CHECK_INTERVAL)
 
     @property
@@ -268,17 +279,36 @@ class CliShellSessionManager:
             asyncio.ensure_future(self._check(session))
 
     async def _check(self, session: _ShellSession) -> None:
-        if not await self._still_allowed(session):
-            session.request_close(CLOSE_UNAUTHORIZED, REASON_SESSION_ENDED, "session_ended")
+        ended = await self._end_reason(session)
+        if ended is not None:
+            session.request_close(CLOSE_UNAUTHORIZED, REASON_SESSION_ENDED, ended)
 
-    async def _still_allowed(self, session: _ShellSession) -> bool:
+    async def _end_reason(self, session: _ShellSession) -> str | None:
+        """``None`` while the owning session is valid, else the audit reason."""
         if session.principal is None or self._provider is None:
-            return True
+            return None
         try:
-            return bool(await self._provider.is_active(session.principal))
+            result = await self._provider.is_active(session.principal)
         except Exception:
             logger.exception("Shell session check failed; closing the shell")
-            return False
+            return END_ERROR
+        if isinstance(result, str):
+            return result or END_SESSION_ENDED
+        if not result:
+            return END_SESSION_ENDED
+        # The check itself never extends the session; stdin since the last
+        # touch counts as activity (at most once per TOUCH_INTERVAL) so an
+        # active shell user is not logged out for inactivity.
+        now = time.monotonic()
+        if session.last_input > session.last_touch and now - session.last_touch >= TOUCH_INTERVAL:
+            session.last_touch = now
+            touch = getattr(self._provider, "touch", None)
+            if callable(touch):
+                try:
+                    await touch(session.principal)
+                except Exception:
+                    logger.debug("Shell session touch failed", exc_info=True)
+        return None
 
     async def _watch(self, session: _ShellSession) -> None:
         """Enforce idle timeout, max duration and the periodic session check;
@@ -292,10 +322,10 @@ class CliShellSessionManager:
         while not session.close_event.is_set():
             now = time.monotonic()
             if idle and now - session.last_input >= idle:
-                session.request_close(CLOSE_TIMEOUT, REASON_TIMEOUT, "idle_timeout")
+                session.request_close(CLOSE_TIMEOUT, REASON_TIMEOUT, END_TIMED_OUT)
                 break
             if max_duration and now - session.started >= max_duration:
-                session.request_close(CLOSE_TIMEOUT, REASON_TIMEOUT, "max_duration")
+                session.request_close(CLOSE_TIMEOUT, REASON_TIMEOUT, END_TIMED_OUT)
                 break
             if next_check is not None and now >= next_check:
                 await self._check(session)
@@ -317,7 +347,7 @@ class CliShellSessionManager:
     async def close_all(self, reason: str = "server shutdown") -> None:
         """Close every open shell (e.g. on server shutdown)."""
         for session in list(self._sessions.values()):
-            session.request_close(1001, reason, "shutdown")
+            session.request_close(1001, reason, END_SHUTDOWN)
 
     # ------------------------------------------------------------------
     # Audit / logging (C4) — never the command text or stdin
@@ -336,6 +366,8 @@ class CliShellSessionManager:
             )
 
     async def _closed(self, session: _ShellSession, exit_code: int | None) -> None:
+        if session.end_reason != END_EXITED:
+            exit_code = None  # exitCode only when the process exited by itself
         duration_ms = int((time.monotonic() - session.started) * 1000)
         if session.principal is not None and self._provider is not None:
             metadata: dict[str, Any] = {
@@ -451,11 +483,11 @@ class CliShellSessionManager:
                 await asyncio.wait([exit_task, watch_task], timeout=2, return_when=asyncio.FIRST_COMPLETED)
 
             if input_task.done() and not exit_task.done() and not session.close_event.is_set():
-                session.end_reason = "client_disconnected"
+                session.end_reason = END_CLOSED
 
         except Exception as exc:
             logger.error("Shell session error: %s", exc)
-            session.end_reason = "error"
+            session.end_reason = END_ERROR
             try:
                 await websocket.send_text(json.dumps({"type": "error", "message": "shell session error"}))
             except Exception as send_err:

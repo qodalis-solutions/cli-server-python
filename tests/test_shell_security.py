@@ -107,7 +107,7 @@ class TestModes:
                     assert caps["shell"] is True
                     assert caps["shellAuth"] == "locked"
                 exc = _rejected(c, SHELL + "?cmd=id")
-                assert exc.code == 4401
+                assert (exc.code, exc.reason) == (4401, "shell access is not configured")
                 # Even a bearer header does not open a locked shell.
                 assert _rejected(c, SHELL, headers=BEARER).code == 4401
         errors = [r for r in caplog.records if r.levelno == logging.ERROR and "no access mode" in r.getMessage()]
@@ -163,7 +163,8 @@ class TestModes:
         result = _server(token=SECRET)
         with TestClient(result.app) as c:
             assert _rejected(c, SHELL, headers={"Authorization": "Bearer wrong"}).code == 4403
-        assert calls == [(b"wrong", SECRET.encode())]
+        import hashlib
+        assert calls == [(hashlib.sha256(b"wrong").digest(), hashlib.sha256(SECRET.encode()).digest())]
 
     def test_token_is_never_logged(self, caplog):
         result = _server(token=SECRET)
