@@ -335,7 +335,7 @@ class TestTransport:
             c = Client(client)
             res = c.post({"jsonrpc": "2.0", "id": 1, "method": "ping"}, headers={"Origin": "http://evil.test"})
             assert res.status_code == 403
-            assert res.json() == {"error": "origin not allowed"}
+            assert res.json() == {"error": "forbidden: origin not allowed"}
             assert c.post({"jsonrpc": "2.0", "id": 1, "method": "ping"},
                           headers={"Origin": ALLOWED}).status_code == 200
             # Same-origin is always allowed; no Origin (non-browser) too.
@@ -853,7 +853,7 @@ class TestWithUsersPlugin:
     def test_origin_and_405_before_auth(self, prot):
         p, _ = prot
         res = p.c.post(MCP, json={"jsonrpc": "2.0", "id": 1, "method": "ping"}, headers={"Origin": "http://evil.test"})
-        assert res.status_code == 403 and res.json() == {"error": "origin not allowed"}
+        assert res.status_code == 403 and res.json() == {"error": "forbidden: origin not allowed"}
         for method in ("GET", "DELETE"):
             res = p.c.request(method, MCP)
             assert res.status_code == 405 and res.headers["allow"] == "POST"

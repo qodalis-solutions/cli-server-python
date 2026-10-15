@@ -71,7 +71,7 @@ class McpGateMiddleware:
             if method != "OPTIONS" and origin is not None and not origin_allowed(
                 origin, self.allowed_origins() or [], scope, self.trust_proxy()
             ):
-                await _send_json(send, 403, {"error": "origin not allowed"})
+                await _send_json(send, 403, {"error": "forbidden: origin not allowed"})
                 return
         await self.app(scope, receive, send)
 
@@ -183,7 +183,7 @@ def create_mcp_router(
         if origin is not None and not origin_allowed(
             origin, allowed_origins() or [], request.scope, trust_proxy()
         ):
-            return JSONResponse({"error": "origin not allowed"}, status_code=403)
+            return JSONResponse({"error": "forbidden: origin not allowed"}, status_code=403)
 
         auth = get_auth_context(request)
         if auth is None and options.token:

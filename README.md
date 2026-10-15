@@ -651,7 +651,7 @@ Responses (abridged):
 | Symptom | Cause |
 |---|---|
 | `401 {"error": …}` | Missing `Authorization` header, or the token is unknown, expired or revoked (or its user is disabled/deleted). Create a new token. Without the users plugin: the static `token` does not match. |
-| `403 {"error": "origin not allowed"}` | The request has an `Origin` header that is not in the server's `allowed_origins` and is not the server's own origin (browser-based clients). Add the origin to `allowed_origins`. |
+| `403 {"error": "forbidden: origin not allowed"}` | The request has an `Origin` header that is not in the server's `allowed_origins` and is not the server's own origin (browser-based clients). Add the origin to `allowed_origins`. |
 | `403 {"error": "missing permission: commands:execute"}` | The user (or the token's scope) lacks `commands:execute`, required for the endpoint. |
 | `403 {"error": "password change required"}` | The account must change its password first. |
 | `405` | `GET`/`DELETE`: the endpoint only accepts `POST` (stateless, no SSE stream). |
