@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 logger = logging.getLogger(__name__)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +17,17 @@ from .controllers import create_cli_router, create_cli_version_router
 from .controllers.filesystem_controller import create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemPathValidator
+from .mcp import (
+    CliMcpOptions,
+    CommandsMcpToolProvider,
+    DataExplorerMcpToolProvider,
+    FilesystemMcpToolProvider,
+    McpGateMiddleware,
+    McpToolRegistry,
+    ServerInfoMcpToolProvider,
+    create_mcp_router,
+    resolve_mcp_options,
+)
 from .security import WebSocketOriginMiddleware, get_auth_context, origins_regex
 from .shell_security import CliShellOptions, ShellAccessProvider
 from .services import (
@@ -50,6 +61,9 @@ class CliServerOptions:
     enable_shell: bool = False
     #: Remote shell security and runtime options (access, limits, env).
     shell: CliShellOptions = field(default_factory=CliShellOptions)
+    #: MCP endpoint (``POST /api/qcli/mcp``) — opt-in.  ``True`` or a
+    #: :class:`CliMcpOptions` (or an equivalent ``dict``) enables it.
+    mcp: bool | CliMcpOptions | dict[str, Any] | None = None
     configure: Callable[[CliBuilder], None] | None = None
 
 
@@ -65,6 +79,9 @@ class CliServerResult:
     executor: CliCommandExecutorService | None = None
     options: CliServerOptions = field(default_factory=CliServerOptions)
     shell_session_manager: CliShellSessionManager | None = None
+    #: MCP tool providers — ``result.mcp.add_provider(provider)`` (plugins
+    #: register theirs when mounted).  Present even when MCP is disabled.
+    mcp: McpToolRegistry = field(default_factory=McpToolRegistry)
 
     def set_shell_access_provider(self, provider: ShellAccessProvider | None) -> None:
         """Let an auth plugin own shell access (the users plugin calls this
@@ -130,6 +147,15 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     app = FastAPI(title="Qodalis CLI Server", lifespan=lifespan)
 
+    mcp_options = resolve_mcp_options(opts.mcp)
+    if mcp_options is not None:
+        # Origin check and 405s before any auth middleware (users plugin).
+        app.add_middleware(
+            McpGateMiddleware,
+            allowed_origins=lambda: opts.allowed_origins,
+            trust_proxy=lambda: opts.shell.trust_proxy,
+        )
+
     _configure_cors(app, opts)
     if opts.allowed_origins is not None:
         app.add_middleware(
@@ -155,17 +181,29 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     if opts.base_path != "/api/v1/qcli":
         app.include_router(router, prefix=opts.base_path)
 
+    mcp_tools = McpToolRegistry(mcp_options)
+    package_version = _package_version()
+
+    mcp_tools.add_provider(ServerInfoMcpToolProvider(
+        package_version,
+        registry,
+        features=lambda: _mcp_features(mcp_tools, opts),
+        shell_enabled=opts.enable_shell,
+    ), builtin=True)
+
+    fs_provider = None
     if builder.file_storage_provider is not None:
-        fs_router = create_filesystem_router(builder.file_storage_provider)
-        app.include_router(fs_router, prefix="/api/qcli/fs")
+        fs_provider = builder.file_storage_provider
     elif builder.filesystem_options is not None:
-        os_provider = OsFileStorageProvider(
+        fs_provider = OsFileStorageProvider(
             OsProviderOptions(
                 allowed_paths=builder.filesystem_options.allowed_paths
             )
         )
-        fs_router = create_filesystem_router(os_provider)
+    if fs_provider is not None:
+        fs_router = create_filesystem_router(fs_provider)
         app.include_router(fs_router, prefix="/api/qcli/fs")
+        mcp_tools.add_provider(FilesystemMcpToolProvider(fs_provider), builtin=True)
 
     if builder.data_explorer_registrations:
         from qodalis_cli_data_explorer import (
@@ -182,6 +220,19 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
             data_explorer_registry, data_explorer_executor
         )
         app.include_router(data_explorer_router, prefix="/api/qcli/data-explorer")
+        mcp_tools.add_provider(
+            DataExplorerMcpToolProvider(data_explorer_registry, data_explorer_executor), builtin=True,
+        )
+
+    mcp_tools.add_provider(CommandsMcpToolProvider(registry, executor))
+    if mcp_options is not None:
+        app.include_router(create_mcp_router(
+            mcp_tools,
+            mcp_options,
+            server_version=package_version,
+            allowed_origins=lambda: opts.allowed_origins,
+            trust_proxy=lambda: opts.shell.trust_proxy,
+        ))
 
     @app.websocket("/ws/v1/qcli/events")
     async def websocket_events_v1(websocket: WebSocket) -> None:
@@ -224,7 +275,33 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         executor=executor,
         options=opts,
         shell_session_manager=shell_session_manager,
+        mcp=mcp_tools,
     )
+
+
+def _package_version() -> str:
+    """Installed ``qodalis-cli-server`` version (MCP ``serverInfo``)."""
+    try:
+        from importlib.metadata import version
+
+        return version("qodalis-cli-server")
+    except Exception:  # pragma: no cover - not installed as a package
+        from .controllers.cli_controller import SERVER_VERSION
+
+        return SERVER_VERSION
+
+
+def _mcp_features(tools: McpToolRegistry, opts: CliServerOptions) -> list[str]:
+    """Enabled server features, as reported by the ``server_info`` tool."""
+    features = [
+        name for p in tools.providers
+        if isinstance(name := getattr(p, "name", None), str) and name != "server"
+    ]
+    if opts.enable_shell:
+        features.append("shell")
+    if tools.enabled:
+        features.append("mcp")
+    return features
 
 
 def _configure_cors(app: FastAPI, opts: CliServerOptions) -> None:

@@ -30,6 +30,7 @@ from fastapi import APIRouter
 from .controllers.audit_controller import create_audit_router
 from .controllers.groups_controller import create_groups_router
 from .controllers.sessions_controller import create_sessions_router
+from .controllers.tokens_controller import create_tokens_router
 from .controllers.users_controller import create_users_router
 from .middleware.auth_middleware import create_auth_dependencies
 from .models import ExternalAuthAdapter
@@ -48,12 +49,14 @@ from .services.auth_service import (
     BroadcastFn,
 )
 from .services.users_service import UsersService
+from .stores.in_memory_api_token_store import InMemoryApiTokenStore
 from .stores.in_memory_audit_store import InMemoryAuditStore
 from .stores.in_memory_credential_store import InMemoryCredentialStore
 from .stores.in_memory_group_store import InMemoryGroupStore
 from .stores.in_memory_session_store import InMemorySessionStore
 from .stores.in_memory_user_store import InMemoryUserStore
 from .stores.interfaces import (
+    IApiTokenStore,
     IAuditStore,
     ICredentialStore,
     IGroupStore,
@@ -85,6 +88,7 @@ class CliUsersPlugin:
     credential_store: ICredentialStore
     group_store: IGroupStore
     audit_store: IAuditStore
+    api_token_store: Optional[IApiTokenStore] = None
     default_admin_password: Optional[str] = None
     cleanup_interval_ms: int = DEFAULT_CLEANUP_INTERVAL_MS
     #: Protect every CLI server route/socket when mounted (B1).
@@ -219,6 +223,8 @@ class CliUsersBuilder:
         self._credential_store: ICredentialStore | None = None
         self._audit_store: IAuditStore | None = None
         self._group_store: IGroupStore | None = None
+        self._api_token_store: IApiTokenStore | None = None
+        self._allow_non_expiring_tokens = False
         self._auth_adapter: ExternalAuthAdapter | None = None
         self._default_admin_password: str | None = None
         self._session_timeout_ms = DEFAULT_SESSION_TIMEOUT_MS
@@ -251,6 +257,17 @@ class CliUsersBuilder:
 
     def set_group_store(self, store: IGroupStore) -> CliUsersBuilder:
         self._group_store = store
+        return self
+
+    def set_api_token_store(self, store: IApiTokenStore) -> CliUsersBuilder:
+        """Replace the API token store (default in-memory)."""
+        self._api_token_store = store
+        return self
+
+    def set_allow_non_expiring_tokens(self, allow: bool = True) -> CliUsersBuilder:
+        """Allow API tokens that never expire (``expiresInDays: null``;
+        default ``False``)."""
+        self._allow_non_expiring_tokens = allow
         return self
 
     def set_auth_adapter(self, adapter: ExternalAuthAdapter | None) -> CliUsersBuilder:
@@ -341,9 +358,11 @@ class CliUsersBuilder:
                 rate_limit_window_ms=self._rate_limit_window_ms,
                 trust_proxy=self._trust_proxy,
                 allowed_origins=self._allowed_origins,
+                allow_non_expiring_tokens=self._allow_non_expiring_tokens,
             ),
             broadcast_fn=broadcast_fn,
             auth_adapter=self._auth_adapter,
+            api_token_store=self._api_token_store or InMemoryApiTokenStore(),
         )
         users_service = UsersService(auth_service)
 
@@ -358,6 +377,7 @@ class CliUsersBuilder:
             credential_store=auth_service.credential_store,
             group_store=auth_service.group_store,
             audit_store=auth_service.audit_store,
+            api_token_store=auth_service.api_token_store,
             default_admin_password=self._default_admin_password,
             cleanup_interval_ms=self._cleanup_interval_ms,
             protect_server=self._protect_server,
@@ -382,4 +402,5 @@ class CliUsersBuilder:
             auth_service, users_service, get_auth, require_permission,
         ))
         router.include_router(create_audit_router(auth_service, require_permission))
+        router.include_router(create_tokens_router(auth_service, get_auth))
         return plugin

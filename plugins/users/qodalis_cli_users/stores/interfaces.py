@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from ..models import (
+    ApiToken,
     AuditEntry,
     AuditQueryOptions,
     Credentials,
@@ -199,7 +200,44 @@ class IGroupStore(ABC):
         ...
 
 
+class IApiTokenStore(ABC):
+    """Persistence interface for API tokens.
+
+    ``token_hash`` is the SHA-256 (hex) of the token — raw tokens never reach
+    the store.
+    """
+
+    @abstractmethod
+    async def create_token(self, token: ApiToken) -> ApiToken:
+        ...
+
+    @abstractmethod
+    async def get_token_by_hash(self, token_hash: str) -> ApiToken | None:
+        ...
+
+    @abstractmethod
+    async def get_token(self, token_id: str) -> ApiToken | None:
+        ...
+
+    @abstractmethod
+    async def get_tokens(self, user_id: str | None = None) -> list[ApiToken]:
+        """Every token, or only the tokens of ``user_id``."""
+
+    @abstractmethod
+    async def delete_token(self, token_id: str) -> None:
+        ...
+
+    @abstractmethod
+    async def delete_user_tokens(self, user_id: str) -> None:
+        ...
+
+    @abstractmethod
+    async def update_last_used(self, token_id: str, last_used_at: int) -> None:
+        ...
+
+
 __all__ = [
+    "IApiTokenStore",
     "IAuditStore",
     "ICredentialStore",
     "IGroupStore",

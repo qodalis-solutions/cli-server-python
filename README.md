@@ -441,6 +441,7 @@ class CliServerOptions:
     allowed_origins: list[str] | None = None  # CORS + WebSocket Origin check ("*" globs allowed)
     enable_shell: bool = False              # PTY shell WebSocket (opt-in, see Remote Shell Security)
     shell: CliShellOptions = CliShellOptions()  # Shell access, limits and environment
+    mcp: bool | CliMcpOptions | dict | None = None  # MCP endpoint (opt-in, see MCP endpoint)
     configure: Callable[[CliBuilder], None] | None = None  # Processor registration
 ```
 
@@ -462,10 +463,202 @@ class CliServerResult:
     log_socket_manager: CliLogSocketManager  # WebSocket log manager
     executor: CliCommandExecutorService | None  # Command executor service
     shell_session_manager: CliShellSessionManager | None  # PTY shell sessions
+    mcp: McpToolRegistry                    # MCP tool providers (add_provider)
 
     def mount_plugin(self, plugin: object) -> None: ...  # Mount a plugin with router/dashboard
     def set_shell_access_provider(self, provider) -> None: ...  # Called by auth plugins (users mode)
 ```
+
+## MCP endpoint
+
+The server can expose **the whole system** to AI clients such as Claude Code as [MCP](https://modelcontextprotocol.io) tools: CLI commands, the filesystem API, the data explorer, background jobs and tools contributed by plugins — each with the same permissions as a CLI user. It works with or without the users plugin (which only supplies identities and API tokens).
+
+### Enabling
+
+MCP is off by default. Enable it with the `mcp` server option (`True`, a `CliMcpOptions` or an equivalent `dict`):
+
+```python
+from qodalis_cli import CliMcpOptions, CliServerOptions, create_cli_server
+
+result = create_cli_server(CliServerOptions(
+    configure=configure,
+    mcp=CliMcpOptions(
+        tools=None,            # allow-list of tool names, trailing * allowed ("weather_*")
+        exclude=["fs_delete"], # deny-list (same syntax), applied after `tools`
+        token=None,            # only WITHOUT the users plugin: required static bearer token
+        instructions="Qodalis CLI server tools",  # returned by `initialize`
+    ),
+))
+```
+
+### Route and transport
+
+`POST /api/qcli/mcp` speaks MCP *Streamable HTTP* in its **stateless, JSON-only** form: each request carries one JSON-RPC 2.0 message and gets an `application/json` answer (no `Mcp-Session-Id`, no SSE stream). Methods: `initialize` (protocol versions `2025-11-25`, `2025-06-18`, `2025-03-26`; the client's version is echoed when supported, otherwise `2025-11-25`; a missing `protocolVersion` is `-32602`), `ping`, `tools/list`, `tools/call`; notifications get `202` with an empty body. JSON-RPC errors (`-32700` parse error, `-32600` invalid request or batch, `-32601` unknown method, `-32602` invalid params / unknown tool / invalid arguments) use HTTP 200. `GET` and `DELETE` answer `405` (`Allow: POST`). No particular `Accept` header is required.
+
+A request with an `Origin` header must come from one of the server's `allowed_origins` or from the server's own origin, otherwise `403` (DNS-rebinding protection). The Origin check and the `405`s run before authentication.
+
+### Authentication and permissions
+
+- **With the users plugin protecting the server** (`set_protect_server(True)`, the default): the server protection authenticates the request (a session token or an [API token](plugins/users/README.md#api-tokens)) and requires `commands:execute`; `401`/`403` are plain `{ "error": … }` responses. Tools are filtered per caller: a tool is listed — and callable — only when the caller holds its permissions.
+- **Without an auth provider** (or with `set_protect_server(False)`): tools are not filtered; when `token` is set, `Authorization: Bearer <token>` is required (constant-time compare, else `401`); otherwise the endpoint is as open as `/execute`.
+
+### Tools
+
+Tools are collected from **tool providers** on every request, so registrations, enabled features and the caller's permissions are always current. `tools` / `exclude` apply to every tool.
+
+| Provider | Tools | Permissions |
+|---|---|---|
+| server (always) | `server_info` — version, capabilities, enabled features, command names | — |
+| commands (always) | one tool per command (below) | `commands:execute` + every `required_permissions` along the command chain |
+| filesystem (when `/api/qcli/fs` is enabled) | `fs_list {path}`, `fs_stat {path}`, `fs_read {path, maxBytes?=262144}` (UTF-8 text, longer files end with `[truncated: N of M bytes]`; binary files → error `binary file, N bytes`) | `files:read` |
+| | `fs_write {path, content}`, `fs_mkdir {path}`, `fs_delete {path, recursive?=false}` | `files:write` |
+| data explorer (when a provider is registered) | `data_sources`, `data_schema {source}`, `data_query {source, query, parameters?}` | `data:query` |
+| jobs (jobs plugin mounted) | `jobs_list`, `jobs_get {id}`, `jobs_history {id, limit?=20}` | `jobs:read` |
+| | `jobs_trigger`, `jobs_pause`, `jobs_resume`, `jobs_stop`, `jobs_cancel` `{id}` | `jobs:manage` |
+
+Read-only tools carry the MCP annotation `readOnlyHint`, `fs_delete` / `jobs_stop` / `jobs_cancel` carry `destructiveHint`. Feature tools reuse the same services as the HTTP routes (file storage provider and its path whitelist, data-explorer executor and its limits, job scheduler); their errors come back as `isError: true` results. The interactive shell is never a tool.
+
+**Command tools.** Every root processor and its sub-processors are walked; a node becomes a tool when it has no sub-processors, declares `parameters`, or takes a value (`value_required` is `True` — required — or `False` — optional). The name is the command path joined with `_` (`weather`, `weather_current`), lower-cased, characters outside `[a-z0-9_-]` replaced by `-`, at most 64 characters. The input schema has one property per parameter (`string`/`number`/`boolean`, `array` → array of strings, anything else → string; with `description`, `default` and `required`) plus `value` (the positional input) when the command takes a value, and `additionalProperties: false`. A call is validated against the schema, then runs through the same executor as `/execute`; the result is `{ content: [{ type: "text", text }], isError }` with the outputs rendered as text (tables as `a | b` rows, lists one item per line, JSON pretty-printed, key-value as `key: value`) and `isError` = `exitCode != 0`. A single JSON-object output is also returned as `structuredContent`.
+
+Name collisions: built-in feature tools (server, filesystem, data explorer, jobs) win, then plugin/host providers in registration order, then command tools (a warning is logged for each skipped tool).
+
+### Adding tools (provider API)
+
+Plugins and host apps contribute tools with `result.mcp.add_provider(provider)` (available whether or not the endpoint is enabled). A provider has a `get_tools(context)` method (sync or async) returning `McpTool` definitions:
+
+```python
+from qodalis_cli import McpTool, McpToolResult
+from qodalis_cli.mcp import object_schema
+
+class DeployToolProvider:
+    def get_tools(self, context):          # context.auth: caller (None without an auth provider)
+        async def call(arguments, ctx):    # arguments are validated against input_schema first
+            version = await deploy(arguments["version"])
+            return McpToolResult(text=f"deployed {version}", structured={"version": version})
+
+        return [McpTool(
+            name="deploy_release",                         # [a-z0-9_-], max 64
+            description="Deploy a release",
+            input_schema=object_schema({"version": {"type": "string"}}, ["version"]),
+            call=call,
+            required_permissions=["deploy:run"],           # checked for list and call
+            annotations={"destructiveHint": True},         # optional MCP tool annotations
+        )]
+
+result.mcp.add_provider(DeployToolProvider())
+```
+
+A plugin can register its provider from its `on_mount(server)` hook (`server.mcp.add_provider(...)`), as the jobs plugin does.
+
+### Using the MCP endpoint from an MCP client
+
+Step by step, against the demo server (`cd demo && python main.py`, or Docker: `http://localhost:8048`, users plugin with `root` / `admin`).
+
+#### 1. Enable MCP on the server
+
+```python
+from qodalis_cli import CliMcpOptions, CliServerOptions, create_cli_server
+
+result = create_cli_server(CliServerOptions(
+    configure=configure,
+    mcp=True,  # or CliMcpOptions(tools=..., exclude=..., token=..., instructions=...)
+))
+```
+
+The endpoint is `POST http://<host>:<port>/api/qcli/mcp`.
+
+#### 2. Get a credential
+
+**With the users plugin** (protected server), sign in and create an [API token](plugins/users/README.md#api-tokens). Tokens are created with a session (a password sign-in), never with another token:
+
+```bash
+# 1) sign in → session token
+SESSION=$(curl -s -X POST http://localhost:8048/api/v1/qcli/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"username": "root", "password": "admin"}' \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')
+
+# 2) create an API token (shown once; expires in 30 days)
+TOKEN=$(curl -s -X POST http://localhost:8048/api/v1/qcli/tokens \
+  -H "Authorization: Bearer $SESSION" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "mcp-client", "expiresInDays": 30}' \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')
+
+echo "$TOKEN"   # qcli_pat_…
+```
+
+Add `"permissions": ["commands:execute", "files:read"]` to the token body to restrict what the client may do (every entry must be a permission you hold). From the Qodalis CLI connected to the server, `token create mcp-client` does the same.
+
+**Without the users plugin**, set a static token with `mcp=CliMcpOptions(token="<long random secret>")` and use it as `<token>` below. With neither, the endpoint is open (as open as `/execute`) and the `Authorization` header can be left out.
+
+#### 3. Connect Claude Code
+
+**a) Directly over HTTP** with the API token (Claude Code speaks Streamable HTTP):
+
+```bash
+claude mcp add --transport http qcli http://localhost:8048/api/qcli/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+**b) Through the [`@qodalis/mcp-cli`](https://github.com/qodalis-solutions/mcp-cli) bridge**, a local stdio MCP server configured with environment variables:
+
+```bash
+claude mcp add qcli -e QCLI_URL=http://localhost:8048 -e QCLI_TOKEN=<token> -- npx -y @qodalis/mcp-cli
+```
+
+Use `-e QCLI_USER=<name> -e QCLI_PASSWORD=<password>` instead of `QCLI_TOKEN` to sign in with a user, and `-e QCLI_READ_ONLY=true` to expose only read-only tools.
+
+Check the connection with `claude mcp list` (or `/mcp` inside Claude Code); `qcli` should be listed as connected, with the server's tools.
+
+#### 4. Raw requests with curl
+
+Every request is one JSON-RPC message; the answer is plain JSON (no session id, no event stream):
+
+```bash
+# initialize
+curl -s http://localhost:8048/api/qcli/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "curl", "version": "1.0"}}}'
+
+# tools/list
+curl -s http://localhost:8048/api/qcli/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
+
+# tools/call
+curl -s http://localhost:8048/api/qcli/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "hello", "arguments": {"name": "MCP"}}}'
+```
+
+Responses (abridged):
+
+```json
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"qodalis-cli-server","version":"1.0.0b7"},"instructions":"…"}}
+{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"server_info","description":"…","inputSchema":{…},"annotations":{"readOnlyHint":true}}, …]}}
+{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"Hello, MCP!"}],"isError":false}}
+```
+
+#### 5. Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| `401 {"error": …}` | Missing `Authorization` header, or the token is unknown, expired or revoked (or its user is disabled/deleted). Create a new token. Without the users plugin: the static `token` does not match. |
+| `403 {"error": "forbidden: origin not allowed"}` | The request has an `Origin` header that is not in the server's `allowed_origins` and is not the server's own origin (browser-based clients). Add the origin to `allowed_origins`. |
+| `403 {"error": "missing permission: commands:execute"}` | The user (or the token's scope) lacks `commands:execute`, required for the endpoint. |
+| `403 {"error": "password change required"}` | The account must change its password first. |
+| `405` | `GET`/`DELETE`: the endpoint only accepts `POST` (stateless, no SSE stream). |
+| A tool is missing from `tools/list` | The caller lacks the tool's permissions (`files:read`/`files:write`, `data:query`, `jobs:read`/`jobs:manage`, a command's `required_permissions`, or the token's scope), the tool is filtered by the `tools`/`exclude` options, or its feature is not enabled (filesystem, data explorer, jobs plugin). |
+| `-32602 Unknown tool: <name>` | Same as above: the tool is not visible to this caller. |
+| `-32602 Invalid arguments for tool <name>: …` | The arguments do not match the tool's `inputSchema`. |
+| `claude mcp list` shows `qcli` as failed, or `/mcp` lists no tools | Run the curl checks of step 4 with the same URL and token: they show the HTTP status and error. Re-add the server after creating a new token (`claude mcp remove qcli`, then `claude mcp add …`). |
 
 ## Remote Shell Security
 
@@ -850,7 +1043,9 @@ result.mount_plugin(users_plugin)  # protects every route and socket of the serv
 
 Once mounted, every CLI server route and WebSocket requires a users session (login, version discovery and health stay public); WebSockets authenticate with single-use tickets from `POST /api/v1/qcli/sessions/ws-ticket`.
 
-See [`plugins/users/README.md`](plugins/users/README.md) for options, endpoints, custom storage and external auth adapters.
+It also issues long-lived, revocable **API tokens** (`qcli_pat_…`) for MCP clients, CI and scripts (`/api/v1/qcli/tokens`).
+
+See [`plugins/users/README.md`](plugins/users/README.md) for options, endpoints, API tokens, custom storage and external auth adapters.
 
 ## Built-in Processors
 
