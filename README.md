@@ -477,7 +477,7 @@ result = create_cli_server(CliServerOptions(enable_shell=True, allowed_origins=[
 result.mount_plugin(CliUsersBuilder().build())  # shell needs a ticket + shell:execute
 ```
 
-An open shell belongs to the session that opened it: logout, session expiry, an admin revoke (kick), the user being disabled or deleted, or losing `shell:execute` closes it with 4401 `session ended` and kills its process group (checked immediately on every session/user/group change and every `session_check_interval`, default 30 s, at most 60 s). Opens and closes are audited as `shell_opened` / `shell_closed` with `userId`, `actorId` and `metadata: { mode: "interactive"|"command", sessionId, durationMs, exitCode, reason }` — never the command text or stdin. `reason` is one of `exited`, `closed` (by the client), `session ended`, `permission removed`, `shell timed out`, `server shutdown`, `error`; `exitCode` is only present for `exited`. Re-checks never extend the session, but stdin since the last check touches it (at most once per 30 s) so an active shell user is not logged out for inactivity.
+An open shell belongs to the session that opened it: logout, session expiry, an admin revoke (kick), the user being disabled or deleted, or losing `shell:execute` closes it with 4401 `session ended` and kills its process tree (checked immediately on every session/user/group change and every `session_check_interval`, default 30 s, at most 60 s). Opens and closes are audited as `shell_opened` / `shell_closed` with `userId`, `actorId` and `metadata: { mode: "interactive"|"command", sessionId, durationMs, exitCode, reason }` — never the command text or stdin. `reason` is one of `exited`, `closed` (by the client), `session ended`, `permission removed`, `shell timed out`, `server shutdown`, `error`; `exitCode` is only present for `exited`. Re-checks never extend the session, but stdin since the last check touches it (at most once per 30 s) so an active shell user is not logged out for inactivity.
 
 **Without the users plugin**, use a shared token (keep it out of source control):
 
@@ -520,6 +520,8 @@ Outside users mode each open/close is logged at INFO with the remote address and
 | `trust_proxy` | `False` | Trusted proxy hops for per-address limits and logs: `False`/`0` = socket peer (header ignored), `True` = 1, `n` = n hops; the client is the `X-Forwarded-For` entry at `len - n` (rightmost for one proxy, leftmost if fewer entries) |
 
 The shell does **not** inherit the server environment: it gets only `PATH`, `HOME`, `USER`, `LANG`, `TERM`, `COLUMNS`, `LINES`, `SHELL`, plus `env_allow` names and `env_set` values, so server secrets (database passwords, API keys) do not leak into it.
+
+Whenever a shell closes (client gone, timeout, session ended, shutdown, error) the server collects the shell's whole descendant tree (`ps -A -o pid=,ppid=`, Linux and macOS) **before** signalling, then sends HUP and TERM to the shell's process group and to every descendant — including `&` jobs in their own process groups and `nohup` / `setsid` children — and KILL after a short grace period. Limitation: a daemon that double-forks and is already re-parented to init (PID 1) when the shell closes is no longer in the tree and cannot be tracked; if that matters, run the shell in a container or cgroup that is torn down with it.
 
 Refusals are sent after accepting the upgrade, so browsers can read the close code:
 

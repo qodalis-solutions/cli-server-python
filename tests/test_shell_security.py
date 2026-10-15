@@ -380,6 +380,85 @@ class TestLimits:
 
 
 # ---------------------------------------------------------------------------
+# Closing a shell kills its whole process tree
+# ---------------------------------------------------------------------------
+
+def _background_pids(ws, commands: dict[str, str]) -> dict[str, int]:
+    """Run ``commands`` (label -> shell line printing ``<label>=<pid>``) in
+    an interactive shell; returns label -> pid."""
+    import re
+
+    assert json.loads(ws.receive_text())["type"] == "ready"
+    for line in commands.values():
+        ws.send_text(json.dumps({"type": "stdin", "data": line + "\n"}))
+    pattern = re.compile(r"\b(" + "|".join(commands) + r")=(\d+)")
+    pids: dict[str, int] = {}
+    out = ""
+    deadline = time.monotonic() + 10
+    while len(pids) < len(commands) and time.monotonic() < deadline:
+        msg = json.loads(ws.receive_text())
+        out += msg.get("data", "")
+        pids = {label: int(pid) for label, pid in pattern.findall(out)}
+    assert len(pids) == len(commands), f"pids not reported: {out!r}"
+    return pids
+
+
+class TestProcessTree:
+    def test_background_jobs_are_killed_when_the_shell_closes(self):
+        """``&`` jobs get their own process groups (job control) and
+        ``nohup`` / ``setsid`` children escape the shell's group: closing the
+        shell must still kill them."""
+        import shutil
+        import sys
+
+        commands = {
+            "BG": "sleep 7301 & echo BG=$!",
+            "NH": "nohup sleep 7302 >/dev/null 2>&1 & echo NH=$!",
+            # A child in its own session (setsid) whose parent stays alive.
+            "SS": (
+                f"{sys.executable} -c \"import os; p = os.fork(); "
+                f"(os.setsid(), os.execvp('sleep', ['sleep', '7303'])) if p == 0 "
+                f"else (print('SS=%d' % p, flush=True), os.wait())\" &"
+            ),
+        }
+        if shutil.which("setsid"):
+            commands["SW"] = "setsid -w sleep 7304 & echo SW=$!"
+        result = _server(allow_anonymous=True)
+        pids: dict[str, int] = {}
+        try:
+            with TestClient(result.app) as c:
+                with c.websocket_connect(SHELL) as ws:
+                    pids = _background_pids(ws, commands)
+                    time.sleep(0.3)  # let the setsid children exec
+                    for pid in pids.values():
+                        os.kill(pid, 0)  # alive while the shell is open
+                assert all(_gone(pid) for pid in pids.values()), pids
+        finally:
+            for pid in pids.values():
+                try:
+                    os.kill(pid, 9)
+                except OSError:
+                    pass
+
+    def test_process_tree_lists_all_descendants(self):
+        import subprocess
+
+        from qodalis_cli.services.cli_shell_session_manager import _process_tree
+
+        parent = subprocess.Popen(["/bin/sh", "-c", "sleep 7305 & sleep 7306 & wait"])
+        try:
+            time.sleep(0.3)
+            tree = _process_tree(parent.pid)
+            assert len(tree) == 2
+            assert parent.pid not in tree
+        finally:
+            for pid in _process_tree(parent.pid):
+                os.kill(pid, 9)
+            parent.kill()
+            parent.wait()
+
+
+# ---------------------------------------------------------------------------
 # PTY I/O must never block the event loop
 # ---------------------------------------------------------------------------
 

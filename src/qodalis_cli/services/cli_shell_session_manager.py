@@ -15,6 +15,7 @@ import pty
 import pwd
 import signal
 import struct
+import subprocess
 import termios
 import time
 import uuid
@@ -520,20 +521,47 @@ class CliShellSessionManager:
         return None
 
     async def _terminate(self, pid: int, exit_task: asyncio.Future | None) -> None:
-        """Kill the shell's process group (HUP/TERM, then KILL) and reap it."""
-        if exit_task is not None and exit_task.done():
+        """Kill the shell and everything it started, then reap the shell.
+
+        Background jobs of an interactive shell run in their own process
+        groups and ``nohup`` / ``setsid`` children leave the shell's group, so
+        the descendant tree is collected *before* signalling (afterwards the
+        orphans are re-parented and can no longer be found).  The group and
+        every descendant get HUP and TERM, then KILL after a grace period.
+        The first signals are sent synchronously, so they are delivered even
+        when the connection handler is cancelled.
+        Double-forked daemons already re-parented to init are not tracked.
+        """
+        exited = exit_task is not None and exit_task.done()
+        descendants = [] if exited else _process_tree(pid)
+
+        def signal_all(sig: int) -> None:
+            _signal_group(pid, sig)
+            for child in descendants:
+                _signal_pid(child, sig)
+
+        if exited:
+            # The shell is gone; its process group may still hold jobs
+            # (e.g. ``cmd=... &``).  The group id cannot be reused while any
+            # member is alive.
+            _signal_group(pid, signal.SIGHUP)
+            _signal_group(pid, signal.SIGTERM)
             return
-        _signal_group(pid, signal.SIGHUP)
-        _signal_group(pid, signal.SIGTERM)
+        signal_all(signal.SIGHUP)
+        signal_all(signal.SIGTERM)
         if exit_task is None:
             await asyncio.sleep(0.2)
-            _signal_group(pid, signal.SIGKILL)
+            signal_all(signal.SIGKILL)
             await _reap(pid)
             return
         await asyncio.wait([exit_task], timeout=1.0)
-        if not exit_task.done():
-            _signal_group(pid, signal.SIGKILL)
-            await asyncio.wait([exit_task], timeout=2.0)
+        deadline = time.monotonic() + 0.5
+        while any(_alive(child) for child in descendants) and time.monotonic() < deadline:
+            await asyncio.sleep(0.02)
+        if not exit_task.done() or any(_alive(child) for child in descendants):
+            signal_all(signal.SIGKILL)
+            if not exit_task.done():
+                await asyncio.wait([exit_task], timeout=2.0)
 
     async def _read_pty_output(self, master_fd: int, websocket: WebSocket) -> None:
         """Forward PTY output to the WebSocket (event-loop reader, no threads)."""
@@ -675,6 +703,55 @@ def _signal_group(pid: int, sig: int) -> None:
             pass
     except OSError:
         pass
+
+
+def _signal_pid(pid: int, sig: int) -> None:
+    try:
+        os.kill(pid, sig)
+    except OSError:
+        pass
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _process_tree(root: int) -> list[int]:
+    """Every descendant of ``root`` (not ``root`` itself), from
+    ``ps -A -o pid=,ppid=`` (works on Linux and macOS).
+
+    Synchronous on purpose (``ps`` takes milliseconds): the tree must be
+    collected and signalled without yielding to a cancellation."""
+    try:
+        out = subprocess.run(
+            ["ps", "-A", "-o", "pid=,ppid="],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5, check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.debug("Failed to list processes: %s", e)
+        return []
+    children: dict[int, list[int]] = {}
+    for line in out.decode("ascii", "replace").splitlines():
+        parts = line.split()
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+            continue
+        children.setdefault(int(parts[1]), []).append(int(parts[0]))
+    result: list[int] = []
+    seen = {root}
+    stack = [root]
+    while stack:
+        for child in children.get(stack.pop(), []):
+            if child not in seen:
+                seen.add(child)
+                result.append(child)
+                stack.append(child)
+    return result
 
 
 async def _write_pty(fd: int, data: bytes) -> None:
