@@ -142,8 +142,10 @@ def _matches(granted: str, required: str) -> bool:
     g = granted.strip().lower().split(":")
     r = required.strip().lower().split(":")
     for i, seg in enumerate(g):
-        if seg == "*":
+        # A trailing '*' grants everything below; elsewhere it matches
+        # exactly one segment.
+        if seg == "*" and i == len(g) - 1:
             return True
-        if i >= len(r) or seg != r[i]:
+        if i >= len(r) or (seg != "*" and seg != r[i]):
             return False
     return len(g) == len(r)

@@ -51,9 +51,30 @@ from qodalis_cli_users.services.auth_service import hash_token
     ("users:read", "users", False),
     (" users:read ", "users:read", True),
     ("a:*", "a:b:c", True),
+    # A non-last '*' matches exactly one segment (not everything below).
+    ("*:read", "users:read", True),
+    ("*:read", "users:delete", False),
+    ("*:read", "users:read:x", False),
+    ("*:read", "*", False),
+    ("users:*:x", "users:read:x", True),
+    ("users:*:x", "users:delete", False),
+    ("users:*:x", "users:read:y", False),
 ])
 def test_permission_matches(granted, required, expected):
     assert permission_matches(granted, required) is expected
+
+
+@pytest.mark.parametrize("granted,required,expected", [
+    ("*", "admin:access", True),
+    ("admin:*", "admin:access", True),
+    ("*:access", "admin:access", True),
+    ("*:read", "admin:access", False),
+    ("admin:*:x", "admin:access", False),
+])
+def test_admin_permission_matches(granted, required, expected):
+    from qodalis_cli_admin.auth.auth_controller import _matches
+
+    assert _matches(granted, required) is expected
 
 
 def test_has_and_merge_permissions():

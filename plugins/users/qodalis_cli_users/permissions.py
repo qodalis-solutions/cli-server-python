@@ -1,8 +1,10 @@
 """Permission matching — same semantics as ``cliPermissionMatches`` in
 ``@qodalis/cli-core``.
 
-Permission strings are ``resource:action``.  A ``*`` segment matches anything
-at that level and below (``*``, ``users:*``).  Matching is case-insensitive.
+Permission strings are ``resource:action``.  A trailing ``*`` segment matches
+anything at that level and below (``*``, ``users:*``); a ``*`` elsewhere
+matches exactly one segment (``*:read`` matches ``users:read`` only).
+Matching is case-insensitive.
 """
 
 from __future__ import annotations
@@ -30,9 +32,11 @@ def permission_matches(granted: str, required: str) -> bool:
     g = granted.strip().lower().split(":")
     r = required.strip().lower().split(":")
     for i, seg in enumerate(g):
-        if seg == "*":
+        # A trailing '*' grants everything below; elsewhere it matches
+        # exactly one segment.
+        if seg == "*" and i == len(g) - 1:
             return True
-        if i >= len(r) or seg != r[i]:
+        if i >= len(r) or (seg != "*" and seg != r[i]):
             return False
     return len(g) == len(r)
 
