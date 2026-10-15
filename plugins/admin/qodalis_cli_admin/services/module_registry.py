@@ -34,7 +34,7 @@ class ModuleRegistry(ICliProcessorFilter):
         """(Re-)build the processor-to-module-id mapping."""
         self._processor_to_module.clear()
         for idx, module in enumerate(self._builder.modules):
-            module_id = str(idx)
+            module_id = self._module_id(idx, module)
             for processor in module.processors:
                 self._processor_to_module[id(processor)] = module_id
 
@@ -52,42 +52,62 @@ class ModuleRegistry(ICliProcessorFilter):
 
     def list(self) -> list[dict[str, Any]]:
         """Return a list of all modules with their enabled/disabled state."""
-        result: list[dict[str, Any]] = []
-        for idx, module in enumerate(self._builder.modules):
-            module_id = str(idx)
-            name = getattr(module, "name", type(module).__name__)
-            result.append(
-                {
-                    "id": module_id,
-                    "name": name,
-                    "processorCount": len(module.processors),
-                    "processors": [p.command for p in module.processors],
-                    "enabled": module_id not in self._disabled,
-                }
-            )
-        return result
+        return [
+            self._describe(idx, module, self._module_id(idx, module) not in self._disabled)
+            for idx, module in enumerate(self._builder.modules)
+        ]
 
     def toggle(self, module_id: str) -> dict[str, Any]:
-        """Toggle a module's enabled state and return the updated record."""
+        """Toggle a module's enabled state and return the updated record.
+
+        ``module_id`` is the module name (as listed); the legacy numeric index
+        is still accepted.
+        """
         modules = self._builder.modules
-        idx = int(module_id)
-        if idx < 0 or idx >= len(modules):
+        idx = self._find(module_id)
+        if idx is None:
             raise KeyError(f"Module not found: {module_id}")
 
-        if module_id in self._disabled:
-            self._disabled.discard(module_id)
+        module_key = self._module_id(idx, modules[idx])
+        if module_key in self._disabled:
+            self._disabled.discard(module_key)
             enabled = True
         else:
-            self._disabled.add(module_id)
+            self._disabled.add(module_key)
             enabled = False
+        return self._describe(idx, modules[idx], enabled)
 
-        module = modules[idx]
-        result: dict[str, Any] = {
-            "id": module_id,
+    # -- helpers ------------------------------------------------------------
+
+    def _module_id(self, idx: int, module: Any) -> str:
+        """Stable id: the module name (same as the node and .NET servers);
+        the index only when the name is missing or used twice."""
+        name = getattr(module, "name", None)
+        names = [getattr(m, "name", None) for m in self._builder.modules]
+        if isinstance(name, str) and name and names.count(name) == 1:
+            return name
+        return str(idx)
+
+    def _find(self, module_id: str) -> int | None:
+        modules = self._builder.modules
+        for idx, module in enumerate(modules):
+            if self._module_id(idx, module) == module_id:
+                return idx
+        if module_id.isdigit() and int(module_id) < len(modules):
+            return int(module_id)
+        return None
+
+    def _describe(self, idx: int, module: Any, enabled: bool) -> dict[str, Any]:
+        record: dict[str, Any] = {
+            "id": self._module_id(idx, module),
             "name": getattr(module, "name", type(module).__name__),
+            "version": getattr(module, "version", None) or "",
+            "description": getattr(module, "description", None) or "",
+            "enabled": enabled,
             "processorCount": len(module.processors),
             "processors": [p.command for p in module.processors],
-            "enabled": enabled,
         }
-
-        return result
+        author = getattr(module, "author", None)
+        if author is not None:
+            record["author"] = getattr(author, "name", author) if not isinstance(author, str) else author
+        return record

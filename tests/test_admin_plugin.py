@@ -681,3 +681,27 @@ class TestRateLimiting:
             json={"username": TEST_USERNAME, "password": TEST_PASSWORD},
         )
         assert resp.status_code == 200
+
+
+class TestModuleRegistryShape:
+    """The plugins API matches the node and .NET servers (dashboard contract)."""
+
+    def test_ids_are_module_names_with_metadata(self) -> None:
+        builder = _StubBuilder(modules=[_StubModule("weather", 1), _StubModule("aws", 1)])
+        registry = ModuleRegistry(builder)
+        listed = registry.list()
+        assert [m["id"] for m in listed] == ["weather", "aws"]
+        assert listed[0]["version"] == "0.1.0"
+        assert listed[0]["description"] == "A stub module"
+
+    def test_toggle_by_name_and_legacy_index(self) -> None:
+        builder = _StubBuilder(modules=[_StubModule("weather", 1), _StubModule("aws", 1)])
+        registry = ModuleRegistry(builder)
+        assert registry.toggle("aws")["enabled"] is False
+        assert registry.toggle("1")["enabled"] is True
+        with pytest.raises(KeyError):
+            registry.toggle("missing")
+
+    def test_duplicate_names_fall_back_to_index(self) -> None:
+        builder = _StubBuilder(modules=[_StubModule("same", 1), _StubModule("same", 1)])
+        assert [m["id"] for m in ModuleRegistry(builder).list()] == ["0", "1"]
