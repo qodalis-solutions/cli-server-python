@@ -18,6 +18,7 @@ import json
 import re
 from typing import Any, Awaitable, Callable
 
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 
 from ._http import SAFE_METHODS, set_scope_auth
@@ -148,6 +149,10 @@ class ServerProtectionMiddleware:
                 raise UsersApiError(403, f"missing permission: {permission}")
         except UsersApiError as exc:
             await _send_json(send, exc.status_code, {"error": exc.message})
+            return
+        except HTTPException as exc:
+            # Raised by an external auth adapter: keep its status and detail.
+            await _send_json(send, exc.status_code, {"error": exc.detail})
             return
         set_scope_auth(scope, ctx)
         await self.app(scope, receive, send)

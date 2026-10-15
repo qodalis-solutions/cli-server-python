@@ -958,6 +958,22 @@ def _adapter(request):
     return ExternalAuthResult(user=User(id=f"ext-{name}", name=name, email=f"{name}@x"), is_admin=True)
 
 
+class TestAdapterErrors:
+    @pytest.mark.parametrize("exc_type", ["fastapi", "starlette"])
+    def test_adapter_http_exception_status_is_preserved(self, exc_type):
+        from fastapi import HTTPException as FastApiHTTPException
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+
+        cls = FastApiHTTPException if exc_type == "fastapi" else StarletteHTTPException
+
+        def adapter(request):
+            raise cls(status_code=418, detail="adapter refused")
+
+        result, _ = _build(CliUsersBuilder().set_auth_adapter(adapter))
+        with TestClient(result.app) as c:
+            assert_error(c.get("/api/qcli/commands"), 418, "adapter refused")
+
+
 class TestCsrf:
     @pytest.fixture()
     def ext(self):
