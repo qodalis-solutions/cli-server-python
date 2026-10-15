@@ -135,7 +135,8 @@ class AuthServiceOptions:
     rate_limit_window_ms: int = DEFAULT_RATE_LIMIT_WINDOW_MS
     trust_proxy: bool = False
     #: Origins accepted for state-changing requests without a bearer token
-    #: (CSRF protection in adapter/cookie mode).
+    #: (CSRF protection in adapter/cookie mode).  Same-origin requests are
+    #: always accepted.
     allowed_origins: list[str] | None = None
     ticket_ttl_ms: int = TICKET_TTL_MS
 

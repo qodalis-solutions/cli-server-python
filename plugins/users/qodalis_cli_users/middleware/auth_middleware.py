@@ -26,9 +26,15 @@ async def authenticate_request(auth_service: AuthService, request: Request) -> A
     """Authenticate an HTTP request (no password-change gate)."""
     if auth_service.external_auth:
         # Ambient (adapter/cookie) credentials: state-changing requests
-        # without a bearer token must come from an allowed Origin (CSRF).
+        # without a bearer token must come from an allowed Origin (CSRF);
+        # same-origin requests (e.g. the bundled dashboard) always pass.
         if request.method.upper() not in SAFE_METHODS and not has_bearer(request.headers):
-            if not origin_allowed(request.headers.get("origin"), auth_service.options.allowed_origins):
+            if not origin_allowed(
+                request.headers.get("origin"),
+                auth_service.options.allowed_origins,
+                request.scope,
+                auth_service.options.trust_proxy,
+            ):
                 raise forbidden(ORIGIN_NOT_ALLOWED)
         return await auth_service.authenticate_external(request)
     token = bearer_token(request.headers)

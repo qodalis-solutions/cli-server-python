@@ -41,6 +41,7 @@ class CliServerOptions:
     cors_origins: list[str] | None = None
     #: Origins accepted for CORS and every WebSocket upgrade (``*`` globs
     #: allowed, e.g. ``http://127.0.0.1:*``).  ``None`` = no Origin check.
+    #: Same-origin requests (the server's own origin) are always accepted.
     allowed_origins: list[str] | None = None
     #: Interactive PTY shell WebSocket (``/ws/qcli/shell``) — opt-in.  Once
     #: enabled, access needs the users plugin, ``shell.token``,
@@ -131,7 +132,11 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     _configure_cors(app, opts)
     if opts.allowed_origins is not None:
-        app.add_middleware(WebSocketOriginMiddleware, allowed_origins=list(opts.allowed_origins))
+        app.add_middleware(
+            WebSocketOriginMiddleware,
+            allowed_origins=list(opts.allowed_origins),
+            trust_proxy=opts.shell.trust_proxy,
+        )
 
     registry = CliCommandRegistry()
     builder = CliBuilder(registry)

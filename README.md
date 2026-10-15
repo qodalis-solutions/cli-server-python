@@ -435,6 +435,8 @@ class CliServerOptions:
 
 CORS is disabled unless `allowed_origins` (or `cors_origins` / `cors=True`) is set, and `*` is never combined with credentials. When `allowed_origins` is set, a WebSocket upgrade whose `Origin` is not allowed is closed with code 4403 (a missing `Origin`, as sent by non-browser clients, is accepted; protected sockets still need a ticket).
 
+Same-origin requests (an `Origin` equal to the server's own scheme + host, e.g. the bundled admin dashboard) are always allowed by every Origin/CSRF check, so a deployment never needs to list its own origin (`X-Forwarded-Proto`/`X-Forwarded-Host` are honoured only with `trust_proxy`).
+
 Processors may declare `required_permissions` (e.g. `["deploy:run"]`); they are enforced when the server is protected by the users plugin.
 
 `create_cli_server()` returns:

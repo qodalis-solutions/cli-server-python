@@ -31,6 +31,8 @@ from qodalis_cli_users import (
     InMemoryAuditStore,
     User,
 )
+from qodalis_cli.security import is_same_origin as core_is_same_origin
+from qodalis_cli_users._http import is_same_origin as users_is_same_origin
 from qodalis_cli_users.server_protection import http_permission, ws_permission
 from qodalis_cli_users.services import password_hasher
 from qodalis_cli_users.services.auth_service import hash_token
@@ -925,3 +927,107 @@ class TestAdminStandalone:
         c = self._client()
         res = c.post(BASE + "/auth/login", json={"username": "dashadmin", "password": "pässwörd"})
         assert res.status_code == 401
+
+
+# =========================================================================
+# Same-origin requests always pass Origin checks
+# =========================================================================
+
+SELF = "http://testserver"  # TestClient's own origin (Host: testserver)
+
+
+def _scope(scheme: str = "http", host: str | None = "localhost:8048", **headers: str) -> dict:
+    raw = [(k.replace("_", "-").encode(), v.encode()) for k, v in headers.items()]
+    if host is not None:
+        raw.append((b"host", host.encode()))
+    return {"type": "http", "scheme": scheme, "headers": raw}
+
+
+class TestSameOrigin:
+    @pytest.mark.parametrize("fn", [core_is_same_origin, users_is_same_origin])
+    def test_is_same_origin(self, fn):
+        assert fn("http://localhost:8048", _scope())
+        assert fn("HTTP://LocalHost:8048/", _scope())
+        assert not fn("http://localhost:8049", _scope())
+        assert not fn("https://localhost:8048", _scope())
+        assert not fn("http://evil.test", _scope())
+        assert not fn(None, _scope())
+        assert not fn("null", _scope())
+        assert not fn("http://localhost:8048", _scope(host=None))
+        # default ports
+        assert fn("http://example.com", _scope(host="example.com:80"))
+        assert fn("https://example.com:443", _scope(scheme="https", host="EXAMPLE.com"))
+        # websockets map ws/wss -> http/https
+        assert fn("http://localhost:8048", _scope(scheme="ws"))
+        assert fn("https://example.com", _scope(scheme="wss", host="example.com"))
+        assert not fn("http://example.com", _scope(scheme="wss", host="example.com"))
+        # IPv6
+        assert fn("http://[::1]:8048", _scope(host="[::1]:8048"))
+        # forwarded headers only with trust_proxy
+        proxied = _scope(host="internal:8048", x_forwarded_proto="https", x_forwarded_host="cli.example.com")
+        assert not fn("https://cli.example.com", proxied)
+        assert fn("https://cli.example.com", proxied, True)
+        assert not fn("http://internal:8048", proxied, True)
+
+    def test_dashboard_login_same_origin(self):
+        result, users = _build(
+            CliUsersBuilder().set_default_admin_password(ROOT_PASS).set_rate_limit(1000),
+            allowed_origins=[ALLOWED],
+        )
+        admin_plugin = CliAdminBuilder().set_users_plugin(users).build(AdminBuildDeps(
+            registry=result.registry, event_socket_manager=result.event_socket_manager, builder=result.builder))
+        result.mount_plugin(admin_plugin)
+        with TestClient(result.app) as c:
+            res = c.post(BASE + "/auth/login", headers={"origin": SELF},
+                         json={"username": "root", "password": ROOT_PASS})
+            assert res.status_code == 200, res.text
+            token = res.json()["token"]
+            assert c.get(BASE + "/status", headers=_h(token, origin=SELF)).status_code == 200
+            res = c.post(BASE + "/groups", headers=_h(token, origin=SELF), json={"name": "g-self"})
+            assert res.status_code == 201, res.text
+
+    @pytest.fixture()
+    def ext(self):
+        result, _ = _build(CliUsersBuilder().set_auth_adapter(_adapter), allowed_origins=[ALLOWED])
+        with TestClient(result.app) as c:
+            yield c
+
+    def test_csrf_same_origin_passes(self, ext: TestClient):
+        res = ext.post(BASE + "/groups", headers={"x-user": "boss", "origin": SELF}, json={"name": "g1"})
+        assert res.status_code == 201, res.text
+        res = ext.post("/api/qcli/execute", headers={"x-user": "boss", "origin": SELF}, json={"command": "echo"})
+        assert res.status_code == 200, res.text
+        res = ext.post(BASE + "/sessions/ws-ticket", headers={"x-user": "boss", "origin": SELF})
+        assert res.status_code == 201, res.text
+
+    def test_csrf_other_origin_still_rejected(self, ext: TestClient):
+        for origin in ("http://evil.test", "http://testserver:8080", "https://testserver"):
+            res = ext.post(BASE + "/groups", headers={"x-user": "boss", "origin": origin}, json={"name": "g1"})
+            assert_error(res, 403, "origin not allowed")
+
+    def test_csrf_forwarded_headers_need_trust_proxy(self):
+        fwd = {"x-user": "boss", "origin": "https://cli.example.com",
+               "x-forwarded-proto": "https", "x-forwarded-host": "cli.example.com"}
+        result, _ = _build(CliUsersBuilder().set_auth_adapter(_adapter), allowed_origins=[ALLOWED])
+        with TestClient(result.app) as c:
+            assert_error(c.post(BASE + "/groups", headers=fwd, json={"name": "g1"}), 403, "origin not allowed")
+        result, _ = _build(
+            CliUsersBuilder().set_auth_adapter(_adapter).set_trust_proxy(), allowed_origins=[ALLOWED],
+        )
+        with TestClient(result.app) as c:
+            assert c.post(BASE + "/groups", headers=fwd, json={"name": "g1"}).status_code == 201
+
+    def test_ws_same_origin_passes(self):
+        result, _ = _build(allowed_origins=[ALLOWED])
+        with TestClient(result.app) as c:
+            with c.websocket_connect("/ws/qcli/events", headers={"origin": SELF}) as ws:
+                assert json.loads(ws.receive_text())["type"] == "connected"
+            with c.websocket_connect("/ws/qcli/events", headers={"origin": "http://testserver:9"}) as ws:
+                with pytest.raises(WebSocketDisconnect) as exc:
+                    ws.receive_text()
+                assert exc.value.code == 4403
+
+    def test_ws_same_origin_with_ticket(self, srv: Server):
+        ticket = srv.ticket(srv.root)
+        with srv.c.websocket_connect(f"/ws/qcli/events?ticket={ticket}", headers={"origin": SELF}) as ws:
+            assert json.loads(ws.receive_text())["type"] == "connected"

@@ -237,10 +237,10 @@ def main() -> None:
                 ),
             )
 
-    # Local dev origins (docs/demos on 4200, 4300-4303) plus this server's
-    # own origin (admin dashboard).  Used for CORS and the WebSocket Origin
-    # check.
-    dev_ports = [4200, 4300, 4301, 4302, 4303, port]
+    # Local dev origins (docs/demos on 4200, 4300-4303).  Used for CORS and
+    # the WebSocket Origin check.  The server's own origin (the bundled admin
+    # dashboard) needs no entry: same-origin requests are always allowed.
+    dev_ports = [4200, 4300, 4301, 4302, 4303]
     allowed_origins = [
         f"http://{h}:{p}" for p in dev_ports for h in ("localhost", "127.0.0.1")
     ]
