@@ -64,6 +64,17 @@ uvicorn.run(result.app, host="0.0.0.0", port=8048)
 
 Disconnect broadcast is handled automatically via the lifespan shutdown event.
 
+uvicorn's own access and error logs contain request paths **with their query strings** — WebSocket tickets (`ticket=`), tokens (`token=`, `access_token=`), the legacy `_header_Authorization=Bearer%20…` and shell commands (`cmd=`). The standalone server (`python -m qodalis_cli.server` / `qodalis-cli-server`) and the demo redact them; when you run uvicorn yourself, install the same filter before `uvicorn.run`:
+
+```python
+from qodalis_cli import install_log_redaction
+
+install_log_redaction()  # RedactingLogFilter on uvicorn, uvicorn.access, uvicorn.error
+uvicorn.run(result.app, host="0.0.0.0", port=8048)
+```
+
+`RedactingLogFilter` (a `logging.Filter`) is exported too, e.g. to attach it to your own loggers or handlers.
+
 ### As a Standalone Server
 
 ```bash

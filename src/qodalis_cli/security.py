@@ -205,7 +205,9 @@ async def close_websocket(receive: Any, send: Any, code: int, reason: str = "") 
 _REDACTIONS = [
     # Also the URL-encoded ``Bearer%20<token>`` form (``_header_Authorization`` query).
     (re.compile(r"(?i)(bearer(?:\s+|%20))[A-Za-z0-9._~+/=%-]+"), r"\1[redacted]"),
-    (re.compile(r"(?i)\b(token|ticket|password|secret|cmd)=([^&\s]+)"), r"\1=[redacted]"),
+    # Query values: ``ticket=``, ``token=`` (also ``access_token=`` etc.),
+    # ``password=``, ``secret=`` and the shell ``cmd=``.
+    (re.compile(r"(?i)\b(\w*(?:token|ticket|password|secret)|cmd)=([^&\s\"']+)"), r"\1=[redacted]"),
     (re.compile(r'(?i)"(token|ticket|password|currentPassword|newPassword)"\s*:\s*"[^"]*"'), r'"\1": "[redacted]"'),
 ]
 
@@ -215,6 +217,44 @@ def redact(message: str) -> str:
     for pattern, repl in _REDACTIONS:
         message = pattern.sub(repl, message)
     return message
+
+
+class RedactingLogFilter(logging.Filter):
+    """Applies :func:`redact` to a record's message and string arguments.
+
+    uvicorn logs request paths *with* their query strings (access log lines
+    and ``"WebSocket /ws/...?ticket=..." [accepted]``), which carry tickets,
+    tokens, legacy ``_header_Authorization=Bearer%20...`` values and shell
+    ``cmd=`` text.  Arguments are redacted one by one (not merged into the
+    message), so uvicorn's ``AccessFormatter`` still finds its fields."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = redact(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(_redact_arg(a) for a in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {k: _redact_arg(v) for k, v in record.args.items()}
+        return True
+
+
+def _redact_arg(value: Any) -> Any:
+    return redact(value) if isinstance(value, str) else value
+
+
+#: uvicorn's own loggers (filters only apply to records logged on the logger
+#: itself, not to records propagated from its children).
+UVICORN_LOGGERS = ("uvicorn", "uvicorn.access", "uvicorn.error")
+
+
+def install_log_redaction(loggers: Iterable[str] = UVICORN_LOGGERS) -> None:
+    """Install a :class:`RedactingLogFilter` on ``loggers`` (default:
+    uvicorn's access and error loggers).  Idempotent.  Call it before
+    ``uvicorn.run`` when hosting the CLI server yourself."""
+    for name in loggers:
+        target = logging.getLogger(name)
+        if not any(isinstance(f, RedactingLogFilter) for f in target.filters):
+            target.addFilter(RedactingLogFilter())
 
 
 def is_sensitive_record(record: logging.LogRecord) -> bool:

@@ -37,6 +37,7 @@ from qodalis_cli import (
     InMemoryFileStorageProvider,
     OsFileStorageProvider,
     OsProviderOptions,
+    install_log_redaction,
 )
 from qodalis_cli_server_abstractions import DataExplorerProviderOptions
 from qodalis_cli_server_abstractions.jobs import CliJobOptions
@@ -324,6 +325,8 @@ def main() -> None:
     logger.info("  WebSocket: ws://%s:%d/ws/qcli/events", host, port)
     logger.info("  File storage: %s", type(file_storage_provider).__name__)
 
+    # uvicorn logs paths with query strings (tickets, tokens, shell commands).
+    install_log_redaction()
     uvicorn.run(result.app, host=host, port=port)
 
 

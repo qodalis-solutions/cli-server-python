@@ -59,8 +59,12 @@ from .processors import (
 )
 from .create_cli_server import create_cli_server, CliServerOptions, CliServerResult
 from .shell_security import CliShellOptions, ShellAccessProvider, ShellPrincipal
+from .security import RedactingLogFilter, install_log_redaction, redact
 
 __all__ = [
+    "RedactingLogFilter",
+    "install_log_redaction",
+    "redact",
     "CliShellOptions",
     "ShellAccessProvider",
     "ShellPrincipal",
