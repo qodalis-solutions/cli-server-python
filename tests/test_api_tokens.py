@@ -151,16 +151,34 @@ class TestCreate:
             view = s.create(s.root, "forever", expiresInDays=None)["apiToken"]
             assert view["expiresAt"] is None
 
-    @pytest.mark.parametrize("name", ["", "   ", "a" * 65, "bad/name", "semi;colon", "émoji", 5, None])
+    @pytest.mark.parametrize("name", ["", "a" * 65, "bad/name", "semi;colon", "émoji", 5, None])
     def test_invalid_names(self, srv: Srv, name):
         res = srv.c.post(BASE + "/tokens", headers=_h(srv.root), json={"name": name})
+        assert_error(res, 400, "name must be 1-64 characters")
+
+    def test_missing_name(self, srv: Srv):
+        assert_error(srv.c.post(BASE + "/tokens", headers=_h(srv.root), json={}), 400)
+
+    def test_field_errors_before_scope_check(self, srv: Srv):
+        alice = srv.user("alice")
+        res = srv.c.post(BASE + "/tokens", headers=_h(alice),
+                         json={"name": "bad/name", "permissions": ["users:read"]})
         assert_error(res, 400)
+        res = srv.c.post(BASE + "/tokens", headers=_h(alice),
+                         json={"name": "ok", "expiresInDays": 0, "permissions": ["users:read"]})
+        assert_error(res, 400)
+
+    def test_empty_scope(self, srv: Srv):
+        body = srv.create(srv.root, "empty", permissions=[])
+        assert body["apiToken"]["permissions"] == []
+        assert_error(srv.execute(body["token"]), 403)
+        assert "permissions" not in srv.create(srv.root, "null", permissions=None)["apiToken"]
 
     def test_duplicate_name_case_insensitive_409(self, srv: Srv):
         root = srv.root
         srv.create(root, "Deploy")
         res = srv.c.post(BASE + "/tokens", headers=_h(root), json={"name": "deploy"})
-        assert_error(res, 409)
+        assert_error(res, 409, "token 'deploy' already exists")
         # Other users may reuse the name.
         srv.create(srv.user("alice"), "deploy")
 
@@ -169,7 +187,15 @@ class TestCreate:
         for i in range(20):
             srv.create(root, f"t{i}")
         res = srv.c.post(BASE + "/tokens", headers=_h(root), json={"name": "t20"})
-        assert_error(res, 400, "20")
+        assert_error(res, 400, "a user may have at most 20 tokens")
+
+    def test_expired_tokens_do_not_count(self, srv: Srv):
+        root = srv.root
+        ids = [srv.create(root, f"t{i}")["apiToken"]["id"] for i in range(20)]
+        srv.users.api_token_store._tokens[ids[0]].expires_at = now_ms() - 1
+        srv.create(root, "t20")
+        # The expired token stays listed.
+        assert len(srv.c.get(BASE + "/tokens", headers=_h(root)).json()) == 21
 
     def test_anonymous_401(self, srv: Srv):
         assert_error(srv.c.post(BASE + "/tokens", json={"name": "a"}), 401)
@@ -178,7 +204,7 @@ class TestCreate:
     def test_api_token_cannot_create_tokens(self, srv: Srv):
         token = srv.create(srv.root)["token"]
         res = srv.c.post(BASE + "/tokens", headers=_h(token), json={"name": "more"})
-        assert_error(res, 403, "API tokens cannot create tokens")
+        assert_error(res, 403, "forbidden: API tokens cannot create tokens")
 
     def test_audited(self, srv: Srv):
         root = srv.root
@@ -196,7 +222,7 @@ class TestScope:
     def test_scope_must_be_held(self, srv: Srv):
         alice = srv.user("alice", ["logs:read"])
         res = srv.c.post(BASE + "/tokens", headers=_h(alice), json={"name": "a", "permissions": ["users:read"]})
-        assert_error(res, 403, "cannot grant users:read")
+        assert_error(res, 403, "forbidden: cannot grant users:read")
         view = srv.create(alice, "ok", permissions=["logs:read", "commands:execute"])["apiToken"]
         assert view["permissions"] == ["logs:read", "commands:execute"]
 
@@ -234,6 +260,8 @@ class TestListAndRevoke:
         own = srv.c.get(BASE + "/tokens", headers=_h(alice)).json()
         assert [t["name"] for t in own] == ["alice-t"]
         assert_error(srv.c.get(BASE + "/tokens?all=true", headers=_h(alice)), 403, "tokens:read")
+        assert_error(srv.c.get(BASE + "/tokens?all=yes", headers=_h(alice)), 400, "all must be true or false")
+        assert srv.c.get(BASE + "/tokens?all=false", headers=_h(alice)).status_code == 200
         everything = srv.c.get(BASE + "/tokens?all=true", headers=_h(root)).json()
         assert {(t["name"], t["userName"]) for t in everything} == {("root-t", "root"), ("alice-t", "alice")}
 
@@ -321,7 +349,7 @@ class TestTokenAuthentication:
         token = srv.create(alice)["token"]
         res = srv.c.put(BASE + "/users/alice/password", headers=_h(token),
                         json={"password": "newpass123", "currentPassword": "pass1234"})
-        assert_error(res, 403, "API tokens cannot change passwords")
+        assert_error(res, 403, "forbidden: API tokens cannot change passwords")
         root_token = srv.create(srv.root)["token"]
         res = srv.c.put(BASE + "/users/alice/password", headers=_h(root_token), json={"password": "newpass123"})
         assert_error(res, 403, "API tokens cannot change passwords")
@@ -332,6 +360,15 @@ class TestTokenAuthentication:
         alice_id = srv.c.get(BASE + "/users/alice", headers=_h(srv.root)).json()["id"]
         srv.c.portal.call(lambda: srv.users.user_store.update_user(alice_id, must_change_password=True))
         assert_error(srv.execute(token), 403, "password change required")
+
+    def test_external_adapter_cannot_create(self):
+        from qodalis_cli_users import ExternalAuthResult, User
+
+        result, users = _make(CliUsersBuilder().set_auth_adapter(
+            lambda req: ExternalAuthResult(user=User(id="ext", name="ext", groups=["users"]))))
+        with TestClient(result.app) as client:
+            res = client.post(BASE + "/tokens", json={"name": "a"}, headers={"Authorization": "Bearer x"})
+            assert_error(res, 501, "Authentication is managed by the host application")
 
     def test_custom_store(self):
         store = InMemoryApiTokenStore()

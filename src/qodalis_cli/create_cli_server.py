@@ -22,6 +22,7 @@ from .mcp import (
     CommandsMcpToolProvider,
     DataExplorerMcpToolProvider,
     FilesystemMcpToolProvider,
+    McpGateMiddleware,
     McpToolRegistry,
     ServerInfoMcpToolProvider,
     create_mcp_router,
@@ -146,6 +147,15 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     app = FastAPI(title="Qodalis CLI Server", lifespan=lifespan)
 
+    mcp_options = resolve_mcp_options(opts.mcp)
+    if mcp_options is not None:
+        # Origin check and 405s before any auth middleware (users plugin).
+        app.add_middleware(
+            McpGateMiddleware,
+            allowed_origins=lambda: opts.allowed_origins,
+            trust_proxy=lambda: opts.shell.trust_proxy,
+        )
+
     _configure_cors(app, opts)
     if opts.allowed_origins is not None:
         app.add_middleware(
@@ -171,12 +181,11 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     if opts.base_path != "/api/v1/qcli":
         app.include_router(router, prefix=opts.base_path)
 
-    mcp_options = resolve_mcp_options(opts.mcp)
     mcp_tools = McpToolRegistry(mcp_options)
-    from .controllers.cli_controller import SERVER_VERSION
+    package_version = _package_version()
 
     mcp_tools.add_provider(ServerInfoMcpToolProvider(
-        SERVER_VERSION,
+        package_version,
         registry,
         features=lambda: _mcp_features(mcp_tools, opts),
         shell_enabled=opts.enable_shell,
@@ -220,7 +229,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         app.include_router(create_mcp_router(
             mcp_tools,
             mcp_options,
-            server_version=SERVER_VERSION,
+            server_version=package_version,
             allowed_origins=lambda: opts.allowed_origins,
             trust_proxy=lambda: opts.shell.trust_proxy,
         ))
@@ -268,6 +277,18 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         shell_session_manager=shell_session_manager,
         mcp=mcp_tools,
     )
+
+
+def _package_version() -> str:
+    """Installed ``qodalis-cli-server`` version (MCP ``serverInfo``)."""
+    try:
+        from importlib.metadata import version
+
+        return version("qodalis-cli-server")
+    except Exception:  # pragma: no cover - not installed as a package
+        from .controllers.cli_controller import SERVER_VERSION
+
+        return SERVER_VERSION
 
 
 def _mcp_features(tools: McpToolRegistry, opts: CliServerOptions) -> list[str]:

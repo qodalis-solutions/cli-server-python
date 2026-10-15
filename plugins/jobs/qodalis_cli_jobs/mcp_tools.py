@@ -68,7 +68,11 @@ class JobsMcpToolProvider:
             job_id = self._resolve(args["id"])
             if job_id is None:
                 return McpToolResult.error(JOB_NOT_FOUND)
-            limit = min(int(args.get("limit", 20)), 100)
+            limit = args.get("limit")
+            limit = 20 if limit is None else int(limit)
+            if limit < 1:
+                return McpToolResult.error("limit must be at least 1")
+            limit = min(limit, 100)
             items, total = await scheduler.storage.get_executions(job_id, limit=limit, offset=0)
             executions = [
                 {
@@ -117,7 +121,7 @@ class JobsMcpToolProvider:
                 "Recent executions of a background job",
                 object_schema({
                     "id": _ID,
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+                    "limit": {"type": "integer", "default": 20, "description": "Maximum executions (1-100)"},
                 }, ["id"]),
                 jobs_history, [JOBS_READ], dict(READ_ONLY),
             ),

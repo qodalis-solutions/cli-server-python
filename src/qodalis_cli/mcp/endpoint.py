@@ -46,6 +46,57 @@ def _valid_id(value: Any) -> bool:
     return isinstance(value, str) or (isinstance(value, int) and not isinstance(value, bool))
 
 
+class McpGateMiddleware:
+    """Runs before authentication (installed outside the auth plugins'
+    middleware): ``GET``/``DELETE /api/qcli/mcp`` → 405 (``Allow: POST``) and
+    a present ``Origin`` that is neither allowed nor same-origin → 403."""
+
+    def __init__(
+        self,
+        app: Any,
+        allowed_origins: Callable[[], list[str] | None],
+        trust_proxy: Callable[[], bool | int] = lambda: False,
+    ) -> None:
+        self.app = app
+        self.allowed_origins = allowed_origins
+        self.trust_proxy = trust_proxy
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and scope["path"].rstrip("/") == MCP_PATH:
+            method = scope["method"].upper()
+            if method in ("GET", "DELETE"):
+                await _send_json(send, 405, {"error": "method not allowed"}, [(b"allow", b"POST")])
+                return
+            origin = _header(scope, b"origin")
+            if method != "OPTIONS" and origin is not None and not origin_allowed(
+                origin, self.allowed_origins() or [], scope, self.trust_proxy()
+            ):
+                await _send_json(send, 403, {"error": "origin not allowed"})
+                return
+        await self.app(scope, receive, send)
+
+
+def _header(scope: dict, name: bytes) -> str | None:
+    for key, value in scope.get("headers") or []:
+        if key.lower() == name:
+            return value.decode("latin-1")
+    return None
+
+
+async def _send_json(send: Any, status: int, body: dict, headers: list | None = None) -> None:
+    payload = json.dumps(body).encode("utf-8")
+    await send({
+        "type": "http.response.start",
+        "status": status,
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(payload)).encode("ascii")),
+            *(headers or []),
+        ],
+    })
+    await send({"type": "http.response.body", "body": payload})
+
+
 def create_mcp_router(
     tools: McpToolRegistry,
     options: CliMcpOptions,
@@ -74,6 +125,8 @@ def create_mcp_router(
 
     def initialize(params: dict[str, Any]) -> dict[str, Any]:
         requested = params.get("protocolVersion")
+        if not isinstance(requested, str):
+            raise _RpcError(INVALID_PARAMS, "Invalid params: protocolVersion must be a string")
         version = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else SUPPORTED_PROTOCOL_VERSIONS[0]
         result: dict[str, Any] = {
             "protocolVersion": version,

@@ -13,11 +13,12 @@ logger = logging.getLogger(__name__)
 
 TOOL_NAME_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 
-#: Provider tiers — on a name collision the lower tier wins (built-in
-#: feature tools beat command tools; between plugins the first registered).
+#: Provider tiers — on a name collision the lower tier wins: built-in
+#: feature tools, then command tools, then plugin/host providers in
+#: registration order.
 TIER_BUILTIN = 0
-TIER_PLUGIN = 1
-TIER_COMMANDS = 2
+TIER_COMMANDS = 1
+TIER_PLUGIN = 2
 
 
 @dataclass
@@ -160,7 +161,8 @@ class McpToolRegistry:
 
     def add_provider(self, provider: IMcpToolProvider, *, builtin: bool = False) -> "McpToolRegistry":
         """Register a tool provider.  ``builtin`` marks a server feature
-        (its tools win name collisions with command and plugin tools)."""
+        (its tools win name collisions); other providers come after the
+        command tools, in registration order."""
         tier = getattr(provider, "mcp_tier", None)
         if tier is None:
             tier = TIER_BUILTIN if builtin else TIER_PLUGIN
@@ -206,7 +208,7 @@ class McpToolRegistry:
 # ---------------------------------------------------------------------------
 
 
-def _type_ok(value: Any, expected: str) -> bool:
+def _type_ok(value: Any, expected: Any) -> bool:
     if expected == "string":
         return isinstance(value, str)
     if expected == "number":
@@ -221,59 +223,46 @@ def _type_ok(value: Any, expected: str) -> bool:
         return isinstance(value, list)
     if expected == "object":
         return isinstance(value, dict)
-    if expected == "null":
-        return value is None
     return True
 
 
-_ARTICLES = {"array": "an array", "integer": "an integer", "object": "an object"}
+_TYPE_LABELS = {
+    "string": "a string",
+    "number": "a number",
+    "integer": "an integer",
+    "boolean": "a boolean",
+    "object": "an object",
+    "array": "an array",
+}
 
 
-def _describe(expected: str) -> str:
-    return _ARTICLES.get(expected, f"a {expected}")
-
-
-def _check(value: Any, schema: dict[str, Any], where: str) -> str | None:
-    expected = schema.get("type")
-    if isinstance(expected, str) and not _type_ok(value, expected):
-        return f"'{where}' must be {_describe(expected)}"
-    if isinstance(expected, list) and not any(_type_ok(value, t) for t in expected):
-        return f"'{where}' must be one of: {', '.join(expected)}"
-    if "enum" in schema and value not in schema["enum"]:
-        return f"'{where}' must be one of: {', '.join(map(str, schema['enum']))}"
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if "minimum" in schema and value < schema["minimum"]:
-            return f"'{where}' must be >= {schema['minimum']}"
-        if "maximum" in schema and value > schema["maximum"]:
-            return f"'{where}' must be <= {schema['maximum']}"
-    if isinstance(value, list) and isinstance(schema.get("items"), dict):
-        for i, item in enumerate(value):
-            error = _check(item, schema["items"], f"{where}[{i}]")
-            if error:
-                return error
-    if isinstance(value, dict) and isinstance(schema.get("properties"), dict):
-        return _check_object(value, schema, where)
-    return None
-
-
-def _check_object(value: dict[str, Any], schema: dict[str, Any], where: str | None) -> str | None:
-    properties: dict[str, Any] = schema.get("properties") or {}
-    prefix = f"{where}." if where else ""
-    for key, item in value.items():
-        if key not in properties:
-            if schema.get("additionalProperties") is False:
-                return f"unknown property '{prefix}{key}'"
-            continue
-        error = _check(item, properties[key] or {}, f"{prefix}{key}")
-        if error:
-            return error
-    for key in schema.get("required") or []:
-        if key not in value:
-            return f"missing required property '{prefix}{key}'"
+def _check_property(key: str, prop: dict[str, Any], value: Any) -> str | None:
+    expected = prop.get("type")
+    items_type = (prop.get("items") or {}).get("type") if isinstance(prop.get("items"), dict) else None
+    if not _type_ok(value, expected):
+        if expected == "array" and items_type:
+            return f"argument '{key}' must be an array of {items_type}s"
+        return f"argument '{key}' must be {_TYPE_LABELS.get(expected, expected)}"
+    if expected == "array" and items_type and any(not _type_ok(v, items_type) for v in value):
+        return f"argument '{key}' must be an array of {items_type}s"
     return None
 
 
 def validate_arguments(arguments: dict[str, Any], schema: dict[str, Any]) -> str | None:
-    """Validate tool ``arguments`` against its input schema; returns the
-    reason when invalid."""
-    return _check_object(arguments, schema, None)
+    """Validate tool ``arguments`` against its input schema (declared types,
+    array item types, unknown and missing required arguments; ``null``
+    counts as absent).  Returns the reason when invalid."""
+    properties: dict[str, Any] = schema.get("properties") or {}
+    for key, value in arguments.items():
+        prop = properties.get(key)
+        if prop is None:
+            return f"unknown argument '{key}'"
+        if value is None:
+            continue
+        reason = _check_property(key, prop, value)
+        if reason:
+            return reason
+    for key in schema.get("required") or []:
+        if arguments.get(key) is None:
+            return f"missing required argument '{key}'"
+    return None

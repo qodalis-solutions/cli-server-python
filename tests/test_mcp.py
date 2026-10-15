@@ -228,8 +228,7 @@ class TestTransport:
     @pytest.mark.parametrize("requested,expected", [
         ("2025-06-18", "2025-06-18"),
         ("2025-03-26", "2025-03-26"),
-        ("1999-01-01", SUPPORTED_PROTOCOL_VERSIONS[0]),
-        (None, SUPPORTED_PROTOCOL_VERSIONS[0]),
+        ("1999-01-01", "2025-11-25"),
     ])
     def test_initialize_version_negotiation(self, open_srv, requested, expected):
         c, _, _ = open_srv
@@ -247,7 +246,19 @@ class TestTransport:
         assert "instructions" not in result
 
     def test_supported_versions(self):
-        assert {"2025-06-18", "2025-03-26"} <= set(SUPPORTED_PROTOCOL_VERSIONS)
+        assert SUPPORTED_PROTOCOL_VERSIONS == ["2025-11-25", "2025-06-18", "2025-03-26"]
+
+    @pytest.mark.parametrize("params", [{}, {"protocolVersion": 5}])
+    def test_initialize_requires_protocol_version(self, open_srv, params):
+        c, _, _ = open_srv
+        assert c.rpc("initialize", params)["error"]["code"] == -32602
+
+    def test_server_version_is_package_version(self, open_srv):
+        from importlib.metadata import version
+
+        c, _, _ = open_srv
+        info = c.rpc("initialize", {"protocolVersion": "2025-06-18"})["result"]["serverInfo"]
+        assert info["version"] == version("qodalis-cli-server")
 
     def test_instructions(self):
         result, *_ = _server(mcp=CliMcpOptions(instructions="Use the tools wisely"))
@@ -484,23 +495,23 @@ class TestToolsCall:
         assert data["error"] == {"code": -32602, "message": "Unknown tool: nope"}
 
     @pytest.mark.parametrize("args,reason", [
-        ({"city": 5}, "'city' must be a string"),
-        ({"city": "x", "days": "3"}, "'days' must be a number"),
-        ({"city": "x", "metric": "yes"}, "'metric' must be a boolean"),
-        ({"city": "x", "tags": "a"}, "'tags' must be an array"),
-        ({"city": "x", "tags": [1]}, "'tags[0]' must be a string"),
-        ({"city": "x", "bogus": 1}, "unknown property 'bogus'"),
-        ({}, "missing required property 'city'"),
+        ({"city": 5}, "argument 'city' must be a string"),
+        ({"city": "x", "days": "3"}, "argument 'days' must be a number"),
+        ({"city": "x", "metric": "yes"}, "argument 'metric' must be a boolean"),
+        ({"city": "x", "tags": "a"}, "argument 'tags' must be an array of strings"),
+        ({"city": "x", "tags": [1]}, "argument 'tags' must be an array of strings"),
+        ({"city": "x", "bogus": 1}, "unknown argument 'bogus'"),
+        ({}, "missing required argument 'city'"),
+        ({"city": None}, "missing required argument 'city'"),
     ])
     def test_invalid_arguments(self, open_srv, args, reason):
         c, _, _ = open_srv
         error = c.call("weather_current", args)["error"]
-        assert error["code"] == -32602
-        assert reason in error["message"]
+        assert error == {"code": -32602, "message": f"Invalid arguments for tool weather_current: {reason}"}
 
     def test_missing_required_value(self, open_srv):
         c, _, _ = open_srv
-        assert "missing required property 'value'" in c.call("say", {})["error"]["message"]
+        assert "missing required argument 'value'" in c.call("say", {})["error"]["message"]
 
     def test_structured_content(self, open_srv):
         c, _, _ = open_srv
@@ -577,12 +588,39 @@ class TestFilesystemTools:
         provider = result.builder.file_storage_provider
         asyncio.run(provider.write_file("/big.txt", "abcdef" * 10))
         text = c.call("fs_read", {"path": "/big.txt", "maxBytes": 6})["result"]["content"][0]["text"]
-        assert text.startswith("abcdef\n") and "truncated" in text
+        assert text == "abcdef\n[truncated: 6 of 60 bytes]"
+        full = c.call("fs_read", {"path": "/big.txt"})["result"]["content"][0]["text"]
+        assert full == "abcdef" * 10
         asyncio.run(provider.write_file("/bin.dat", b"\x00\xff\xfe\x01"))
         res = c.call("fs_read", {"path": "/bin.dat"})["result"]
         assert res == {"content": [{"type": "text", "text": "binary file, 4 bytes"}], "isError": True}
-        bad = c.call("fs_read", {"path": "/big.txt", "maxBytes": 0})["error"]
-        assert bad["code"] == -32602
+        bad = c.call("fs_read", {"path": "/big.txt", "maxBytes": 0})["result"]
+        assert bad == {"content": [{"type": "text", "text": "maxBytes must be at least 1"}], "isError": True}
+
+    def test_path_validator_rejection(self, tmp_path):
+        from qodalis_cli import FileSystemOptions
+
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        (allowed / "a.txt").write_text("inside")
+        (tmp_path / "secret.txt").write_text("outside")
+        result = create_cli_server(CliServerOptions(mcp=True, configure=lambda b: b.add_filesystem(
+            FileSystemOptions(allowed_paths=[str(allowed)]))))
+        with TestClient(result.app) as client:
+            c = Client(client)
+            ok = c.call("fs_read", {"path": str(allowed / "a.txt")})["result"]
+            assert ok == {"content": [{"type": "text", "text": "inside"}], "isError": False}
+            for tool, args in [
+                ("fs_read", {"path": str(tmp_path / "secret.txt")}),
+                ("fs_read", {"path": str(allowed / ".." / "secret.txt")}),
+                ("fs_list", {"path": str(tmp_path)}),
+                ("fs_write", {"path": str(tmp_path / "evil.txt"), "content": "x"}),
+                ("fs_delete", {"path": str(tmp_path / "secret.txt")}),
+            ]:
+                res = c.call(tool, args)["result"]
+                assert res["isError"] is True, (tool, res)
+            assert (tmp_path / "secret.txt").read_text() == "outside"
+            assert not (tmp_path / "evil.txt").exists()
 
     def test_errors_are_tool_errors(self, open_srv):
         c, _, _ = open_srv
@@ -677,7 +715,8 @@ class TestProviders:
         assert c.call("custom_tool", {"n": 2})["result"] == {
             "content": [{"type": "text", "text": "custom:2"}], "isError": False, "structuredContent": {"n": 2},
         }
-        assert c.call("custom_tool", {"n": "x"})["error"]["code"] == -32602
+        assert c.call("custom_tool", {"n": "x"})["error"]["message"] == (
+            "Invalid arguments for tool custom_tool: argument 'n' must be an integer")
 
     def test_collisions(self):
         result = create_cli_server(CliServerOptions(mcp=True, configure=lambda b: (
@@ -691,8 +730,12 @@ class TestProviders:
             tools = c.tools()
             # Built-in feature tools win over commands.
             assert tools["server_info"]["description"] != "command"
-            # Plugin tools: the first registered wins (and beats the command).
-            assert c.call("dup", {"n": 1})["result"]["content"][0]["text"] == "first-plugin:1"
+            # Command tools beat plugin tools.
+            assert tools["dup"]["description"] == "command dup"
+            # Between plugin providers the first registered wins.
+            result.mcp.add_provider(EchoToolProvider("dup2", "first-plugin"))
+            result.mcp.add_provider(EchoToolProvider("dup2", "second-plugin"))
+            assert c.call("dup2", {"n": 1})["result"]["content"][0]["text"] == "first-plugin:1"
 
     def test_invalid_tool_name_ignored(self, open_srv):
         c, _, result = open_srv
@@ -806,6 +849,24 @@ class TestWithUsersPlugin:
         full = Client(p.c, res.json()["token"])
         assert "deploy" in full.tools()
 
+    def test_origin_and_405_before_auth(self, prot):
+        p, _ = prot
+        res = p.c.post(MCP, json={"jsonrpc": "2.0", "id": 1, "method": "ping"}, headers={"Origin": "http://evil.test"})
+        assert res.status_code == 403 and res.json() == {"error": "origin not allowed"}
+        for method in ("GET", "DELETE"):
+            res = p.c.request(method, MCP)
+            assert res.status_code == 405 and res.headers["allow"] == "POST"
+
+    def test_unprotected_users_plugin_uses_static_token(self):
+        result = create_cli_server(CliServerOptions(mcp=CliMcpOptions(token="static"), configure=lambda b: (
+            b.add_processor(Proc("deploy", description="d", perms=["deploy:run"])),
+        )))
+        result.mount_plugin(CliUsersBuilder().set_default_admin_password(ROOT_PASS).set_protect_server(False).build())
+        with TestClient(result.app) as client:
+            assert Client(client).post({"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 401
+            # Not protected: no permission filtering.
+            assert "deploy" in Client(client, "static").tools()
+
     def test_methods_still_405_when_authenticated(self, prot):
         p, _ = prot
         res = p.c.get(MCP, headers={"Authorization": f"Bearer {p.root}"})
@@ -831,3 +892,28 @@ class TestBuiltInProcessors:
             text = c.call("hash", {"value": "abc", "algorithm": "md5"})["result"]["content"][0]["text"]
             assert text == "md5: 900150983cd24fb0d6963f7d28e17f72"
             assert c.call("base64_encode", {"value": "hi"})["result"]["content"][0]["text"] == "aGk="
+
+
+class TestDataExplorerPermissions:
+    def test_data_tools_need_data_query(self):
+        pytest.importorskip("qodalis_cli_data_explorer")
+        sql = pytest.importorskip("qodalis_cli_data_explorer_sql")
+        from qodalis_cli_server_abstractions import DataExplorerProviderOptions
+
+        def configure(b):
+            b.add_data_explorer_provider(sql.SqlDataExplorerProvider(":memory:"),
+                                         DataExplorerProviderOptions(name="mem", description="memory db"))
+
+        result = create_cli_server(CliServerOptions(configure=configure, mcp=True))
+        result.mount_plugin(CliUsersBuilder().set_default_admin_password(ROOT_PASS).set_rate_limit(1000).build())
+        with TestClient(result.app) as client:
+            p = Protected(client)
+            plain = Client(client, p.user("plain", ["logs:read"]))
+            assert not any(n.startswith("data_") for n in plain.tools())
+            assert plain.call("data_query", {"source": "mem", "query": "SELECT 1"})["error"]["code"] == -32602
+            analyst = Client(client, p.user("analyst", ["data:query"]))
+            tools = analyst.tools()
+            assert tools["data_sources"]["annotations"] == {"readOnlyHint": True}
+            assert "annotations" not in tools["data_query"]
+            res = analyst.call("data_query", {"source": "mem", "query": "SELECT 2 AS n"})["result"]
+            assert res["isError"] is False and res["structuredContent"]["rows"]

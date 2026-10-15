@@ -20,7 +20,7 @@ from ..services.users_service import UsersService
 from ._routing import collection, new_router
 
 MANAGED_BY_HOST = "Authentication is managed by the host application"
-API_TOKENS_CANNOT_CHANGE_PASSWORDS = "API tokens cannot change passwords"
+API_TOKENS_CANNOT_CHANGE_PASSWORDS = "forbidden: API tokens cannot change passwords"
 
 
 def create_users_router(

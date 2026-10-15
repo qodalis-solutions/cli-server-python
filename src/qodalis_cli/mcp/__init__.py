@@ -13,7 +13,7 @@ from .core import (
     resolve_mcp_options,
     validate_arguments,
 )
-from .endpoint import MCP_PATH, SUPPORTED_PROTOCOL_VERSIONS, create_mcp_router
+from .endpoint import MCP_PATH, SUPPORTED_PROTOCOL_VERSIONS, McpGateMiddleware, create_mcp_router
 from .features import (
     DataExplorerMcpToolProvider,
     FilesystemMcpToolProvider,
@@ -28,6 +28,7 @@ __all__ = [
     "IMcpToolProvider",
     "MCP_PATH",
     "McpCallContext",
+    "McpGateMiddleware",
     "McpTool",
     "McpToolRegistry",
     "McpToolResult",

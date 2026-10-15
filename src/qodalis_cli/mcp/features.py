@@ -115,7 +115,10 @@ class FilesystemMcpToolProvider:
 
         async def fs_read(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
             path = args["path"]
-            max_bytes = int(args.get("maxBytes", DEFAULT_MAX_BYTES))
+            max_bytes = args.get("maxBytes")
+            max_bytes = DEFAULT_MAX_BYTES if max_bytes is None else int(max_bytes)
+            if max_bytes < 1:
+                return McpToolResult.error("maxBytes must be at least 1")
             info = await p.stat(path)
             if info.type == "directory":
                 return McpToolResult.error(f"Is a directory: {path}")
@@ -126,7 +129,7 @@ class FilesystemMcpToolProvider:
                 if len(data) > max_bytes:
                     break
             total = max(info.size, len(data))
-            truncated = len(data) > max_bytes
+            truncated = total > max_bytes
             head = bytes(data[:max_bytes])
             decoder = codecs.getincrementaldecoder("utf-8")("strict")
             try:
@@ -138,7 +141,7 @@ class FilesystemMcpToolProvider:
             if "\x00" in text:
                 return McpToolResult.error(f"binary file, {total} bytes")
             if truncated:
-                text += f"\n\n[truncated: showing the first {max_bytes} of {total} bytes]"
+                text += f"\n[truncated: {len(head)} of {total} bytes]"
             return McpToolResult(text=text)
 
         async def fs_write(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
@@ -164,8 +167,8 @@ class FilesystemMcpToolProvider:
                 object_schema({
                     "path": _PATH,
                     "maxBytes": {
-                        "type": "integer", "minimum": 1, "default": DEFAULT_MAX_BYTES,
-                        "description": "Maximum number of bytes to return",
+                        "type": "integer", "default": DEFAULT_MAX_BYTES,
+                        "description": "Maximum number of bytes to read (at least 1)",
                     },
                 }, ["path"]),
                 _guard(fs_read), ["files:read"], dict(READ_ONLY),

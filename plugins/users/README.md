@@ -133,7 +133,7 @@ All routes are mounted under `/api/v1/qcli`; collections accept paths with and w
 | `GET /audit?limit=&event=&username=` | `audit:read` | Audit entries, newest first |
 | `DELETE /audit` | `audit:clear` | Clear the audit log (204) |
 | `GET /tokens` | authenticated | Own API tokens (views) |
-| `GET /tokens?all=true` | `tokens:read` | Every user's API tokens |
+| `GET /tokens?all=true` | `tokens:read` | Every user's API tokens (`all` must be `true`/`false`, else 400) |
 | `POST /tokens` | authenticated, **session only** | `{ name, expiresInDays?, permissions? }` → `201 { token, apiToken }` |
 | `DELETE /tokens/{id}` | owner or `tokens:revoke` | Revoke (204); unknown or not yours → 404 |
 
@@ -155,23 +155,23 @@ The admin dashboard plugin keeps its own login at `/auth/login`; both plugins ca
 Long-lived, revocable bearer tokens for MCP clients, CI and scripts (sessions expire and need a password sign-in). A token is `qcli_pat_` + 32 random bytes (base64url, no padding); it is shown **once** at creation and only its SHA-256 hash is stored (`IApiTokenStore`, in-memory by default — replace it with `set_api_token_store`).
 
 ```bash
-# create (needs a session — a request authenticated by an API token gets 403)
+# create (needs a session: an API token gets 403, an external-adapter identity 501)
 curl -X POST http://localhost:8048/api/v1/qcli/tokens \
   -H "Authorization: Bearer <session token>" -H "Content-Type: application/json" \
   -d '{"name": "claude", "expiresInDays": 30, "permissions": ["commands:execute", "files:read"]}'
 # → 201 { "token": "qcli_pat_…", "apiToken": { "id", "name", "userId", "userName", "createdAt", "expiresAt", "lastUsedAt", "permissions" } }
 ```
 
-- `name`: 1-64 characters of `[A-Za-z0-9._ -]`, unique per user (case-insensitive; duplicate → `409`). At most 20 tokens per user (`400`).
+- `name`: 1-64 characters of `[A-Za-z0-9._ -]`, unique per user (case-insensitive; duplicate → `409`). At most 20 non-expired tokens per user (`400`; expired tokens stay listed until revoked).
 - `expiresInDays`: integer 1-365, default 90; `null` (never expires) only with `set_allow_non_expiring_tokens(True)`, else `400`.
-- `permissions` (optional scope): every entry must be a valid permission you hold, else `403 cannot grant <perm>`. A scoped token gets the user's **live** permissions intersected with the scope; an unscoped token (`permissions` omitted in the view) gets all of them.
+- `permissions` (optional scope): every entry must be a valid permission you hold, else `403 forbidden: cannot grant <perm>` (body field errors are `400` first). A scoped token gets the user's **live** permissions intersected with the scope; `[]` is an empty scope; an unscoped token (`permissions` omitted or `null`; omitted in the view) gets all of them.
 - Views never contain the token or its hash; `lastUsedAt` is `null` until first use and updated at most once a minute.
 
-`Authorization: Bearer qcli_pat_…` is accepted everywhere a session token is (HTTP routes, `POST /sessions/ws-ticket`, the MCP endpoint). An unknown, revoked or expired token, or one whose user is disabled or deleted, gets `401`; `mustChangePassword` applies as for sessions. With a token, `GET`/`DELETE /sessions/current` answer `404 not a session` and password changes `403 API tokens cannot change passwords`. Sockets opened with a token's ticket are closed with 4401 `session ended` when the token is revoked or expires or the user is disabled.
+`Authorization: Bearer qcli_pat_…` is accepted everywhere a session token is (HTTP routes, `POST /sessions/ws-ticket`, the MCP endpoint). An unknown, revoked or expired token, or one whose user is disabled or deleted, gets `401`; `mustChangePassword` applies as for sessions. With a token, `GET`/`DELETE /sessions/current` answer `404 not a session` and password changes `403 forbidden: API tokens cannot change passwords`. Sockets opened with a token's ticket are closed with 4401 `session ended` when the token is revoked or expires or the user is disabled.
 
 Deleting a user deletes their tokens; disabling a user makes their tokens fail (they work again after re-enabling). Creation and revocation are audited as `token_created` / `token_revoked` (details: token name and id).
 
-Use a token with the server's MCP endpoint — see the main README, *MCP endpoint*:
+Use a token with the server's MCP endpoint — see the main README, [*Using the MCP endpoint from an MCP client*](../../README.md#using-the-mcp-endpoint-from-an-mcp-client):
 
 ```bash
 claude mcp add --transport http qcli http://localhost:8048/api/qcli/mcp \
