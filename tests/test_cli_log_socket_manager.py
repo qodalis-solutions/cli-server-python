@@ -168,3 +168,22 @@ class TestWebSocketLogHandlerEmit:
         handler.emit(record)
 
         assert captured[0][0] == "information"
+
+
+# ---------------------------------------------------------------------------
+# redact
+# ---------------------------------------------------------------------------
+
+
+class TestRedact:
+    def test_redacts_bearer_token(self) -> None:
+        from qodalis_cli.security import redact
+
+        assert redact("Authorization: Bearer abc.def") == "Authorization: Bearer [redacted]"
+
+    def test_redacts_url_encoded_bearer_token(self) -> None:
+        from qodalis_cli.security import redact
+
+        out = redact("GET /ws/qcli/shell?_header_Authorization=Bearer%20abc.def%3D&x=1")
+        assert "abc" not in out and "def" not in out
+        assert "Bearer%20[redacted]&x=1" in out

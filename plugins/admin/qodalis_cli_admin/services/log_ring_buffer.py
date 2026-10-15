@@ -23,7 +23,8 @@ class LogEntry:
 BroadcastFn = Callable[[str], Awaitable[None]]
 
 _REDACTIONS = [
-    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"), r"\1[redacted]"),
+    # Also the URL-encoded ``Bearer%20<token>`` form (``_header_Authorization`` query).
+    (re.compile(r"(?i)(bearer(?:\s+|%20))[A-Za-z0-9._~+/=%-]+"), r"\1[redacted]"),
     (re.compile(r"(?i)\b(token|ticket|password|secret|cmd)=([^&\s]+)"), r"\1=[redacted]"),
     (re.compile(r'(?i)"(token|ticket|password|currentPassword|newPassword)"\s*:\s*"[^"]*"'), r'"\1": "[redacted]"'),
 ]

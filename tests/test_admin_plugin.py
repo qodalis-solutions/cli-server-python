@@ -15,7 +15,7 @@ from qodalis_cli_admin import (
 )
 from qodalis_cli_admin.auth.jwt_service import JwtService
 from qodalis_cli_admin.services.admin_config import AdminConfig
-from qodalis_cli_admin.services.log_ring_buffer import LogEntry, LogRingBuffer
+from qodalis_cli_admin.services.log_ring_buffer import LogEntry, LogRingBuffer, redact
 from qodalis_cli_admin.services.module_registry import ModuleRegistry
 
 
@@ -534,6 +534,11 @@ class TestJwtService:
 
 
 class TestLogRingBuffer:
+    def test_redact_url_encoded_bearer_token(self) -> None:
+        out = redact("GET /ws/qcli/shell?_header_Authorization=Bearer%20abc.def%3D&x=1")
+        assert "abc" not in out and "def" not in out
+        assert "Bearer%20[redacted]&x=1" in out
+
     def test_add_and_query(self) -> None:
         buf = LogRingBuffer(max_size=100)
         buf.add(LogEntry(timestamp="t1", level="INFO", message="hello"))
