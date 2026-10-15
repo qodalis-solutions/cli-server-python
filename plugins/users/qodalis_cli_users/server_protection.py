@@ -38,7 +38,7 @@ PUBLIC_PATHS: list[tuple[re.Pattern[str], frozenset[str] | None]] = [
 
 #: Routes of the users plugin itself — they authenticate in their own
 #: dependencies (with CSRF and password-change gating).
-SELF_PROTECTED = re.compile(r"^/api/v1/qcli/(sessions|users|groups|audit)(/.*)?$")
+SELF_PROTECTED = re.compile(r"^/api/v1/qcli/(sessions|users|groups|audit|tokens)(/.*)?$")
 
 #: HTTP permission rules, first match wins: (path, methods or None, permission).
 HTTP_RULES: list[Rule] = [
@@ -48,6 +48,9 @@ HTTP_RULES: list[Rule] = [
     (re.compile(r"^/api/(v1/)?qcli/jobs(/.*)?$"), frozenset({"GET", "HEAD"}), "jobs:read"),
     (re.compile(r"^/api/(v1/)?qcli/jobs(/.*)?$"), None, "jobs:manage"),
     (re.compile(r"^/api/(v1/)?qcli/execute(/stream)?/?$"), None, "commands:execute"),
+    # MCP endpoint (tools run commands; each tool also needs the processor's
+    # required permissions).
+    (re.compile(r"^/api/qcli/mcp/?$"), None, "commands:execute"),
 ]
 
 WS_RULES: list[tuple[re.Pattern[str], str | None]] = [

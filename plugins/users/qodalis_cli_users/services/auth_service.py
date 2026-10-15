@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable, Optional, Union
 from .._http import forwarded_client_ip
 from ..errors import UsersApiError, forbidden, unauthorized
 from ..models import (
+    ApiToken,
     AuditEntry,
     ExternalAuthResult,
     Session,
@@ -27,6 +28,7 @@ from ..models import (
 )
 from ..permissions import ADMIN_GROUP, USERS_GROUP, has_permission, merge_permissions, permission_matches
 from ..stores.interfaces import (
+    IApiTokenStore,
     IAuditStore,
     ICredentialStore,
     IGroupStore,
@@ -57,6 +59,12 @@ TOO_MANY_REQUESTS = "too many requests, try again later"
 INSUFFICIENT_PRIVILEGES = "insufficient privileges for this user"
 
 _MAX_TRACKED_KEYS = 10_000
+
+#: Prefix of API tokens (``qcli_pat_`` + 32 random bytes, base64url, no
+#: padding): bearer tokens with it are looked up in the API token store.
+API_TOKEN_PREFIX = "qcli_pat_"
+#: ``last_used_at`` is written at most once per this interval.
+API_TOKEN_LAST_USED_INTERVAL_MS = 60 * 1000
 
 #: Receives the JSON-encoded event; may be sync or async.
 BroadcastFn = Callable[[str], Union[Awaitable[None], None]]
@@ -89,8 +97,18 @@ class AuthContext:
     groups: list[str]
     permissions: list[str]
     session: Session | None = None
+    #: The raw session bearer token (``None`` for API tokens and adapters).
     token: str | None = None
     external: bool = False
+    #: Set when authenticated by an API token (then ``session`` is ``None``).
+    api_token: ApiToken | None = None
+
+    @property
+    def api_token_id(self) -> str | None:
+        return self.api_token.id if self.api_token is not None else None
+
+    #: Server auth-context name of :attr:`api_token_id`.
+    token_id = api_token_id
 
     def can(self, permission: str) -> bool:
         return has_permission(self.permissions, permission)
@@ -123,6 +141,7 @@ class _Ticket:
     user_id: str
     expires_at: int
     external_ctx: AuthContext | None = None
+    api_token_id: str | None = None
 
 
 @dataclass
@@ -143,6 +162,8 @@ class AuthServiceOptions:
     #: always accepted.
     allowed_origins: list[str] | None = None
     ticket_ttl_ms: int = TICKET_TTL_MS
+    #: Allow API tokens that never expire (``expiresInDays: null``).
+    allow_non_expiring_tokens: bool = False
 
 
 class AuthService:
@@ -160,6 +181,7 @@ class AuthService:
         options: AuthServiceOptions | None = None,
         broadcast_fn: BroadcastFn | None = None,
         auth_adapter: Optional[Callable[[Any], Any]] = None,
+        api_token_store: IApiTokenStore | None = None,
     ) -> None:
         if group_store is None:
             from ..stores.in_memory_group_store import InMemoryGroupStore
@@ -169,6 +191,10 @@ class AuthService:
         self.credential_store = credential_store
         self.audit_store = audit_store
         self.group_store = group_store
+        if api_token_store is None:
+            from ..stores.in_memory_api_token_store import InMemoryApiTokenStore
+            api_token_store = InMemoryApiTokenStore()
+        self.api_token_store = api_token_store
         self.options = options or AuthServiceOptions()
         self.broadcast_fn = broadcast_fn
         #: Set when mounted on a CLI server: user-scoped event delivery.
@@ -514,6 +540,8 @@ class AuthService:
             return True
         if ctx.external:
             return True
+        if ctx.api_token is not None:
+            return await self.is_api_token_active(ctx.api_token.id, ctx.user.id)
         if ctx.session is None:
             return False
         session = await self.session_store.get_session_by_id(ctx.session.id)
@@ -555,7 +583,10 @@ class AuthService:
         )
 
     async def authenticate_token(self, token: str) -> AuthContext:
-        """Resolve a bearer token to the live user; raises 401 otherwise."""
+        """Resolve a bearer token (session or API token) to the live user;
+        raises 401 otherwise."""
+        if token.startswith(API_TOKEN_PREFIX):
+            return await self.authenticate_api_token(token)
         token_hash = hash_token(token)
         session = await self.session_store.get_session(token_hash)
         if not session:
@@ -565,6 +596,55 @@ class AuthService:
         session.last_activity = now_ms()
         ctx.token = token
         return ctx
+
+    # ------------------------------------------------------------------
+    # API tokens
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def generate_api_token() -> str:
+        """``qcli_pat_`` + 32 random bytes, base64url without padding."""
+        return API_TOKEN_PREFIX + secrets.token_urlsafe(32)
+
+    async def context_for_api_token(self, record: ApiToken) -> AuthContext:
+        if record.is_expired():
+            raise unauthorized("invalid or expired token")
+        user = await self.user_store.get_user(record.user_id)
+        if not user or user.id != record.user_id or user.disabled:
+            raise unauthorized("invalid or expired token")
+        groups = list(user.groups or [])
+        permissions = await self.effective_permissions(groups)
+        if record.permissions is not None:
+            # Scoped: keep only scope entries the user still holds.
+            permissions = [p for p in record.permissions if has_permission(permissions, p)]
+        return AuthContext(user=user, groups=groups, permissions=permissions, api_token=record)
+
+    async def authenticate_api_token(self, token: str) -> AuthContext:
+        """Resolve an API token to its live user and (scoped) permissions."""
+        record = await self.api_token_store.get_token_by_hash(hash_token(token))
+        if record is None:
+            raise unauthorized("invalid or expired token")
+        ctx = await self.context_for_api_token(record)
+        now = now_ms()
+        if record.last_used_at is None or now - record.last_used_at >= API_TOKEN_LAST_USED_INTERVAL_MS:
+            await self.api_token_store.update_last_used(record.id, now)
+            record.last_used_at = now
+        return ctx
+
+    async def is_api_token_active(self, token_id: str, user_id: str) -> bool:
+        """Token not revoked/expired and its user neither disabled nor deleted."""
+        record = await self.api_token_store.get_token(token_id)
+        if record is None or record.user_id != user_id:
+            return False
+        try:
+            await self.context_for_api_token(record)
+        except UsersApiError:
+            return False
+        return True
+
+    async def api_token_view(self, record: ApiToken) -> dict[str, Any]:
+        user = await self.user_store.get_user(record.user_id)
+        return record.to_view(user.name if user else "")
 
     async def authenticate_external(self, request: Any) -> AuthContext:
         assert self.auth_adapter is not None
@@ -616,6 +696,7 @@ class AuthService:
             user_id=ctx.user.id,
             expires_at=now + self.options.ticket_ttl_ms,
             external_ctx=ctx if ctx.external else None,
+            api_token_id=ctx.api_token_id,
         )
         return ticket, self.options.ticket_ttl_ms // 1000
 
@@ -633,6 +714,14 @@ class AuthService:
             return None
         if entry.external_ctx is not None:
             return entry.external_ctx
+        if entry.api_token_id is not None:
+            record = await self.api_token_store.get_token(entry.api_token_id)
+            if record is None or record.user_id != entry.user_id:
+                return None
+            try:
+                return await self.context_for_api_token(record)
+            except UsersApiError:
+                return None
         if entry.session_id is None:
             return None
         session = await self.session_store.get_session_by_id(entry.session_id)
@@ -776,6 +865,7 @@ class AuthService:
 
 
 __all__ = [
+    "API_TOKEN_PREFIX",
     "AuthContext",
     "AuthService",
     "AuthServiceOptions",

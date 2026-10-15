@@ -71,6 +71,8 @@ class UsersShellAccess:
         ctx = principal.context
         if ctx.external:
             return await self._adapter_active(principal)
+        if ctx.api_token is not None:
+            return await self._api_token_active(principal)
         if principal.session_id is None:
             return False
         session = await self.auth.session_store.get_session_by_id(principal.session_id)
@@ -80,6 +82,24 @@ class UsersShellAccess:
         if user is None or user.id != principal.user_id or user.disabled or user.must_change_password:
             return False
         if not has_permission(await self.auth.user_permissions(user), SHELL_PERMISSION):
+            return PERMISSION_REMOVED
+        return True
+
+    async def _api_token_active(self, principal: UsersShellPrincipal) -> bool | str:
+        """API token identities: the token must still exist and be unexpired,
+        its user enabled; the (scoped) permissions are re-evaluated."""
+        token = principal.context.api_token
+        assert token is not None
+        record = await self.auth.api_token_store.get_token(token.id)
+        if record is None or record.user_id != principal.user_id:
+            return False
+        try:
+            fresh = await self.auth.context_for_api_token(record)
+        except Exception:
+            return False
+        if fresh.must_change_password:
+            return False
+        if not fresh.can(SHELL_PERMISSION):
             return PERMISSION_REMOVED
         return True
 

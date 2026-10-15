@@ -44,7 +44,8 @@ result.app.router.lifespan_context = lifespan
 
 | Method | Default | Description |
 |--------|---------|-------------|
-| `set_user_store` / `set_session_store` / `set_credential_store` / `set_group_store` / `set_audit_store` | in-memory | Storage implementations |
+| `set_user_store` / `set_session_store` / `set_credential_store` / `set_group_store` / `set_audit_store` / `set_api_token_store` | in-memory | Storage implementations |
+| `set_allow_non_expiring_tokens(bool)` | `False` | Allow API tokens that never expire (`expiresInDays: null`) |
 | `set_default_admin_password(str)` | generated | Password of the seeded `root` user |
 | `set_session_timeout(ms)` | `1800000` (30 min) | Idle timeout, checked on every request |
 | `set_max_session_lifetime(ms)` | `43200000` (12 h) | Absolute session lifetime |
@@ -73,7 +74,7 @@ async def handler(ctx = Depends(users_plugin.require_permission("deploy:run"))):
 
 ## Permissions
 
-Groups carry `permissions` (`resource:action` strings, `*` wildcards such as `users:*` or `*`, case-insensitive). A user's effective permissions are the union of its groups' permissions. Built-in permissions: `users:read|create|update|delete`, `groups:read|create|update|delete`, `sessions:read|revoke`, `audit:read|clear`, plus the server permissions below.
+Groups carry `permissions` (`resource:action` strings, `*` wildcards such as `users:*` or `*`, case-insensitive). A user's effective permissions are the union of its groups' permissions. Built-in permissions: `users:read|create|update|delete`, `groups:read|create|update|delete`, `sessions:read|revoke`, `audit:read|clear`, `tokens:read|revoke`, plus the server permissions below.
 
 A caller can never grant or exercise more than it holds: group permissions it grants, groups it adds users to, and users it acts on (update, password reset, delete, revoke sessions) must be covered by its own permissions (403).
 
@@ -85,6 +86,7 @@ When mounted on a CLI server, every route and socket requires a users session ex
 |---|---|
 | `GET /commands` | authenticated |
 | `POST /execute`, `/execute/stream` | `commands:execute` + the processor's `required_permissions` |
+| `POST /api/qcli/mcp` (MCP endpoint) | `commands:execute`; each tool also needs its own permissions |
 | fs `ls`, `cat`, `stat`, `download` | `files:read` |
 | fs `upload`, `mkdir`, `rm` | `files:write` |
 | data explorer | `data:query` |
@@ -130,6 +132,10 @@ All routes are mounted under `/api/v1/qcli`; collections accept paths with and w
 | `POST` / `DELETE /groups/{name}/members/{idOrName}` | `groups:update` | Add / remove member (204) |
 | `GET /audit?limit=&event=&username=` | `audit:read` | Audit entries, newest first |
 | `DELETE /audit` | `audit:clear` | Clear the audit log (204) |
+| `GET /tokens` | authenticated | Own API tokens (views) |
+| `GET /tokens?all=true` | `tokens:read` | Every user's API tokens (`all` must be `true`/`false`, else 400) |
+| `POST /tokens` | authenticated, **session only** | `{ name, expiresInDays?, permissions? }` → `201 { token, apiToken }` |
+| `DELETE /tokens/{id}` | owner or `tokens:revoke` | Revoke (204); unknown or not yours → 404 |
 
 The admin dashboard plugin keeps its own login at `/auth/login`; both plugins can be mounted at the same prefix.
 
@@ -144,6 +150,34 @@ The admin dashboard plugin keeps its own login at `/auth/login`; both plugins ca
 - Names and group names: 1–64 chars `^[A-Za-z0-9][A-Za-z0-9._@-]*$`; emails ≤ 254 chars; permissions ≤ 128 chars (≤ 100 per group); descriptions ≤ 256; `data` ≤ 16 KB; request bodies ≤ 1 MB; control characters are rejected. Names and emails share one namespace.
 - In adapter (cookie) mode, state-changing requests without a bearer token need an `Origin` in the allowed origins (CSRF).
 
+## API tokens
+
+Long-lived, revocable bearer tokens for MCP clients, CI and scripts (sessions expire and need a password sign-in). A token is `qcli_pat_` + 32 random bytes (base64url, no padding); it is shown **once** at creation and only its SHA-256 hash is stored (`IApiTokenStore`, in-memory by default — replace it with `set_api_token_store`).
+
+```bash
+# create (needs a session: an API token gets 403, an external-adapter identity 501)
+curl -X POST http://localhost:8048/api/v1/qcli/tokens \
+  -H "Authorization: Bearer <session token>" -H "Content-Type: application/json" \
+  -d '{"name": "claude", "expiresInDays": 30, "permissions": ["commands:execute", "files:read"]}'
+# → 201 { "token": "qcli_pat_…", "apiToken": { "id", "name", "userId", "userName", "createdAt", "expiresAt", "lastUsedAt", "permissions" } }
+```
+
+- `name`: 1-64 characters of `[A-Za-z0-9._ -]`, unique per user (case-insensitive; duplicate → `409`). At most 20 non-expired tokens per user (`400`; expired tokens stay listed until revoked).
+- `expiresInDays`: integer 1-365, default 90; `null` (never expires) only with `set_allow_non_expiring_tokens(True)`, else `400`.
+- `permissions` (optional scope): every entry must be a valid permission you hold, else `403 forbidden: cannot grant <perm>` (body field errors are `400` first). A scoped token gets the user's **live** permissions intersected with the scope; `[]` is an empty scope; an unscoped token (`permissions` omitted or `null`; omitted in the view) gets all of them.
+- Views never contain the token or its hash; `lastUsedAt` is `null` until first use and updated at most once a minute.
+
+`Authorization: Bearer qcli_pat_…` is accepted everywhere a session token is (HTTP routes, `POST /sessions/ws-ticket`, the MCP endpoint). An unknown, revoked or expired token, or one whose user is disabled or deleted, gets `401`; `mustChangePassword` applies as for sessions. With a token, `GET`/`DELETE /sessions/current` answer `404 not a session` and password changes `403 forbidden: API tokens cannot change passwords`. Sockets opened with a token's ticket are closed with 4401 `session ended` when the token is revoked or expires or the user is disabled.
+
+Deleting a user deletes their tokens; disabling a user makes their tokens fail (they work again after re-enabling). Creation and revocation are audited as `token_created` / `token_revoked` (details: token name and id).
+
+Use a token with the server's MCP endpoint — see the main README, [*Using the MCP endpoint from an MCP client*](../../README.md#using-the-mcp-endpoint-from-an-mcp-client):
+
+```bash
+claude mcp add --transport http qcli http://localhost:8048/api/qcli/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
 ## Session events
 
 Every revoked session is broadcast as:
@@ -156,7 +190,7 @@ Reasons: `revoked`, `user_deleted`, `user_disabled`, `password_changed`. A `@qod
 
 ## Custom storage
 
-Implement any of `IUserStore`, `ISessionStore`, `ICredentialStore`, `IAuditStore` or `IGroupStore` (see `qodalis_cli_users.stores.interfaces`) and pass the instance to the builder:
+Implement any of `IUserStore`, `ISessionStore`, `ICredentialStore`, `IAuditStore`, `IGroupStore` or `IApiTokenStore` (see `qodalis_cli_users.stores.interfaces`) and pass the instance to the builder:
 
 ```python
 users_plugin = CliUsersBuilder().set_user_store(PostgresUserStore(pool)).build()

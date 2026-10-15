@@ -14,6 +14,11 @@ class _Base64EncodeProcessor(CliCommandProcessor):
         return "encode"
 
     @property
+    def value_required(self) -> bool | None:
+        # Takes an optional positional value (exposed as the MCP tool's ``value``).
+        return False
+
+    @property
     def description(self) -> str:
         return "Encodes text to Base64"
 
@@ -30,6 +35,11 @@ class _Base64DecodeProcessor(CliCommandProcessor):
     @property
     def command(self) -> str:
         return "decode"
+
+    @property
+    def value_required(self) -> bool | None:
+        # Takes an optional positional value (exposed as the MCP tool's ``value``).
+        return False
 
     @property
     def description(self) -> str:

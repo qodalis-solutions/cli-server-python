@@ -13,6 +13,11 @@ class CliEchoCommandProcessor(CliCommandProcessor):
         return "echo"
 
     @property
+    def value_required(self) -> bool | None:
+        # Takes an optional positional value (exposed as the MCP tool's ``value``).
+        return False
+
+    @property
     def description(self) -> str:
         return "Echoes the input text back"
 

@@ -143,6 +143,46 @@ class Session:
 
 
 @dataclass
+class ApiToken:
+    """A long-lived API token (``qcli_pat_…``).
+
+    Stores keep only ``token_hash`` (SHA-256 hex of the token), never the
+    token itself.  ``permissions`` is an optional scope: ``None`` means the
+    token carries the user's full (live) permissions.
+    """
+
+    id: str = ""
+    user_id: str = ""
+    #: 1-64 characters of ``[A-Za-z0-9._ -]``, unique per user (case-insensitive).
+    name: str = ""
+    token_hash: str = ""
+    created_at: int = field(default_factory=now_ms)
+    #: Epoch ms, or ``None`` when the token never expires.
+    expires_at: int | None = None
+    #: Updated at most once per 60 seconds.
+    last_used_at: int | None = None
+    permissions: list[str] | None = None
+
+    def is_expired(self, now: int | None = None) -> bool:
+        return self.expires_at is not None and (now if now is not None else now_ms()) >= self.expires_at
+
+    def to_view(self, user_name: str) -> dict[str, Any]:
+        """``GET /tokens`` shape — never includes the token or its hash."""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "name": self.name,
+            "userId": self.user_id,
+            "userName": user_name,
+            "createdAt": self.created_at,
+            "expiresAt": self.expires_at,
+            "lastUsedAt": self.last_used_at,
+        }
+        if self.permissions is not None:
+            result["permissions"] = list(self.permissions)
+        return result
+
+
+@dataclass
 class AuditEntry:
     id: str = field(default_factory=_new_id)
     timestamp: int = field(default_factory=now_ms)
@@ -249,6 +289,14 @@ class PasswordChangeRequest(_Body):
 
 class VerifyPasswordRequest(_Body):
     password: str
+
+
+class CreateApiTokenRequest(_Body):
+    name: Any = None
+    #: Integer 1-365 (default 90); ``null`` = never expires (when allowed).
+    #: Typed ``Any`` so missing, ``null`` and wrong types can be told apart.
+    expiresInDays: Any = None  # noqa: N815
+    permissions: Any = None
 
 
 class CreateGroupRequest(_Body):

@@ -209,7 +209,10 @@ class UsersService:
         await self.credentials.delete_credentials(target.id)
         self.auth.reset_failures(target.id)
         actor = _actor(ctx)
+        # Sessions first (sends session-kicked), then the user's API tokens.
         await self.auth.revoke_user_sessions(target.id, "user_deleted", **actor)
+        await self.auth.api_token_store.delete_user_tokens(target.id)
+        self.auth.notify_change()
         await self.auth.audit("user_deleted", target.name, user_id=target.id, **actor)
 
     async def change_password(
