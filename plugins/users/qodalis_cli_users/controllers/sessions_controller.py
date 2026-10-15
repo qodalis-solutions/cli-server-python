@@ -50,7 +50,7 @@ def create_sessions_router(
                 await ensure_ready()
             auth_service.check_rate_limit(request)
             metadata = SessionMetadata(
-                remote_address=request.client.host if request.client else None,
+                remote_address=auth_service.client_ip(request),
                 user_agent=request.headers.get("user-agent"),
             )
             result = await auth_service.login(body.username, body.password, metadata)

@@ -626,6 +626,18 @@ class TestBruteForce:
                      headers={"X-Forwarded-For": "10.0.0.2"})
         assert res.status_code == 201
 
+    def test_session_remote_address_uses_forwarded_for_with_trust_proxy(self):
+        app, plugin = _users_app(CliUsersBuilder().set_default_admin_password(ROOT_PASS).set_trust_proxy())
+        c = TestClient(app)
+        res = c.post(BASE + "/sessions", json={"username": "root", "password": ROOT_PASS},
+                     headers={"X-Forwarded-For": "203.0.113.7, 10.0.0.1"})
+        assert res.status_code == 201
+        token = res.json()["token"]
+        sessions = c.get(BASE + "/sessions", headers=_h(token)).json()
+        assert sessions[0]["metadata"]["remoteAddress"] == "203.0.113.7"
+        logins = c.get(BASE + "/audit?event=login", headers=_h(token)).json()
+        assert logins[0]["metadata"]["remoteAddress"] == "203.0.113.7"
+
     def test_rate_limit_covers_verify_and_self_password_change(self):
         app, _ = _users_app(CliUsersBuilder().set_default_admin_password(ROOT_PASS).set_rate_limit(3))
         c = TestClient(app)
