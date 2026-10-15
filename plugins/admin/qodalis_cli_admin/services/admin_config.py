@@ -47,8 +47,13 @@ class AdminConfig:
 
     def validate_credentials(self, username: str, password: str) -> bool:
         """Return *True* if the supplied credentials match."""
-        username_ok = hmac.compare_digest(username.encode("utf-8"), self.username.encode("utf-8"))
-        password_ok = hmac.compare_digest(password.encode("utf-8"), self.password.encode("utf-8"))
+        # surrogatepass: a lone surrogate in the input must not raise (500)
+        username_ok = hmac.compare_digest(
+            username.encode("utf-8", "surrogatepass"), self.username.encode("utf-8", "surrogatepass"),
+        )
+        password_ok = hmac.compare_digest(
+            password.encode("utf-8", "surrogatepass"), self.password.encode("utf-8", "surrogatepass"),
+        )
         return username_ok and password_ok
 
     def get_config_sections(self) -> list[dict[str, Any]]:

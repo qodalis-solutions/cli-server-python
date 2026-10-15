@@ -180,6 +180,13 @@ class TestAuthLogin:
         )
         assert resp.status_code == 401
 
+    async def test_login_lone_surrogate_is_rejected_not_500(self, client: AsyncClient) -> None:
+        for body in ('{"username": "\\ud800", "password": "x"}', '{"username": "admin", "password": "\\udfff"}'):
+            resp = await client.post(
+                f"{PREFIX}/auth/login", content=body, headers={"content-type": "application/json"},
+            )
+            assert resp.status_code == 401
+
     async def test_login_missing_fields(self, client: AsyncClient) -> None:
         resp = await client.post(f"{PREFIX}/auth/login", json={})
         assert resp.status_code == 422
