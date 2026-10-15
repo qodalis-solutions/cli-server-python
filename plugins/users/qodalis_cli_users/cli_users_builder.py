@@ -33,7 +33,7 @@ from .controllers.sessions_controller import create_sessions_router
 from .controllers.users_controller import create_users_router
 from .middleware.auth_middleware import create_auth_dependencies
 from .models import ExternalAuthAdapter
-from .server_protection import ServerProtectionMiddleware
+from .server_protection import ServerProtectionMiddleware, _normalize_base
 from .shell_access import UsersShellAccess
 from .services.auth_service import (
     DEFAULT_LOCKOUT_MS,
@@ -95,6 +95,7 @@ class CliUsersPlugin:
     #: ``require_permission("perm")`` → FastAPI dependency (403 if missing).
     require_permission: Any = None
     _extra_public: list = field(default_factory=list, repr=False)
+    _base_paths: list = field(default_factory=list, repr=False)
     _protected_apps: list = field(default_factory=list, repr=False)
     _cleanup_task: Optional[asyncio.Task] = field(default=None, repr=False)
     _seeded: bool = field(default=False, repr=False)
@@ -135,6 +136,7 @@ class CliUsersPlugin:
             auth_service=self.auth_service,
             ensure_ready=self.ensure_seeded,
             extra_public=self._extra_public,
+            base_paths=self._base_paths,
         ))
         app.middleware_stack = None
         self._protected_apps.append(app)
@@ -151,6 +153,12 @@ class CliUsersPlugin:
         origins = getattr(options, "allowed_origins", None)
         if origins and self.auth_service.options.allowed_origins is None:
             self.auth_service.options.allowed_origins = list(origins)
+        # A custom CLI API base path is protected like the default ones.
+        base_path = getattr(options, "base_path", None)
+        if isinstance(base_path, str) and base_path.strip("/"):
+            base = _normalize_base(base_path)
+            if base not in self._base_paths:
+                self._base_paths.append(base)
         if self.protect_server:
             self.protect(server.app)
         # Remote shell: users mode (ticket + shell:execute, session-bound).

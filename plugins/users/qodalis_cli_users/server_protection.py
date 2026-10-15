@@ -56,11 +56,18 @@ WS_RULES: list[tuple[re.Pattern[str], str | None]] = [
 ]
 
 
-def http_permission(path: str, method: str) -> str | None:
+def http_permission(path: str, method: str, base_paths: list[str] | None = None) -> str | None:
     for pattern, methods, permission in HTTP_RULES:
         if pattern.match(path) and (methods is None or method in methods):
             return permission
+    for base in base_paths or []:
+        if re.match(rf"^{re.escape(base)}/execute(/stream)?/?$", path):
+            return "commands:execute"
     return None
+
+
+def _normalize_base(path: str) -> str:
+    return "/" + path.strip().strip("/")
 
 
 def ws_permission(path: str) -> str | None:
@@ -79,11 +86,15 @@ class ServerProtectionMiddleware:
         auth_service: AuthService,
         ensure_ready: Callable[[], Awaitable[None]] | None = None,
         extra_public: list[tuple[str, frozenset[str] | None]] | None = None,
+        base_paths: list[str] | None = None,
     ) -> None:
         self.app = app
         self.auth = auth_service
         self.ensure_ready = ensure_ready
         self.extra_public = extra_public if extra_public is not None else []
+        #: Custom CLI API base paths (``CliServerOptions.base_path``) — also
+        #: protected, wherever they are mounted.
+        self.base_paths = base_paths if base_paths is not None else []
 
     # ------------------------------------------------------------------
 
@@ -94,11 +105,16 @@ class ServerProtectionMiddleware:
         for public_path, methods in self.extra_public:
             if path.rstrip("/") == public_path.rstrip("/") and (methods is None or method in methods):
                 return True
+        if method in ("GET", "HEAD"):
+            for base in self.base_paths:
+                if path.rstrip("/") in (base + "/version", base + "/capabilities"):
+                    return True
         return False
 
-    @staticmethod
-    def _protected(path: str) -> bool:
-        return path.startswith("/api/") or path.startswith("/ws/")
+    def _protected(self, path: str) -> bool:
+        if path.startswith("/api/") or path.startswith("/ws/"):
+            return True
+        return any(path == base or path.startswith(base + "/") for base in self.base_paths)
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
         if scope["type"] == "http":
@@ -127,7 +143,7 @@ class ServerProtectionMiddleware:
             ctx = await authenticate_request(self.auth, Request(scope))
             if ctx.must_change_password:
                 raise UsersApiError(403, PASSWORD_CHANGE_REQUIRED)
-            permission = http_permission(path, method)
+            permission = http_permission(path, method, self.base_paths)
             if permission and not ctx.can(permission):
                 raise UsersApiError(403, f"missing permission: {permission}")
         except UsersApiError as exc:

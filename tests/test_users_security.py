@@ -189,6 +189,26 @@ class TestServerProtection:
         cmds = srv.c.get("/api/qcli/commands", headers=_h(deployer)).json()
         assert next(c for c in cmds if c["command"] == "deploy")["requiredPermissions"] == ["deploy:run"]
 
+    @pytest.mark.parametrize("base_path", ["/cli", "/api/custom"])
+    def test_custom_base_path_is_protected(self, base_path):
+        result, users = _build(
+            CliUsersBuilder().set_default_admin_password(ROOT_PASS).set_rate_limit(1000),
+            base_path=base_path,
+        )
+        with TestClient(result.app) as client:
+            s = Server(client, users, result)
+            assert_error(s.c.get(base_path + "/commands"), 401)
+            assert_error(s.c.post(base_path + "/execute", json={"command": "echo", "value": "hi"}), 401)
+            assert_error(s.c.post(base_path + "/execute/stream", json={"command": "echo"}), 401)
+            assert s.c.get(base_path + "/version").status_code == 200
+            token = s.user("bob", [], in_users=False)
+            assert s.c.get(base_path + "/commands", headers=_h(token)).status_code == 200
+            assert_error(s.c.post(base_path + "/execute", headers=_h(token), json={"command": "echo"}),
+                         403, "commands:execute")
+            alice = s.user("alice")
+            res = s.c.post(base_path + "/execute", headers=_h(alice), json={"command": "echo", "value": "hi"})
+            assert res.status_code == 200, res.text
+
     def test_files_permissions(self, srv: Server):
         plain = srv.user("alice")
         assert_error(srv.c.get("/api/qcli/fs/ls?path=/", headers=_h(plain)), 403, "files:read")
