@@ -207,6 +207,7 @@ class UsersService:
             raise conflict(LAST_ADMIN)
         await self.users.delete_user(target.id)
         await self.credentials.delete_credentials(target.id)
+        await self.auth.api_token_store.delete_user_tokens(target.id)
         self.auth.reset_failures(target.id)
         actor = _actor(ctx)
         await self.auth.revoke_user_sessions(target.id, "user_deleted", **actor)

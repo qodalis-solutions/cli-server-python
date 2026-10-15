@@ -23,6 +23,8 @@ SESSIONS_READ = "sessions:read"
 SESSIONS_REVOKE = "sessions:revoke"
 AUDIT_READ = "audit:read"
 AUDIT_CLEAR = "audit:clear"
+TOKENS_READ = "tokens:read"
+TOKENS_REVOKE = "tokens:revoke"
 
 ADMIN_GROUP = "admin"
 USERS_GROUP = "users"

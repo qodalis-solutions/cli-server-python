@@ -21,6 +21,11 @@ class CliHashCommandProcessor(CliCommandProcessor):
         return "hash"
 
     @property
+    def value_required(self) -> bool | None:
+        # Takes an optional positional value (exposed as the MCP tool's ``value``).
+        return False
+
+    @property
     def description(self) -> str:
         return "Computes hash of the input text"
 

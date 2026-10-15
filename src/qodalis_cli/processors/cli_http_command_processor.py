@@ -24,6 +24,11 @@ class _HttpGetProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
         return "get"
 
     @property
+    def value_required(self) -> bool | None:
+        # Takes an optional positional value (exposed as the MCP tool's ``value``).
+        return False
+
+    @property
     def description(self) -> str:
         return "Performs an HTTP GET request"
 
@@ -66,6 +71,11 @@ class _HttpPostProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
     @property
     def command(self) -> str:
         return "post"
+
+    @property
+    def value_required(self) -> bool | None:
+        # Takes an optional positional value (exposed as the MCP tool's ``value``).
+        return False
 
     @property
     def description(self) -> str:
