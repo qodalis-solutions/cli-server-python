@@ -59,6 +59,30 @@ class DeployProcessor(CliCommandProcessor):
         return "deployed"
 
 
+class _Sub(CliCommandProcessor):
+    def __init__(self, name: str, perms: list[str] | None = None, subs: list | None = None) -> None:
+        self._name, self._perms, self._subs = name, perms, subs
+
+    @property
+    def command(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._name
+
+    @property
+    def required_permissions(self) -> list[str] | None:
+        return self._perms
+
+    @property
+    def processors(self):
+        return self._subs
+
+    async def handle_async(self, command, cancellation_event=None) -> str:
+        return f"ran {self._name}"
+
+
 def _h(token: str | None = None, **extra: str) -> dict[str, str]:
     headers = dict(extra)
     if token:
@@ -188,6 +212,23 @@ class TestServerProtection:
         assert res.status_code == 200 and "deployed" in res.text
         cmds = srv.c.get("/api/qcli/commands", headers=_h(deployer)).json()
         assert next(c for c in cmds if c["command"] == "deploy")["requiredPermissions"] == ["deploy:run"]
+
+    def test_intermediate_sub_processor_permissions_enforced(self):
+        def configure(builder):
+            builder.add_processor(_Sub("release", None, [_Sub("prod", ["release:prod"], [_Sub("run")])]))
+
+        result = create_cli_server(CliServerOptions(configure=configure))
+        users = CliUsersBuilder().set_default_admin_password(ROOT_PASS).set_rate_limit(1000).build()
+        result.mount_plugin(users)
+        with TestClient(result.app) as client:
+            s = Server(client, users, result)
+            plain = s.user("alice")
+            body = {"command": "release", "chainCommands": ["prod", "run"]}
+            for path in ("/api/qcli/execute", "/api/qcli/execute/stream"):
+                assert_error(s.c.post(path, headers=_h(plain), json=body), 403, "release:prod")
+            releaser = s.user("rel", ["release:prod"])
+            res = s.c.post("/api/qcli/execute", headers=_h(releaser), json=body)
+            assert res.status_code == 200 and "ran run" in res.text
 
     @pytest.mark.parametrize("base_path", ["/cli", "/api/custom"])
     def test_custom_base_path_is_protected(self, base_path):

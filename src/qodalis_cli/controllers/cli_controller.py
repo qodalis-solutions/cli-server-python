@@ -70,6 +70,23 @@ def _map_to_descriptor(processor: ICliCommandProcessor) -> dict[str, Any]:
     return desc.model_dump(by_alias=True, exclude_none=True)
 
 
+def _chain_processors(root: ICliCommandProcessor | None, chain: list[str]) -> list[ICliCommandProcessor]:
+    """The sub-processors along ``chain`` below ``root`` (each one's
+    ``required_permissions`` applies to everything beneath it)."""
+    out: list[ICliCommandProcessor] = []
+    current = root
+    for name in chain or []:
+        if current is None or not isinstance(name, str):
+            break
+        current = next(
+            (p for p in (current.processors or []) if p.command.lower() == name.lower()),
+            None,
+        )
+        if current is not None:
+            out.append(current)
+    return out
+
+
 def _permission_denied(registry: ICliCommandRegistry, request: Request, command: str, chain: list[str]) -> JSONResponse | None:
     """403 response when the caller lacks a processor's declared permissions."""
     ctx = get_auth_context(request)
@@ -77,7 +94,7 @@ def _permission_denied(registry: ICliCommandRegistry, request: Request, command:
         return None
     root = registry.find_processor(command, None)
     resolved = registry.find_processor(command, list(chain) if chain else None)
-    missing = missing_processor_permissions(ctx, root, resolved)
+    missing = missing_processor_permissions(ctx, root, *_chain_processors(root, chain), resolved)
     if missing:
         return JSONResponse(status_code=403, content={"error": f"missing permission: {', '.join(missing)}"})
     return None
