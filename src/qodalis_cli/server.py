@@ -7,6 +7,7 @@ import os
 import uvicorn
 
 from .create_cli_server import CliServerOptions, create_cli_server
+from .security import install_log_redaction
 from .processors import (
     CliEchoCommandProcessor,
     CliStatusCommandProcessor,
@@ -35,6 +36,9 @@ def main() -> None:
         )
     )
 
+    # uvicorn logs WebSocket/HTTP paths with their query strings (tickets,
+    # tokens, shell commands): redact them.
+    install_log_redaction()
     uvicorn.run(result.app, host=host, port=port)
 
 

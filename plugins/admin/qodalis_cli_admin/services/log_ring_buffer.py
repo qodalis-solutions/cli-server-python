@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -20,6 +21,20 @@ class LogEntry:
 
 
 BroadcastFn = Callable[[str], Awaitable[None]]
+
+_REDACTIONS = [
+    # Also the URL-encoded ``Bearer%20<token>`` form (``_header_Authorization`` query).
+    (re.compile(r"(?i)(bearer(?:\s+|%20))[A-Za-z0-9._~+/=%-]+"), r"\1[redacted]"),
+    (re.compile(r"(?i)\b(token|ticket|password|secret|cmd)=([^&\s]+)"), r"\1=[redacted]"),
+    (re.compile(r'(?i)"(token|ticket|password|currentPassword|newPassword)"\s*:\s*"[^"]*"'), r'"\1": "[redacted]"'),
+]
+
+
+def redact(message: str) -> str:
+    """Mask bearer tokens, tickets and passwords in a log message."""
+    for pattern, repl in _REDACTIONS:
+        message = pattern.sub(repl, message)
+    return message
 
 _LEVEL_MAP = {
     "WARNING": "WARN",
@@ -114,11 +129,16 @@ class _RingBufferHandler(logging.Handler):
         self._ring = ring
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Convert a log record to a LogEntry and append it to the ring buffer."""
+        """Convert a log record to a LogEntry and append it to the ring buffer.
+
+        Records flagged ``qcli_sensitive`` are skipped and tokens/passwords
+        are redacted."""
+        if getattr(record, "qcli_sensitive", False):
+            return
         entry = LogEntry(
             timestamp=datetime.now(timezone.utc).isoformat(),
             level=record.levelname,
-            message=self.format(record),
+            message=redact(self.format(record)),
             logger_name=record.name,
         )
         self._ring.add(entry)

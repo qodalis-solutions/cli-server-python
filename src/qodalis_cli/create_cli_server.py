@@ -17,6 +17,8 @@ from .controllers import create_cli_router, create_cli_version_router
 from .controllers.filesystem_controller import create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemPathValidator
+from .security import WebSocketOriginMiddleware, get_auth_context, origins_regex
+from .shell_security import CliShellOptions, ShellAccessProvider
 from .services import (
     CliCommandExecutorService,
     CliCommandRegistry,
@@ -32,8 +34,22 @@ class CliServerOptions:
     """Configuration options for creating a CLI server instance."""
 
     base_path: str = "/api/qcli"
-    cors: bool = True
-    cors_origins: list[str] = field(default_factory=lambda: ["*"])
+    #: ``True`` forces CORS on, ``False`` off; ``None`` (default) enables it
+    #: only when ``allowed_origins`` or ``cors_origins`` is given.
+    cors: bool | None = None
+    #: Explicit CORS origins (defaults to ``allowed_origins``).
+    cors_origins: list[str] | None = None
+    #: Origins accepted for CORS and every WebSocket upgrade (``*`` globs
+    #: allowed, e.g. ``http://127.0.0.1:*``).  ``None`` = no Origin check.
+    #: Same-origin requests (the server's own origin) are always accepted.
+    allowed_origins: list[str] | None = None
+    #: Interactive PTY shell WebSocket (``/ws/qcli/shell``) — opt-in.  Once
+    #: enabled, access needs the users plugin, ``shell.token``,
+    #: ``shell.authorize`` or ``shell.allow_anonymous``; otherwise the shell
+    #: is locked (every connection closed with 4401).
+    enable_shell: bool = False
+    #: Remote shell security and runtime options (access, limits, env).
+    shell: CliShellOptions = field(default_factory=CliShellOptions)
     configure: Callable[[CliBuilder], None] | None = None
 
 
@@ -47,6 +63,14 @@ class CliServerResult:
     event_socket_manager: CliEventSocketManager
     log_socket_manager: CliLogSocketManager
     executor: CliCommandExecutorService | None = None
+    options: CliServerOptions = field(default_factory=CliServerOptions)
+    shell_session_manager: CliShellSessionManager | None = None
+
+    def set_shell_access_provider(self, provider: ShellAccessProvider | None) -> None:
+        """Let an auth plugin own shell access (the users plugin calls this
+        when mounted, selecting the ``users`` shell mode)."""
+        if self.shell_session_manager is not None:
+            self.shell_session_manager.set_access_provider(provider)
 
     def mount_plugin(self, plugin: object) -> None:
         """Mount a plugin using its built-in prefix.
@@ -64,6 +88,12 @@ class CliServerResult:
         router = getattr(plugin, "router", None)
         if prefix and router:
             self.app.include_router(router, prefix=prefix)
+
+        # Plugins may hook into the server (e.g. the users plugin protects
+        # every route and scopes events to authenticated sockets).
+        on_mount = getattr(plugin, "on_mount", None)
+        if callable(on_mount):
+            on_mount(self)
 
         dashboard_prefix = getattr(plugin, "dashboard_prefix", None)
         dashboard_app = getattr(plugin, "dashboard_app", None)
@@ -84,27 +114,28 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     event_socket_manager = CliEventSocketManager()
     log_socket_manager = CliLogSocketManager()
-    shell_session_manager = CliShellSessionManager()
+    shell_session_manager = CliShellSessionManager(opts.shell, enabled=opts.enable_shell)
 
     log_handler = WebSocketLogHandler(log_socket_manager)
     logging.getLogger().addHandler(log_handler)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        shell_session_manager.log_startup()
         yield
+        await shell_session_manager.close_all()
         await event_socket_manager.broadcast_disconnect()
         await log_socket_manager.broadcast_disconnect()
         logging.getLogger().removeHandler(log_handler)
 
     app = FastAPI(title="Qodalis CLI Server", lifespan=lifespan)
 
-    if opts.cors:
+    _configure_cors(app, opts)
+    if opts.allowed_origins is not None:
         app.add_middleware(
-            CORSMiddleware,
-            allow_origins=opts.cors_origins,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            WebSocketOriginMiddleware,
+            allowed_origins=list(opts.allowed_origins),
+            trust_proxy=opts.shell.trust_proxy,
         )
 
     registry = CliCommandRegistry()
@@ -114,8 +145,9 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         opts.configure(builder)
 
     executor = CliCommandExecutorService(registry)
-    router = create_cli_router(registry, executor)
-    version_router = create_cli_version_router()
+    shell_auth = lambda: shell_session_manager.access_mode  # noqa: E731
+    router = create_cli_router(registry, executor, enable_shell=opts.enable_shell, shell_auth=shell_auth)
+    version_router = create_cli_version_router(enable_shell=opts.enable_shell, shell_auth=shell_auth)
 
     app.include_router(router, prefix="/api/v1/qcli")
     app.include_router(version_router, prefix="/api/qcli")
@@ -154,17 +186,17 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     @app.websocket("/ws/v1/qcli/events")
     async def websocket_events_v1(websocket: WebSocket) -> None:
         logger.debug("WebSocket connection accepted: events")
-        await event_socket_manager.handle_connection(websocket)
+        await event_socket_manager.handle_connection(websocket, get_auth_context(websocket))
 
     @app.websocket("/ws/qcli/events")
     async def websocket_events(websocket: WebSocket) -> None:
         logger.debug("WebSocket connection accepted: events")
-        await event_socket_manager.handle_connection(websocket)
+        await event_socket_manager.handle_connection(websocket, get_auth_context(websocket))
 
     async def _handle_logs(websocket: WebSocket) -> None:
         level_filter = websocket.query_params.get("level") or None
         logger.debug("Log WebSocket connection accepted (level=%s)", level_filter or "all")
-        await log_socket_manager.handle_connection(websocket, level_filter)
+        await log_socket_manager.handle_connection(websocket, level_filter, get_auth_context(websocket))
 
     @app.websocket("/ws/v1/qcli/logs")
     async def websocket_logs_v1(websocket: WebSocket) -> None:
@@ -174,21 +206,14 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     async def websocket_logs(websocket: WebSocket) -> None:
         await _handle_logs(websocket)
 
-    async def _handle_shell(websocket: WebSocket) -> None:
-        await websocket.accept()
-        cols = int(websocket.query_params.get("cols", "80")) or 80
-        rows = int(websocket.query_params.get("rows", "24")) or 24
-        cmd = websocket.query_params.get("cmd") or None
-        logger.debug("Shell WebSocket connection accepted (cols=%d, rows=%d)", cols, rows)
-        await shell_session_manager.handle_session(websocket, cols, rows, cmd)
-
+    # Always routed: a disabled shell answers with close 4404 (C5).
     @app.websocket("/ws/v1/qcli/shell")
     async def websocket_shell_v1(websocket: WebSocket) -> None:
-        await _handle_shell(websocket)
+        await shell_session_manager.handle_connection(websocket)
 
     @app.websocket("/ws/qcli/shell")
     async def websocket_shell(websocket: WebSocket) -> None:
-        await _handle_shell(websocket)
+        await shell_session_manager.handle_connection(websocket)
 
     return CliServerResult(
         app=app,
@@ -197,4 +222,26 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         event_socket_manager=event_socket_manager,
         log_socket_manager=log_socket_manager,
         executor=executor,
+        options=opts,
+        shell_session_manager=shell_session_manager,
+    )
+
+
+def _configure_cors(app: FastAPI, opts: CliServerOptions) -> None:
+    """CORS is off unless origins are configured (or ``cors=True``); ``*``
+    is never combined with credentials."""
+    origins = opts.cors_origins if opts.cors_origins is not None else opts.allowed_origins
+    enabled = opts.cors if opts.cors is not None else bool(origins)
+    if not enabled:
+        return
+    origins = list(origins) if origins else ["*"]
+    wildcard = "*" in origins
+    exact = [o.rstrip("/") for o in origins if "*" not in o]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"] if wildcard else exact,
+        allow_origin_regex=None if wildcard else origins_regex(origins),
+        allow_credentials=not wildcard,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )

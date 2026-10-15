@@ -64,6 +64,17 @@ uvicorn.run(result.app, host="0.0.0.0", port=8048)
 
 Disconnect broadcast is handled automatically via the lifespan shutdown event.
 
+uvicorn's own access and error logs contain request paths **with their query strings** — WebSocket tickets (`ticket=`), tokens (`token=`, `access_token=`), the legacy `_header_Authorization=Bearer%20…` and shell commands (`cmd=`). The standalone server (`python -m qodalis_cli.server` / `qodalis-cli-server`) and the demo redact them; when you run uvicorn yourself, install the same filter before `uvicorn.run`:
+
+```python
+from qodalis_cli import install_log_redaction
+
+install_log_redaction()  # RedactingLogFilter on uvicorn, uvicorn.access, uvicorn.error
+uvicorn.run(result.app, host="0.0.0.0", port=8048)
+```
+
+`RedactingLogFilter` (a `logging.Filter`) is exported too, e.g. to attach it to your own loggers or handlers.
+
 ### As a Standalone Server
 
 ```bash
@@ -398,7 +409,7 @@ The server exposes versioned endpoints:
 | GET | `/api/v1/qcli/capabilities` | Server capabilities (OS, shell, features) |
 | WS | `/ws/v1/qcli/events` | WebSocket server-push event broadcast |
 | WS | `/ws/v1/qcli/logs` | WebSocket log streaming (supports `?level=` filter) |
-| WS | `/ws/v1/qcli/shell` | Interactive PTY shell session (supports `?cols=&rows=&cmd=`) |
+| WS | `/ws/v1/qcli/shell` | Interactive PTY shell session (supports `?cols=&rows=&cmd=`); opt-in via `enable_shell=True`, see [Remote Shell Security](#remote-shell-security) |
 
 The Qodalis CLI client auto-negotiates the highest mutually supported version via the `/api/cli/versions` discovery endpoint.
 
@@ -425,10 +436,19 @@ The Qodalis CLI client auto-negotiates the highest mutually supported version vi
 @dataclass
 class CliServerOptions:
     base_path: str = "/api/qcli"           # API base path
-    cors: bool = True                       # Enable CORS
-    cors_origins: list[str] = ["*"]         # Allowed origins
+    cors: bool | None = None                # None: CORS only when origins are configured
+    cors_origins: list[str] | None = None   # Explicit CORS origins (default: allowed_origins)
+    allowed_origins: list[str] | None = None  # CORS + WebSocket Origin check ("*" globs allowed)
+    enable_shell: bool = False              # PTY shell WebSocket (opt-in, see Remote Shell Security)
+    shell: CliShellOptions = CliShellOptions()  # Shell access, limits and environment
     configure: Callable[[CliBuilder], None] | None = None  # Processor registration
 ```
+
+CORS is disabled unless `allowed_origins` (or `cors_origins` / `cors=True`) is set, and `*` is never combined with credentials. When `allowed_origins` is set, a WebSocket upgrade whose `Origin` is not allowed is closed with code 4403 (a missing `Origin`, as sent by non-browser clients, is accepted; protected sockets still need a ticket).
+
+Same-origin requests (an `Origin` equal to the server's own scheme + host, e.g. the bundled admin dashboard) are always allowed by every Origin/CSRF check, so a deployment never needs to list its own origin (`X-Forwarded-Proto`/`X-Forwarded-Host` are honoured only with `trust_proxy`).
+
+Processors may declare `required_permissions` (e.g. `["deploy:run"]`); they are enforced when the server is protected by the users plugin.
 
 `create_cli_server()` returns:
 
@@ -441,9 +461,93 @@ class CliServerResult:
     event_socket_manager: CliEventSocketManager  # WebSocket event manager
     log_socket_manager: CliLogSocketManager  # WebSocket log manager
     executor: CliCommandExecutorService | None  # Command executor service
+    shell_session_manager: CliShellSessionManager | None  # PTY shell sessions
 
     def mount_plugin(self, plugin: object) -> None: ...  # Mount a plugin with router/dashboard
+    def set_shell_access_provider(self, provider) -> None: ...  # Called by auth plugins (users mode)
 ```
+
+## Remote Shell Security
+
+The PTY shell (`/ws/v1/qcli/shell`, `/ws/qcli/shell`) gives OS-level access. It is **off** unless `enable_shell=True`, and once enabled every connection must pass exactly one access mode (reported as `shellAuth` by `/capabilities`):
+
+| Mode (`shellAuth`) | When | Client must |
+|---|---|---|
+| `users` | the users plugin is mounted | connect with a WebSocket ticket (`?ticket=`) of a session holding `shell:execute` |
+| `token` | no users plugin, `shell=CliShellOptions(token="...")` | send `Authorization: Bearer <token>` (header, or the `_header_Authorization` query parameter browser clients use) |
+| `custom` | no users plugin, `shell=CliShellOptions(authorize=fn)` | pass `fn(websocket) -> bool \| Awaitable[bool]` (exceptions deny) |
+| `anonymous` | only with `shell=CliShellOptions(allow_anonymous=True)` | nothing — logs a startup WARNING; never expose such a server |
+| `locked` | enabled, none of the above | — every connection is closed with 4401 and an ERROR is logged at startup |
+
+Precedence: users plugin, then `token`, then `authorize`, then `allow_anonymous`. Every *configured* check must pass: with the users plugin a configured `token` / `authorize` is required as well, and `token` + `authorize` together both apply. `allow_anonymous` is ignored as soon as another mode is configured.
+
+**With the users plugin** (recommended) nothing else is needed:
+
+```python
+result = create_cli_server(CliServerOptions(enable_shell=True, allowed_origins=[...]))
+result.mount_plugin(CliUsersBuilder().build())  # shell needs a ticket + shell:execute
+```
+
+An open shell belongs to the session that opened it: logout, session expiry, an admin revoke (kick), the user being disabled or deleted, or losing `shell:execute` closes it with 4401 `session ended` and kills its process tree (checked once right after the shell is registered — so a logout racing the connection is not missed — then immediately on every session/user/group change and every `session_check_interval`, default 30 s, at most 60 s). Opens and closes are audited as `shell_opened` / `shell_closed` with `userId`, `actorId` and `metadata: { mode: "interactive"|"command", sessionId, durationMs, exitCode, reason }` — never the command text or stdin. `reason` is one of `exited`, `closed` (by the client), `session ended`, `permission removed`, `shell timed out`, `server shutdown`, `error`; `exitCode` is only present for `exited`. Re-checks never extend the session, but stdin since the last check touches it (at most once per 30 s) so an active shell user is not logged out for inactivity.
+
+**Without the users plugin**, use a shared token (keep it out of source control):
+
+```python
+from qodalis_cli import CliServerOptions, CliShellOptions, create_cli_server
+
+result = create_cli_server(CliServerOptions(
+    enable_shell=True,
+    shell=CliShellOptions(token=os.environ["QCLI_SHELL_TOKEN"]),
+))
+```
+
+In the web-cli client, configure the server with `headers: { Authorization: 'Bearer <token>' }`; browsers cannot set WebSocket headers, so the client forwards it as the `_header_Authorization` query parameter, which the server accepts for the shell. Serve over TLS (`wss://`) since the token travels in the URL. Or plug in your own check:
+
+```python
+async def authorize(websocket) -> bool:
+    return websocket.client.host == "127.0.0.1" and await my_sso.verify(websocket.cookies.get("sid"))
+
+CliServerOptions(enable_shell=True, shell=CliShellOptions(authorize=authorize))
+```
+
+Outside users mode each open/close is logged at INFO with the remote address and mode (no command text).
+
+`CliShellOptions` (times in seconds, `None` disables a timeout):
+
+| Option | Default | Description |
+|---|---|---|
+| `token` | `None` | Shared secret for `token` mode (SHA-256 + constant-time compare, never logged) |
+| `authorize` | `None` | `callable(websocket) -> bool \| Awaitable[bool]` for `custom` mode |
+| `allow_anonymous` | `False` | Open shell without authentication (`anonymous` mode) |
+| `max_sessions_per_user` | `3` | Concurrent shells per user (users mode) or per remote address |
+| `max_sessions` | `20` | Concurrent shells in total |
+| `idle_timeout` | `900` | Close after this long without stdin |
+| `max_duration` | `None` | Close after this long regardless of activity |
+| `cwd` | `None` | Shell working directory (default: the server's) |
+| `shell` | `None` | Shell executable (default: `$SHELL`, then bash, then sh) |
+| `env_allow` | `[]` | Extra server environment variables copied into the shell |
+| `env_set` | `{}` | Variables set in the shell environment |
+| `session_check_interval` | `30` | Users mode: periodic session re-check (capped at 60) |
+| `trust_proxy` | `False` | Trusted proxy hops for per-address limits and logs: `False`/`0` = socket peer (header ignored), `True` = 1, `n` = n hops; the client is the `X-Forwarded-For` entry at `len - n` (rightmost for one proxy, leftmost if fewer entries) |
+
+The shell does **not** inherit the server environment: it gets only `PATH`, `HOME`, `USER`, `LANG`, `TERM`, `COLUMNS`, `LINES`, `SHELL`, plus `env_allow` names and `env_set` values, so server secrets (database passwords, API keys) do not leak into it.
+
+Whenever a shell closes (client gone, timeout, session ended, shutdown, error) the server kills everything the shell started. Every shell gets a unique marker `QCLI_SHELL_ID=<random 128-bit hex>` in its environment, set after the `env_allow` / `env_set` filtering so it cannot be overridden, and inherited by every process the shell starts. The target set is collected **before** signalling: the shell's descendant tree, its process group, its session (Linux), and every process whose environment contains exactly that marker. On Linux all lookups use `/proc` (`/proc/<pid>/stat`, `/proc/<pid>/environ`), so no `ps` binary is needed (e.g. slim container images); on macOS `ps -A -o pid=,ppid=,pgid=` and `ps -A -E -ww -o pid=,command=` are used. Targets get HUP and TERM, then — after a short grace period and a second collection — KILL; the server's own process and group are never signalled. This covers `&` jobs in their own process groups, `nohup` children, and `setsid` / double-forked daemons already re-parented to init (PID 1). Limitations: a process escapes only by deliberately unsetting or changing `QCLI_SHELL_ID` before detaching, or by running as another user (its environment is unreadable); on macOS the environment of platform binaries (e.g. `/bin/sleep`) is hidden from `ps -E`, so re-parented platform binaries in a new session are not found there. If that matters, run the shell in a container or cgroup that is torn down with it.
+
+Shell output is forwarded with backpressure: the next chunk is read from the PTY only after the previous one was sent, so a slow client makes the producing process block on the full PTY buffer instead of the server buffering its output in memory.
+
+Refusals are sent after accepting the upgrade, so browsers can read the close code:
+
+| Code | Reason | When |
+|---|---|---|
+| 4401 | `login required` / `session ended` / `shell access is not configured` | no ticket or no/non-Bearer token; session ended or `shell:execute` removed; no access mode configured |
+| 4403 | `forbidden` | missing `shell:execute`, wrong token, `authorize` returned false or raised |
+| 4404 | `shell disabled` | `enable_shell` is false |
+| 4408 | `shell timed out` | idle timeout or max duration reached |
+| 4429 | `too many shell sessions` | per-user/per-address or global limit reached |
+| 1001 | `server shutdown` | the server is stopping |
+
+A disallowed `Origin` (when `allowed_origins` is set) is closed with 4403 before any of the above.
 
 ## Exported Types
 
@@ -728,6 +832,26 @@ All commands support `--region` (`-r`) for region override and `--output` (`-o`)
 
 See [`plugins/aws/README.md`](plugins/aws/README.md) for the full command reference.
 
+### Users Plugin
+
+The users plugin (`qodalis-cli-server-plugin-users`) adds endpoints under `/api/v1/qcli` for authentication, users, groups with permissions, sessions and an audit log, with swappable storage (in-memory by default). It is the server side of the `@qodalis/cli-users` browser plugin's *server mode*.
+
+```python
+from qodalis_cli_users import CliUsersBuilder
+
+users_plugin = (
+    CliUsersBuilder()
+    .set_default_admin_password("admin")
+    .build(broadcast_fn=result.event_socket_manager.broadcast_message)
+)
+result.mount_plugin(users_plugin)  # protects every route and socket of the server
+# In the app lifespan: await users_plugin.startup() / await users_plugin.shutdown()
+```
+
+Once mounted, every CLI server route and WebSocket requires a users session (login, version discovery and health stay public); WebSockets authenticate with single-use tickets from `POST /api/v1/qcli/sessions/ws-ticket`.
+
+See [`plugins/users/README.md`](plugins/users/README.md) for options, endpoints, custom storage and external auth adapters.
+
 ## Built-in Processors
 
 These processors ship with the library and are included in the standalone server:
@@ -789,6 +913,7 @@ plugins/
   data-explorer-mssql/                # MS SQL Server data explorer provider
   data-explorer-redis/                # Redis data explorer provider
   data-explorer-elasticsearch/        # Elasticsearch data explorer provider
+  users/                              # Users plugin (auth, sessions, groups, audit)
   weather/                            # Weather module (example plugin)
   admin/                              # Admin dashboard and monitoring
   jobs/                               # Job scheduling and management
@@ -805,7 +930,7 @@ src/qodalis_cli/
     cli_response_builder.py           # Structured output builder
     cli_event_socket_manager.py       # WebSocket event broadcasting
     cli_log_socket_manager.py         # WebSocket log streaming
-    cli_shell_session_manager.py      # Interactive PTY shell sessions
+    cli_shell_session_manager.py      # Interactive PTY shell sessions (access, limits, env)
   controllers/
     cli_controller.py                 # REST API (/api/v1/qcli)
     cli_version_controller.py         # Version discovery (/api/qcli/versions)

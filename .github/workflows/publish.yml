@@ -26,6 +26,7 @@ jobs:
           pip install ./plugins/filesystem-s3
           pip install ./plugins/weather
           pip install ./plugins/jobs
+          pip install ./plugins/users
           pip install ./plugins/admin
           pip install -e ".[test]"
 
@@ -125,6 +126,18 @@ jobs:
         with:
           password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-jobs/
+          skip-existing: true
+          verbose: true
+          attestations: false
+
+      - name: Build users plugin
+        run: python -m build plugins/users/ --outdir dist-plugin-users/
+
+      - name: Publish users plugin to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+          packages-dir: dist-plugin-users/
           skip-existing: true
           verbose: true
           attestations: false

@@ -168,3 +168,100 @@ class TestWebSocketLogHandlerEmit:
         handler.emit(record)
 
         assert captured[0][0] == "information"
+
+
+# ---------------------------------------------------------------------------
+# redact
+# ---------------------------------------------------------------------------
+
+
+class TestRedact:
+    def test_redacts_bearer_token(self) -> None:
+        from qodalis_cli.security import redact
+
+        assert redact("Authorization: Bearer abc.def") == "Authorization: Bearer [redacted]"
+
+    def test_redacts_url_encoded_bearer_token(self) -> None:
+        from qodalis_cli.security import redact
+
+        out = redact("GET /ws/qcli/shell?_header_Authorization=Bearer%20abc.def%3D&x=1")
+        assert "abc" not in out and "def" not in out
+        assert "Bearer%20[redacted]&x=1" in out
+
+
+# ---------------------------------------------------------------------------
+# uvicorn access/error log redaction
+# ---------------------------------------------------------------------------
+
+
+class TestUvicornLogRedaction:
+    SECRET_PATH = (
+        "/ws/qcli/shell?ticket=tk-SECRET1&cmd=cat%20SECRET2&token=SECRET3"
+        "&_header_Authorization=Bearer%20SECRET4&access_token=SECRET5&cols=80"
+    )
+
+    def test_redact_covers_query_secrets(self) -> None:
+        from qodalis_cli.security import redact
+
+        out = redact(self.SECRET_PATH)
+        assert "SECRET" not in out, out
+        assert out.endswith("&cols=80")
+        assert "ticket=[redacted]" in out and "cmd=[redacted]" in out
+
+    def test_filter_redacts_access_log_args_and_keeps_formatter_working(self) -> None:
+        from uvicorn.logging import AccessFormatter
+
+        from qodalis_cli import RedactingLogFilter
+
+        record = logging.LogRecord(
+            "uvicorn.access", logging.INFO, __file__, 1,
+            '%s - "%s %s HTTP/%s" %d',
+            ("127.0.0.1:5000", "GET", self.SECRET_PATH, "1.1", 200), None,
+        )
+        assert RedactingLogFilter().filter(record) is True
+        line = AccessFormatter('%(client_addr)s - "%(request_line)s" %(status_code)s').format(record)
+        assert "SECRET" not in line, line
+        assert "/ws/qcli/shell?ticket=[redacted]" in line and "200" in line
+
+    def test_filter_redacts_websocket_accept_line(self) -> None:
+        from qodalis_cli import RedactingLogFilter
+
+        record = logging.LogRecord(
+            "uvicorn.error", logging.INFO, __file__, 1,
+            '%s - "WebSocket %s" [accepted]', ("127.0.0.1:5000", self.SECRET_PATH), None,
+        )
+        RedactingLogFilter().filter(record)
+        assert "SECRET" not in record.getMessage()
+
+    def test_install_is_idempotent_and_covers_uvicorn_loggers(self) -> None:
+        from qodalis_cli import RedactingLogFilter, install_log_redaction
+
+        install_log_redaction()
+        install_log_redaction()
+        try:
+            for name in ("uvicorn.access", "uvicorn.error"):
+                found = [f for f in logging.getLogger(name).filters if isinstance(f, RedactingLogFilter)]
+                assert len(found) == 1, name
+        finally:
+            for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+                lg = logging.getLogger(name)
+                for f in [f for f in lg.filters if isinstance(f, RedactingLogFilter)]:
+                    lg.removeFilter(f)
+
+    def test_standalone_server_installs_redaction(self, monkeypatch) -> None:
+        import uvicorn
+
+        from qodalis_cli import RedactingLogFilter
+        from qodalis_cli import server
+
+        calls = []
+        monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: calls.append(kw))
+        try:
+            server.main()
+            assert calls
+            assert any(isinstance(f, RedactingLogFilter) for f in logging.getLogger("uvicorn.access").filters)
+        finally:
+            for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+                lg = logging.getLogger(name)
+                for f in [f for f in lg.filters if isinstance(f, RedactingLogFilter)]:
+                    lg.removeFilter(f)

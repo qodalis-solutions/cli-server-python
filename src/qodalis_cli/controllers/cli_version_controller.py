@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import os
 import platform
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import APIRouter
 
 SERVER_VERSION = "1.0.0"
 
 
-def create_cli_version_router() -> APIRouter:
+def create_cli_version_router(
+    *,
+    enable_shell: bool = False,
+    shell_auth: Callable[[], str | None] | None = None,
+) -> APIRouter:
     """Create a FastAPI router for version discovery and server capabilities.
 
     Returns:
@@ -40,12 +44,16 @@ def create_cli_version_router() -> APIRouter:
             else "/bin/bash"
         )
 
-        return {
-            "shell": True,
+        capabilities: dict[str, Any] = {
+            "shell": enable_shell,
             "os": detected_os,
             "shellPath": shell_path,
             "version": SERVER_VERSION,
             "streaming": True,
         }
+        if enable_shell:
+            # users | token | custom | anonymous | locked (Appendix C1)
+            capabilities["shellAuth"] = (shell_auth() if shell_auth else None) or "locked"
+        return capabilities
 
     return router
