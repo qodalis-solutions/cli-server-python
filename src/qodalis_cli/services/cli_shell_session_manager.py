@@ -13,6 +13,7 @@ import os
 import platform
 import pty
 import pwd
+import secrets
 import signal
 import struct
 import subprocess
@@ -408,9 +409,16 @@ class CliShellSessionManager:
     # PTY
     # ------------------------------------------------------------------
 
-    def build_env(self, shell: str, cols: int, rows: int) -> dict[str, str]:
+    def build_env(
+        self, shell: str, cols: int, rows: int, *, shell_id: str | None = None,
+    ) -> dict[str, str]:
         """The child environment: a minimal base plus ``env_allow`` names
-        and ``env_set`` values — never the full server environment."""
+        and ``env_set`` values — never the full server environment.
+
+        ``shell_id`` is set last as ``QCLI_SHELL_ID`` (it cannot be
+        overridden by ``env_allow`` / ``env_set``): every process the shell
+        starts inherits it, which lets the server find re-parented daemons
+        when the shell closes."""
         source = os.environ
         env = {name: source[name] for name in BASE_ENV_NAMES if name in source}
         if "PATH" not in env:
@@ -431,6 +439,8 @@ class CliShellSessionManager:
                 env[name] = source[name]
         for name, value in (self.options.env_set or {}).items():
             env[str(name)] = str(value)
+        if shell_id is not None:
+            env[SHELL_ID_ENV] = shell_id
         return env
 
     async def handle_session(
@@ -451,7 +461,8 @@ class CliShellSessionManager:
             key="", address="", websocket=websocket, loop=asyncio.get_running_loop(),
         )
         shell, args = self._get_shell_info(command, self.options.shell)
-        env = self.build_env(shell, cols, rows)
+        shell_id = secrets.token_hex(16)
+        env = self.build_env(shell, cols, rows, shell_id=shell_id)
         cwd = self.options.cwd
         master_fd: int | None = None
         child_pid: int | None = None
@@ -509,7 +520,7 @@ class CliShellSessionManager:
         finally:
             session.close_event.set()  # stops the watcher; suppresses "exit"
             if child_pid is not None and child_pid > 0:
-                await self._terminate(child_pid, exit_task)
+                await self._terminate(child_pid, exit_task, shell_id)
             for task in tasks:
                 if not task.done():
                     task.cancel()
@@ -530,45 +541,50 @@ class CliShellSessionManager:
             return None if exc else exit_task.result()
         return None
 
-    async def _terminate(self, pid: int, exit_task: asyncio.Future | None) -> None:
+    async def _terminate(
+        self, pid: int, exit_task: asyncio.Future | None, shell_id: str | None = None,
+    ) -> None:
         """Kill the shell and everything it started, then reap the shell.
 
-        Background jobs of an interactive shell run in their own process
-        groups and ``nohup`` / ``setsid`` children leave the shell's group, so
-        the descendant tree is collected *before* signalling (afterwards the
-        orphans are re-parented and can no longer be found).  The group and
-        every descendant get HUP and TERM, then KILL after a grace period.
-        The first signals are sent synchronously, so they are delivered even
-        when the connection handler is cancelled.
-        Double-forked daemons already re-parented to init are not tracked.
+        Targets are the shell's descendant tree, its process group, its
+        session (Linux) and every process whose environment carries this
+        shell's ``QCLI_SHELL_ID`` marker — the last one also finds
+        ``setsid`` / double-forked children already re-parented to init.
+        The tree is collected *before* signalling (afterwards orphans are
+        re-parented).  Everything gets HUP and TERM, then — after a grace
+        period and a second collection — KILL.  The first collection and
+        signals are synchronous, so they are delivered even when the
+        connection handler is cancelled.
         """
         exited = exit_task is not None and exit_task.done()
-        descendants = [] if exited else _process_tree(pid)
+        # Once the shell is reaped its pid may be reused: only its group /
+        # session ids (which cannot be reused while a member is alive) and
+        # the marker are trusted then.
+        targets = _collect_targets(pid, shell_id, include_tree=not exited)
 
         def signal_all(sig: int) -> None:
-            _signal_group(pid, sig)
-            for child in descendants:
-                _signal_pid(child, sig)
+            reaped = exit_task is not None and exit_task.done()
+            _signal_group(pid, sig, fallback_to_pid=not reaped)
+            for target in targets:
+                if not (reaped and target == pid):
+                    _signal_pid(target, sig)
 
-        if exited:
-            # The shell is gone; its process group may still hold jobs
-            # (e.g. ``cmd=... &``).  The group id cannot be reused while any
-            # member is alive.
-            _signal_group(pid, signal.SIGHUP)
-            _signal_group(pid, signal.SIGTERM)
-            return
         signal_all(signal.SIGHUP)
         signal_all(signal.SIGTERM)
         if exit_task is None:
             await asyncio.sleep(0.2)
+            targets |= _collect_targets(pid, shell_id, include_tree=True)
             signal_all(signal.SIGKILL)
             await _reap(pid)
             return
-        await asyncio.wait([exit_task], timeout=1.0)
+        if not exited:
+            await asyncio.wait([exit_task], timeout=1.0)
+        others = targets - {pid}
         deadline = time.monotonic() + 0.5
-        while any(_alive(child) for child in descendants) and time.monotonic() < deadline:
+        while any(_alive(p) for p in others) and time.monotonic() < deadline:
             await asyncio.sleep(0.02)
-        if not exit_task.done() or any(_alive(child) for child in descendants):
+        targets |= _collect_targets(pid, shell_id, include_tree=not exit_task.done())
+        if not exit_task.done() or any(_alive(p) for p in targets - {pid}):
             signal_all(signal.SIGKILL)
             if not exit_task.done():
                 await asyncio.wait([exit_task], timeout=2.0)
@@ -685,19 +701,21 @@ def _detect_os() -> str:
     return "darwin" if system == "Darwin" else "win32" if system == "Windows" else "linux"
 
 
-def _signal_group(pid: int, sig: int) -> None:
+def _signal_group(pid: int, sig: int, *, fallback_to_pid: bool = True) -> None:
+    if pid <= 1 or pid == os.getpgrp():
+        return  # never the server's own group
     try:
         os.killpg(pid, sig)  # pty.fork() makes the child a session/group leader
     except (ProcessLookupError, PermissionError):
-        try:
-            os.kill(pid, sig)
-        except OSError:
-            pass
+        if fallback_to_pid:
+            _signal_pid(pid, sig)
     except OSError:
         pass
 
 
 def _signal_pid(pid: int, sig: int) -> None:
+    if pid <= 1 or pid == os.getpid():
+        return
     try:
         os.kill(pid, sig)
     except OSError:
@@ -714,26 +732,133 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def _process_tree(root: int) -> list[int]:
-    """Every descendant of ``root`` (not ``root`` itself), from
-    ``ps -A -o pid=,ppid=`` (works on Linux and macOS).
+# ---------------------------------------------------------------------------
+# Process lookup: /proc on Linux, ``ps`` elsewhere (macOS)
+# ---------------------------------------------------------------------------
 
-    Synchronous on purpose (``ps`` takes milliseconds): the tree must be
-    collected and signalled without yielding to a cancellation."""
+#: Environment variable marking every process started by a shell session.
+SHELL_ID_ENV = "QCLI_SHELL_ID"
+
+_PROC = "/proc"
+
+
+@dataclass(frozen=True)
+class _ProcInfo:
+    pid: int
+    ppid: int
+    pgid: int
+    sid: int | None  # None where unknown (``ps`` fallback)
+
+
+def _has_proc() -> bool:
+    return os.path.exists(os.path.join(_PROC, "self", "stat"))
+
+
+def _parse_proc_stat(pid: int, text: str) -> _ProcInfo | None:
+    """Parse ``/proc/<pid>/stat``.  The command name (field 2) may contain
+    spaces and parentheses, so the fields are read after the *last* ``)``:
+    state, ppid, pgrp, session, ..."""
+    end = text.rfind(")")
+    if end < 0:
+        return None
+    fields = text[end + 1:].split()
+    if len(fields) < 4:
+        return None
+    try:
+        return _ProcInfo(pid, int(fields[1]), int(fields[2]), int(fields[3]))
+    except ValueError:
+        return None
+
+
+def _proc_pids() -> list[int]:
+    try:
+        return [int(name) for name in os.listdir(_PROC) if name.isdigit()]
+    except OSError:
+        return []
+
+
+def _list_processes() -> list[_ProcInfo]:
+    """Every process with its parent, group and (Linux) session id.
+
+    Synchronous on purpose (milliseconds): processes must be collected and
+    signalled without yielding to a cancellation."""
+    if _has_proc():
+        result: list[_ProcInfo] = []
+        for pid in _proc_pids():
+            try:
+                with open(os.path.join(_PROC, str(pid), "stat"), encoding="utf-8", errors="replace") as f:
+                    info = _parse_proc_stat(pid, f.read())
+            except OSError:
+                continue  # exited meanwhile
+            if info is not None:
+                result.append(info)
+        return result
+    return _parse_ps_table(_run_ps(["-A", "-o", "pid=,ppid=,pgid="]))
+
+
+def _run_ps(args: list[str]) -> str:
     try:
         out = subprocess.run(
-            ["ps", "-A", "-o", "pid=,ppid="],
+            ["ps", *args],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5, check=False,
         ).stdout
     except (OSError, subprocess.SubprocessError) as e:
         logger.debug("Failed to list processes: %s", e)
-        return []
-    children: dict[int, list[int]] = {}
-    for line in out.decode("ascii", "replace").splitlines():
+        return ""
+    return out.decode("utf-8", "replace")
+
+
+def _parse_ps_table(out: str) -> list[_ProcInfo]:
+    """Parse ``ps -o pid=,ppid=,pgid=`` output."""
+    result: list[_ProcInfo] = []
+    for line in out.splitlines():
         parts = line.split()
-        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        if len(parts) != 3 or not all(part.isdigit() for part in parts):
             continue
-        children.setdefault(int(parts[1]), []).append(int(parts[0]))
+        result.append(_ProcInfo(int(parts[0]), int(parts[1]), int(parts[2]), None))
+    return result
+
+
+def _environ_has_marker(environ: bytes, shell_id: str) -> bool:
+    """Whether a NUL-separated ``/proc/<pid>/environ`` holds exactly
+    ``QCLI_SHELL_ID=<shell_id>``."""
+    return f"{SHELL_ID_ENV}={shell_id}".encode() in environ.split(b"\0")
+
+
+def _ps_marked_pids(out: str, shell_id: str) -> set[int]:
+    """Pids in ``ps -A -E -ww -o pid=,command=`` output (macOS: the
+    environment follows the command) carrying ``QCLI_SHELL_ID=<shell_id>``
+    as a whole token."""
+    token = f"{SHELL_ID_ENV}={shell_id}"
+    result: set[int] = set()
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].isdigit() and token in parts[1:]:
+            result.add(int(parts[0]))
+    return result
+
+
+def _marked_pids(shell_id: str) -> set[int]:
+    """Every process whose environment carries this shell's marker
+    (processes whose environment cannot be read are skipped)."""
+    if _has_proc():
+        result: set[int] = set()
+        for pid in _proc_pids():
+            try:
+                with open(os.path.join(_PROC, str(pid), "environ"), "rb") as f:
+                    environ = f.read()
+            except OSError:
+                continue
+            if _environ_has_marker(environ, shell_id):
+                result.add(pid)
+        return result
+    return _ps_marked_pids(_run_ps(["-A", "-E", "-ww", "-o", "pid=,command="]), shell_id)
+
+
+def _descendants(procs: list[_ProcInfo], root: int) -> list[int]:
+    children: dict[int, list[int]] = {}
+    for proc in procs:
+        children.setdefault(proc.ppid, []).append(proc.pid)
     result: list[int] = []
     seen = {root}
     stack = [root]
@@ -744,6 +869,27 @@ def _process_tree(root: int) -> list[int]:
                 result.append(child)
                 stack.append(child)
     return result
+
+
+def _process_tree(root: int) -> list[int]:
+    """Every descendant of ``root`` (not ``root`` itself)."""
+    return _descendants(_list_processes(), root)
+
+
+def _collect_targets(pid: int, shell_id: str | None, *, include_tree: bool) -> set[int]:
+    """The processes to signal when the shell ``pid`` closes: its
+    descendants (``include_tree``), its process group, its session and every
+    process carrying its marker — never the server itself or its group."""
+    procs = _list_processes()
+    targets: set[int] = set(_descendants(procs, pid)) if include_tree else set()
+    if include_tree:
+        targets.add(pid)
+    targets |= {p.pid for p in procs if p.pgid == pid or p.sid == pid}
+    if shell_id:
+        targets |= _marked_pids(shell_id)
+    own_pid, own_group = os.getpid(), os.getpgrp()
+    own_members = {p.pid for p in procs if p.pgid == own_group}
+    return {t for t in targets if t > 1 and t != own_pid and t not in own_members}
 
 
 #: Maximum bytes read from the PTY per WebSocket message.

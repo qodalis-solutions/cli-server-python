@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -350,8 +351,19 @@ class TestLimits:
         assert "SHELL=/bin/sh" in out
         allowed = {"PATH", "HOME", "USER", "LANG", "TERM", "COLUMNS", "LINES", "SHELL", "ALLOWED_X", "FOO",
                    # set by the shell itself
-                   "PWD", "OLDPWD", "SHLVL", "_", "PS1", "PS2", "PS4", "OPTIND", "IFS", "PPID"}
+                   "PWD", "OLDPWD", "SHLVL", "_", "PS1", "PS2", "PS4", "OPTIND", "IFS", "PPID",
+                   # per-shell process marker
+                   "QCLI_SHELL_ID"}
         assert names <= allowed, names - allowed
+        assert re.search(r"QCLI_SHELL_ID=[0-9a-f]{32}\b", out)
+
+    def test_shell_id_marker_cannot_be_overridden(self, monkeypatch):
+        monkeypatch.setenv("QCLI_SHELL_ID", "server-value")
+        manager = _server(
+            allow_anonymous=True, env_allow=["QCLI_SHELL_ID"], env_set={"QCLI_SHELL_ID": "set-value"},
+        ).shell_session_manager
+        env = manager.build_env("/bin/sh", 80, 24, shell_id="ab" * 16)
+        assert env["QCLI_SHELL_ID"] == "ab" * 16
 
     def test_build_env_ignores_server_secrets(self, monkeypatch):
         monkeypatch.setenv("SECRET_X", "do-not-leak")
@@ -403,6 +415,17 @@ def _background_pids(ws, commands: dict[str, str]) -> dict[str, int]:
     return pids
 
 
+def _sleep_argv(seconds: int) -> list[str]:
+    """A sleeping process whose environment the server can read: macOS
+    hides the environment of platform binaries such as /bin/sleep from
+    ``ps -E``, so a Python sleep is used there."""
+    import sys
+
+    if sys.platform == "darwin":
+        return [sys.executable, "-c", f"import time; time.sleep({seconds})"]
+    return ["sleep", str(seconds)]
+
+
 class TestProcessTree:
     def test_background_jobs_are_killed_when_the_shell_closes(self):
         """``&`` jobs get their own process groups (job control) and
@@ -423,6 +446,16 @@ class TestProcessTree:
         }
         if shutil.which("setsid"):
             commands["SW"] = "setsid -w sleep 7304 & echo SW=$!"
+        # ``setsid sleep &`` the util-linux way: the job is a process-group
+        # leader, so setsid forks, the parent exits and the child (re-parented
+        # to init, in a new session) runs the command.
+        commands["SL"] = (
+            f"{sys.executable} -c \"import os; "
+            f"os.getpgrp() == os.getpid() or os.setpgid(0, 0); "
+            f"os.fork() and os._exit(0); os.setsid(); "
+            f"print('SL=%d' % os.getpid(), flush=True); "
+            f"os.execvp({_sleep_argv(7307)[0]!r}, {_sleep_argv(7307)!r})\" &"
+        )
         result = _server(allow_anonymous=True)
         pids: dict[str, int] = {}
         try:
@@ -439,6 +472,38 @@ class TestProcessTree:
                     os.kill(pid, 9)
                 except OSError:
                     pass
+
+    def test_marker_finds_reparented_process(self):
+        import subprocess
+        import sys
+
+        from qodalis_cli.services.cli_shell_session_manager import _collect_targets, _marked_pids
+
+        shell_id = os.urandom(16).hex()
+        env = dict(os.environ, QCLI_SHELL_ID=shell_id)
+        # Double fork: the sleep is re-parented and in its own session.
+        launcher = subprocess.run(
+            [sys.executable, "-c",
+             "import os, sys\n"
+             "if os.fork() == 0:\n"
+             "    os.setsid()\n"
+             f"    os.execvp({_sleep_argv(7308)[0]!r}, {_sleep_argv(7308)!r})\n"
+             "print(1)"],
+            env=env, stdout=subprocess.DEVNULL, check=True,
+        )
+        assert launcher.returncode == 0
+        found: set[int] = set()
+        try:
+            deadline = time.monotonic() + 5
+            while not found and time.monotonic() < deadline:
+                found = _marked_pids(shell_id)
+                time.sleep(0.05)
+            assert len(found) == 1, found
+            assert found <= _collect_targets(999999, shell_id, include_tree=True)
+            assert not _marked_pids(shell_id[:-1])
+        finally:
+            for pid in found:
+                os.kill(pid, 9)
 
     def test_process_tree_lists_all_descendants(self):
         import subprocess
@@ -658,3 +723,92 @@ class TestStdinEncoding:
                 pass
             os.close(r)
             os.close(w)
+
+
+# ---------------------------------------------------------------------------
+# Process lookup parsing (/proc, ps) and marker matching
+# ---------------------------------------------------------------------------
+
+class TestProcessLookup:
+    def test_parse_proc_stat_reads_fields_after_last_paren(self):
+        from qodalis_cli.services.cli_shell_session_manager import _ProcInfo, _parse_proc_stat
+
+        text = "4242 (we) ird) (name) S 17 4200 4100 34816 4242 4194560 0 0\n"
+        assert _parse_proc_stat(4242, text) == _ProcInfo(4242, 17, 4200, 4100)
+        assert _parse_proc_stat(1, "garbage") is None
+        assert _parse_proc_stat(1, "1 (x) S 0") is None
+        assert _parse_proc_stat(1, "1 (x) S a b c") is None
+
+    def test_environ_marker_matching(self):
+        from qodalis_cli.services.cli_shell_session_manager import _environ_has_marker
+
+        sid = "0123456789abcdef0123456789abcdef"
+        assert _environ_has_marker(b"PATH=/bin\0QCLI_SHELL_ID=" + sid.encode() + b"\0HOME=/", sid)
+        assert _environ_has_marker(b"QCLI_SHELL_ID=" + sid.encode(), sid)
+        assert not _environ_has_marker(b"QCLI_SHELL_ID=" + sid.encode() + b"0\0", sid)
+        assert not _environ_has_marker(b"XQCLI_SHELL_ID=" + sid.encode() + b"\0", sid)
+        assert not _environ_has_marker(b"FOO=QCLI_SHELL_ID=" + sid.encode(), sid)
+        assert not _environ_has_marker(b"", sid)
+
+    def test_ps_marker_matching_requires_whole_token(self):
+        from qodalis_cli.services.cli_shell_session_manager import _ps_marked_pids
+
+        sid = "0123456789abcdef0123456789abcdef"
+        out = (
+            f"  101 sleep 10 PATH=/bin QCLI_SHELL_ID={sid} HOME=/\n"
+            f"  102 sleep 10 QCLI_SHELL_ID={sid}0\n"
+            f"  103 sleep 10 XQCLI_SHELL_ID={sid}\n"
+            f"  104 sleep 10 QCLI_SHELL_ID={sid}\n"
+            f"QCLI_SHELL_ID={sid}\n"
+            f"  105 -bash\n"
+        )
+        assert _ps_marked_pids(out, sid) == {101, 104}
+
+    def test_parse_ps_table(self):
+        from qodalis_cli.services.cli_shell_session_manager import _ProcInfo, _parse_ps_table
+
+        out = "    1     0     1\n  200     1   200\nbad line\n  300   200\n"
+        assert _parse_ps_table(out) == [_ProcInfo(1, 0, 1, None), _ProcInfo(200, 1, 200, None)]
+
+    def test_proc_fixture_lookup(self, tmp_path, monkeypatch):
+        from qodalis_cli.services import cli_shell_session_manager as m
+
+        sid = "f" * 32
+        entries = {
+            # pid: (stat, environ or None when unreadable)
+            500: ("500 (bash) S 1 500 500 0", b"QCLI_SHELL_ID=" + sid.encode() + b"\0"),
+            501: ("501 (sleep) S 500 501 500 0", b"PATH=/bin\0"),          # job: own group, same session
+            502: ("502 (my (odd) name) S 1 502 502 0", b"QCLI_SHELL_ID=" + sid.encode()),  # setsid'd orphan
+            503: ("503 (other) S 1 503 503 0", b"QCLI_SHELL_ID=" + b"e" * 32),
+            504: ("504 (secret) S 1 504 504 0", None),
+        }
+        (tmp_path / "self").mkdir()
+        (tmp_path / "self" / "stat").write_text("1 (x) S 0 1 1 0")
+        for pid, (stat, environ) in entries.items():
+            d = tmp_path / str(pid)
+            d.mkdir()
+            (d / "stat").write_text(stat)
+            if environ is not None:
+                (d / "environ").write_bytes(environ)
+        monkeypatch.setattr(m, "_PROC", str(tmp_path))
+        procs = {p.pid: p for p in m._list_processes()}
+        assert procs[501] == m._ProcInfo(501, 500, 501, 500)
+        assert procs[502].ppid == 1
+        assert m._marked_pids(sid) == {500, 502}
+        assert m._descendants(list(procs.values()), 500) == [501]
+        assert m._collect_targets(500, sid, include_tree=True) == {500, 501, 502}
+        assert m._collect_targets(500, sid, include_tree=False) == {500, 501, 502}  # group/session
+        assert m._collect_targets(500, None, include_tree=False) == {500, 501}
+
+    def test_collect_targets_never_includes_the_server(self, monkeypatch):
+        from qodalis_cli.services import cli_shell_session_manager as m
+
+        own, group = os.getpid(), os.getpgrp()
+        procs = [
+            m._ProcInfo(own, 1, group, None),
+            m._ProcInfo(700, own, 700, 700),
+            m._ProcInfo(701, 1, group, None),  # another member of the server's group
+        ]
+        monkeypatch.setattr(m, "_list_processes", lambda: procs)
+        monkeypatch.setattr(m, "_marked_pids", lambda _sid: {own, 701, 1, 702})
+        assert m._collect_targets(700, "x", include_tree=True) == {700, 702}
