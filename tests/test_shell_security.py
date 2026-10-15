@@ -344,3 +344,88 @@ class TestLimits:
         assert opened and "auth=token" in opened[0] and "remote=testclient" in opened[0]
         assert closed and "exitCode=0" in closed[0]
         assert not any("SENTINEL_COMMAND_TEXT" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# PTY I/O must never block the event loop
+# ---------------------------------------------------------------------------
+
+class _StdinSocket:
+    """Fake WebSocket delivering the given text frames, then idling."""
+
+    def __init__(self, frames: list[str]) -> None:
+        self._frames = list(frames)
+
+    async def receive_text(self) -> str:
+        import asyncio
+
+        if self._frames:
+            return self._frames.pop(0)
+        await asyncio.Event().wait()
+        return ""  # pragma: no cover
+
+
+class TestPtyIO:
+    async def test_stdin_larger_than_pty_buffer_is_written_without_dropping_the_shell(self):
+        """A full PTY input buffer (process not reading stdin) must not end
+        the shell nor lose data: writes wait for the fd to drain."""
+        import asyncio
+        import threading
+
+        from qodalis_cli.services.cli_shell_session_manager import _ShellSession
+
+        manager = _server(allow_anonymous=True).shell_session_manager
+        r, w = os.pipe()
+        os.set_blocking(w, False)  # a PTY master is non-blocking
+        payload = "x" * (512 * 1024)
+        received = bytearray()
+
+        def drain() -> None:
+            time.sleep(0.3)  # the "process" starts reading stdin later
+            while len(received) < len(payload):
+                chunk = os.read(r, 65536)
+                if not chunk:
+                    break
+                received.extend(chunk)
+
+        reader = threading.Thread(target=drain, daemon=True)
+        reader.start()
+        session = _ShellSession(
+            id="t", mode="anonymous", kind="interactive", key="k", address="a",
+            websocket=None, loop=asyncio.get_running_loop(),
+        )
+        socket = _StdinSocket([json.dumps({"type": "stdin", "data": payload})])
+        task = asyncio.ensure_future(manager._read_websocket_input(socket, w, session))
+        try:
+            deadline = time.monotonic() + 5
+            while len(received) < len(payload) and time.monotonic() < deadline:
+                await asyncio.sleep(0.02)
+            assert not task.done(), "input handler gave up on a full PTY buffer"
+            assert len(received) == len(payload)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except BaseException:
+                pass
+            reader.join(2)
+            os.close(r)
+            os.close(w)
+
+    def test_pty_master_is_non_blocking(self, monkeypatch):
+        """A blocking master fd would freeze the whole server when the PTY
+        input buffer fills up (Linux)."""
+        from qodalis_cli.services import cli_shell_session_manager as mod
+
+        seen: list[bool] = []
+        original = mod.CliShellSessionManager._read_websocket_input
+
+        async def spy(self, websocket, master_fd, session):
+            seen.append(os.get_blocking(master_fd))
+            return await original(self, websocket, master_fd, session)
+
+        monkeypatch.setattr(mod.CliShellSessionManager, "_read_websocket_input", spy)
+        result = _server(allow_anonymous=True)
+        with TestClient(result.app) as c:
+            _run(c, SHELL + "?cmd=echo%20nb")
+        assert seen == [False]

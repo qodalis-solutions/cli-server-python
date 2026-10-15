@@ -460,6 +460,9 @@ class CliShellSessionManager:
                 finally:
                     os._exit(127)
 
+            # Non-blocking: a full PTY input buffer (process not reading stdin)
+            # must not block the event loop (see _write_pty).
+            os.set_blocking(master_fd, False)
             logger.info("Shell session started (shell=%s, cols=%d, rows=%d)", os.path.basename(shell), cols, rows)
             self._set_pty_size(master_fd, cols, rows)
 
@@ -541,6 +544,8 @@ class CliShellSessionManager:
         def on_readable() -> None:
             try:
                 data = os.read(master_fd, 4096)
+            except BlockingIOError:
+                return  # spurious wake-up
             except OSError:
                 data = b""
             if not data:
@@ -592,7 +597,7 @@ class CliShellSessionManager:
                     data = msg.get("data", "")
                     if isinstance(data, str) and data:
                         session.last_input = time.monotonic()
-                        os.write(master_fd, data.encode("utf-8"))
+                        await _write_pty(master_fd, data.encode("utf-8"))
                 elif msg_type == "resize":
                     self._set_pty_size(master_fd, _dim(msg.get("cols"), 80), _dim(msg.get("rows"), 24))
             except OSError as e:
@@ -668,6 +673,23 @@ def _signal_group(pid: int, sig: int) -> None:
             pass
     except OSError:
         pass
+
+
+async def _write_pty(fd: int, data: bytes) -> None:
+    """Write all of ``data`` to a non-blocking PTY master, waiting (without
+    blocking the event loop) while its input buffer is full."""
+    loop = asyncio.get_running_loop()
+    view = memoryview(data)
+    while view:
+        try:
+            view = view[os.write(fd, view):]
+        except BlockingIOError:
+            writable = loop.create_future()
+            loop.add_writer(fd, lambda: writable.done() or writable.set_result(None))
+            try:
+                await writable
+            finally:
+                loop.remove_writer(fd)
 
 
 def _reap(pid: int) -> None:
