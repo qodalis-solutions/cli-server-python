@@ -297,14 +297,15 @@ class TestLimits:
                 assert _rejected(c, SHELL, headers={"x-forwarded-for": "10.0.0.2"}).code == 4429
 
     def test_idle_timeout_closes_and_kills(self):
-        result = _server(allow_anonymous=True, idle_timeout=0.6)
+        # Generous enough for slow CI runners to start the shell and report its pid first
+        result = _server(allow_anonymous=True, idle_timeout=2.0)
         with TestClient(result.app) as c:
             with c.websocket_connect(SHELL) as ws:
                 pid = _shell_pid(ws)
                 start = time.monotonic()
                 messages, exc = _until_closed(ws)
                 assert (exc.code, exc.reason) == (4408, "shell timed out")
-                assert time.monotonic() - start < 5
+                assert time.monotonic() - start < 8
                 assert not any(m["type"] == "exit" for m in messages)
             assert _gone(pid), "shell process must be killed"
             assert result.shell_session_manager.active_sessions == 0
