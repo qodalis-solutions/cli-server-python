@@ -16,6 +16,7 @@ from qodalis_cli import (
     CliProcessCommand,
     ICliCommandParameterDescriptor,
     ICliCommandProcessor,
+    get_positional_text,
 )
 
 
@@ -23,8 +24,9 @@ def _get_location(command: CliProcessCommand) -> str:
     """Extract the location from command args or value, defaulting to London."""
     if "location" in command.args:
         return str(command.args["location"])
-    if command.value:
-        return command.value
+    location = get_positional_text(command)
+    if location:
+        return location
     return "London"
 
 

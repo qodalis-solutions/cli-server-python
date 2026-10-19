@@ -1,5 +1,6 @@
 from .cli_command_author import ICliCommandAuthor, CliCommandAuthor, DEFAULT_LIBRARY_AUTHOR
 from .cli_process_command import CliProcessCommand
+from .shell_words import split_shell_words, join_shell_words, get_positionals, get_positional_text
 from .cli_command_parameter_descriptor import (
     ICliCommandParameterDescriptor,
     CliCommandParameterDescriptor,
@@ -37,6 +38,10 @@ __all__ = [
     "CliCommandAuthor",
     "DEFAULT_LIBRARY_AUTHOR",
     "CliProcessCommand",
+    "split_shell_words",
+    "join_shell_words",
+    "get_positionals",
+    "get_positional_text",
     "ICliCommandParameterDescriptor",
     "CliCommandParameterDescriptor",
     "ICliCommandProcessor",

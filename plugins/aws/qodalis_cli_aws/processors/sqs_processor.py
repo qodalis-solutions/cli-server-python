@@ -5,6 +5,7 @@ import asyncio
 from typing import Any
 
 from qodalis_cli_server_abstractions import (
+    get_positional_text,
     CliCommandParameterDescriptor,
     CliCommandProcessor,
     CliProcessCommand,
@@ -99,7 +100,7 @@ class _SqsSendProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Sends the provided message body to the specified SQS queue."""
-        queue_url = (command.value or "").strip()
+        queue_url = get_positional_text(command)
         if not queue_url:
             return build_error_response("Queue URL is required. Usage: sqs send <queue-url> --message <body>")
 
@@ -148,7 +149,7 @@ class _SqsReceiveProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Polls the specified queue for up to ``--max`` messages."""
-        queue_url = (command.value or "").strip()
+        queue_url = get_positional_text(command)
         if not queue_url:
             return build_error_response("Queue URL is required. Usage: sqs receive <queue-url>")
 
@@ -203,7 +204,7 @@ class _SqsPurgeProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Purges the queue, or previews the action in dry-run mode."""
-        queue_url = (command.value or "").strip()
+        queue_url = get_positional_text(command)
         if not queue_url:
             return build_error_response("Queue URL is required. Usage: sqs purge <queue-url>")
 

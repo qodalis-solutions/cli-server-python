@@ -5,6 +5,7 @@ import asyncio
 from typing import Any
 
 from qodalis_cli_server_abstractions import (
+    get_positional_text,
     CliCommandParameterDescriptor,
     CliCommandProcessor,
     CliProcessCommand,
@@ -97,7 +98,7 @@ class _DynamoDbDescribeProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Returns key schema, status, and size details for the specified table."""
-        table_name = (command.value or "").strip()
+        table_name = get_positional_text(command)
         if not table_name:
             return build_error_response("Table name is required. Usage: dynamodb describe <table-name>")
 
@@ -164,7 +165,7 @@ class _DynamoDbScanProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Performs a scan on the specified table and returns items as JSON."""
-        table_name = (command.value or "").strip()
+        table_name = get_positional_text(command)
         if not table_name:
             return build_error_response("Table name is required. Usage: dynamodb scan <table-name>")
 
@@ -216,7 +217,7 @@ class _DynamoDbQueryProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Executes a DynamoDB query with the provided key condition."""
-        table_name = (command.value or "").strip()
+        table_name = get_positional_text(command)
         if not table_name:
             return build_error_response("Table name is required. Usage: dynamodb query <table-name> --key <expression>")
 

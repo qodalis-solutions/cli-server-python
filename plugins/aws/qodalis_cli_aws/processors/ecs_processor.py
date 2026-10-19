@@ -5,6 +5,7 @@ import asyncio
 from typing import Any
 
 from qodalis_cli_server_abstractions import (
+    get_positional_text,
     CliCommandParameterDescriptor,
     CliCommandProcessor,
     CliProcessCommand,
@@ -109,7 +110,7 @@ class _EcsServicesProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Fetches and describes all services in the specified ECS cluster."""
-        cluster = (command.value or "").strip()
+        cluster = get_positional_text(command)
         if not cluster:
             return build_error_response("Cluster name or ARN is required. Usage: ecs services <cluster>")
 
@@ -174,7 +175,7 @@ class _EcsTasksProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Fetches and describes all tasks running in the specified ECS cluster."""
-        cluster = (command.value or "").strip()
+        cluster = get_positional_text(command)
         if not cluster:
             return build_error_response("Cluster name or ARN is required. Usage: ecs tasks <cluster>")
 

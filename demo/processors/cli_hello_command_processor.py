@@ -7,6 +7,7 @@ from qodalis_cli import (
     CliCommandProcessor,
     CliProcessCommand,
     ICliCommandParameterDescriptor,
+    get_positional_text,
 )
 
 
@@ -33,5 +34,5 @@ class CliHelloCommandProcessor(CliCommandProcessor):
         ]
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
-        name = command.args.get("name", command.value or "World")
+        name = command.args.get("name", get_positional_text(command) or "World")
         return f"Hello, {name}!"

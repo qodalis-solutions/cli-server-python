@@ -5,6 +5,7 @@ import asyncio
 from typing import Any
 
 from qodalis_cli_server_abstractions import (
+    get_positional_text,
     CliCommandParameterDescriptor,
     CliCommandProcessor,
     CliProcessCommand,
@@ -99,7 +100,7 @@ class _SnsPublishProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Publishes the provided message to the specified SNS topic ARN."""
-        topic_arn = (command.value or "").strip()
+        topic_arn = get_positional_text(command)
         if not topic_arn:
             return build_error_response("Topic ARN is required. Usage: sns publish <topic-arn> --message <message>")
 
@@ -144,7 +145,7 @@ class _SnsSubscriptionsProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Fetches subscriptions for a specific topic or all subscriptions."""
-        topic_arn = (command.value or "").strip() or None
+        topic_arn = get_positional_text(command) or None
 
         region = command.args.get("region")
         client = self._credential_manager.get_client("sns", region=str(region) if region else None)

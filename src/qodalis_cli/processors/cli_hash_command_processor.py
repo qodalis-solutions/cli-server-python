@@ -8,6 +8,7 @@ from ..abstractions import (
     CliCommandProcessor,
     CliProcessCommand,
     ICliCommandParameterDescriptor,
+    get_positional_text,
 )
 
 SUPPORTED_ALGORITHMS = ["md5", "sha1", "sha256", "sha512"]
@@ -42,7 +43,7 @@ class CliHashCommandProcessor(CliCommandProcessor):
         ]
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
-        text = command.value
+        text = get_positional_text(command)
         if not text:
             return "Usage: hash <text> [--algorithm sha256]"
 
