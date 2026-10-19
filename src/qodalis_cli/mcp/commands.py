@@ -82,17 +82,34 @@ def render_outputs(outputs: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+_NEEDS_QUOTING = re.compile(r"""[\s"'\\|&;<>()$`]""")
+
+
+def quote_shell_word(value: str) -> str:
+    """``value`` as one word the browser's command-line parser reads back
+    unchanged: plain when it has no spaces, quotes or special characters,
+    otherwise in double quotes when it has no ``"``, in single quotes when it
+    has no ``'``, else in double quotes with ``\\"`` escapes."""
+    if value and not _NEEDS_QUOTING.search(value):
+        return value
+    if '"' not in value:
+        return '"' + value.replace("\\", "\\\\") + '"'
+    if "'" not in value:
+        return "'" + value + "'"
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _raw_command(path: list[str], value: str | None, args: dict[str, Any]) -> str:
     parts = list(path)
     if value:
-        parts.append(value)
+        parts.append(quote_shell_word(value))
     for key, val in args.items():
         if isinstance(val, bool):
             parts.append(f"--{key}" if val else f"--{key}=false")
         elif isinstance(val, list):
-            parts.append(f"--{key}={','.join(map(str, val))}")
+            parts.append(f"--{key}={quote_shell_word(','.join(map(str, val)))}")
         else:
-            parts.append(f"--{key}={val}")
+            parts.append(f"--{key}={quote_shell_word(str(val))}")
     return " ".join(parts)
 
 
@@ -142,6 +159,8 @@ class CommandsMcpToolProvider:
                 value=value,
                 args=args,
                 chain_commands=path[1:],
+                # The tool's value is one argument as given: no shell re-parsing.
+                positionals=[value] if value else [],
             )
             response = await self.executor.execute_async(command, cancellation_event=None)
             outputs = [o.model_dump(by_alias=True, exclude_none=True) for o in response.outputs]

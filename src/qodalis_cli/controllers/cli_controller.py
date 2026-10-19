@@ -32,6 +32,9 @@ class ExecuteRequest(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
     chain_commands: list[str] = Field(alias="chainCommands", default_factory=list)
     data: Any = None
+    # Positional arguments split like a shell (quotes removed, flags excluded);
+    # absent from older browsers, see ``get_positionals``.
+    positionals: list[str] | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -166,6 +169,7 @@ def create_cli_router(
             args=request.args,
             chain_commands=request.chain_commands,
             data=request.data,
+            positionals=request.positionals,
         )
         result = await executor.execute_async(cmd, cancellation_event=None)
         return JSONResponse(result.model_dump(by_alias=True, exclude_none=True))
@@ -182,6 +186,7 @@ def create_cli_router(
             args=request.args,
             chain_commands=request.chain_commands,
             data=request.data,
+            positionals=request.positionals,
         )
 
         cancellation_event = asyncio.Event()
