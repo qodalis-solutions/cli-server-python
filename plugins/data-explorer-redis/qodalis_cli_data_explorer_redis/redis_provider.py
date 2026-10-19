@@ -127,6 +127,31 @@ def _normalise_result(command: str, raw: Any) -> tuple[list[str], list[list[Any]
     return columns, rows
 
 
+def _parse_command_args(query: str) -> list[str]:
+    """Split a Redis command into words; a quoted part (``"my key"``, ``'a b'``)
+    stays one word, without its quotes. Matches the Node and .NET providers."""
+    parts: list[str] = []
+    current = ""
+    quote: str | None = None
+    for ch in query.strip():
+        if quote:
+            if ch == quote:
+                quote = None
+            else:
+                current += ch
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch.isspace():
+            if current:
+                parts.append(current)
+                current = ""
+        else:
+            current += ch
+    if current:
+        parts.append(current)
+    return parts
+
+
 class RedisDataExplorerProvider(IDataExplorerProvider):
     """Executes Redis commands against a Redis server."""
 
@@ -140,7 +165,7 @@ class RedisDataExplorerProvider(IDataExplorerProvider):
         start = time.monotonic()
         client: aioredis.Redis | None = None
         try:
-            parts = context.query.strip().split()
+            parts = _parse_command_args(context.query)
             if not parts:
                 raise ValueError("Empty query — please provide a Redis command.")
 
