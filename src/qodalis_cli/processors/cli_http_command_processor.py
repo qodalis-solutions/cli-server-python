@@ -13,7 +13,14 @@ from ..abstractions import (
     CliProcessCommand,
     ICliCommandParameterDescriptor,
     ICliCommandProcessor,
+    get_positionals,
 )
+
+
+def _url(command: CliProcessCommand) -> str | None:
+    """The URL: the first positional argument, unquoted."""
+    positionals = get_positionals(command)
+    return positionals[0] if positionals else None
 
 
 class _HttpGetProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
@@ -47,7 +54,7 @@ class _HttpGetProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
         command: CliProcessCommand,
         cancellation_event: asyncio.Event | None = None,
     ) -> str:
-        url = command.value
+        url = _url(command)
         if not url:
             return "Usage: http get <url>"
         return _do_request(url, method="GET", show_headers="headers" in command.args)
@@ -58,7 +65,7 @@ class _HttpGetProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
         emit,
         cancellation_event: asyncio.Event | None = None,
     ) -> int:
-        url = command.value
+        url = _url(command)
         if not url:
             emit({"type": "text", "value": "Usage: http get <url>"})
             return 1
@@ -102,7 +109,7 @@ class _HttpPostProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
         command: CliProcessCommand,
         cancellation_event: asyncio.Event | None = None,
     ) -> str:
-        url = command.value
+        url = _url(command)
         if not url:
             return "Usage: http post <url> --body '{\"key\":\"value\"}'"
         body = command.args.get("body")
@@ -116,7 +123,7 @@ class _HttpPostProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
         emit,
         cancellation_event: asyncio.Event | None = None,
     ) -> int:
-        url = command.value
+        url = _url(command)
         if not url:
             emit({"type": "text", "value": "Usage: http post <url> --body '{\"key\":\"value\"}'"})
             return 1

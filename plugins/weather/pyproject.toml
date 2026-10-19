@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-weather"
-version = "1.0.0b6"
+version = "1.0.0b7"
 description = "Weather information commands plugin for Qodalis CLI servers"
 readme = { text = "", content-type = "text/plain" }
 license = "MIT"
@@ -24,7 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "qodalis-cli-server-abstractions",
+    "qodalis-cli-server-abstractions>=1.0.0b7",
 ]
 
 [project.urls]

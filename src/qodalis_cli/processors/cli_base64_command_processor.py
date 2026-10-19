@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 
-from ..abstractions import CliCommandProcessor, CliProcessCommand, ICliCommandProcessor
+from ..abstractions import CliCommandProcessor, CliProcessCommand, ICliCommandProcessor, get_positional_text
 
 
 class _Base64EncodeProcessor(CliCommandProcessor):
@@ -23,7 +23,7 @@ class _Base64EncodeProcessor(CliCommandProcessor):
         return "Encodes text to Base64"
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
-        text = command.value
+        text = get_positional_text(command)
         if not text:
             return "Usage: base64 encode <text>"
         return base64.b64encode(text.encode("utf-8")).decode("ascii")
@@ -46,7 +46,7 @@ class _Base64DecodeProcessor(CliCommandProcessor):
         return "Decodes Base64 to text"
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
-        text = command.value
+        text = get_positional_text(command)
         if not text:
             return "Usage: base64 decode <base64string>"
         try:

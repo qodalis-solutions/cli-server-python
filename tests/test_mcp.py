@@ -478,6 +478,16 @@ class TestToolsCall:
         assert c.call("say", {"value": "hello"})["result"]["content"][0]["text"] == "say:hello:[]"
         assert procs["say"].calls[-1].value == "hello"
 
+    def test_value_sets_positionals_and_quoted_raw_command(self, open_srv):
+        c, procs, _ = open_srv
+        c.call("say", {"value": 'it\'s "a b"'})
+        cmd = procs["say"].calls[-1]
+        assert cmd.positionals == ['it\'s "a b"']
+        assert cmd.raw_command == 'say "it\'s \\"a b\\""'
+        c.call("say", {"value": "a b"})
+        assert procs["say"].calls[-1].raw_command == 'say "a b"'
+        assert procs["say"].calls[-1].positionals == ["a b"]
+
     def test_is_error_on_exit_code(self, open_srv):
         c, _, _ = open_srv
         result = c.call("exit1")["result"]

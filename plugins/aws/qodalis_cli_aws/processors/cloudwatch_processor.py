@@ -5,6 +5,7 @@ import asyncio
 from typing import Any
 
 from qodalis_cli_server_abstractions import (
+    get_positional_text,
     CliCommandParameterDescriptor,
     CliCommandProcessor,
     CliProcessCommand,
@@ -107,7 +108,7 @@ class _CloudWatchLogsProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Retrieves and formats recent log events from the specified log group."""
-        log_group_name = (command.value or "").strip()
+        log_group_name = get_positional_text(command)
         if not log_group_name:
             return build_error_response("Log group name is required. Usage: cloudwatch logs <log-group>")
 
@@ -180,7 +181,7 @@ class _CloudWatchMetricsProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Queries metrics for the specified CloudWatch namespace."""
-        namespace = (command.value or "").strip()
+        namespace = get_positional_text(command)
         if not namespace:
             return build_error_response("Namespace is required. Usage: cloudwatch metrics <namespace>")
 

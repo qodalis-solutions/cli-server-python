@@ -71,6 +71,7 @@ from qodalis_cli_data_explorer_redis.redis_provider import (  # noqa: E402
     _SCALAR_COMMANDS,
     _decode,
     _normalise_result,
+    _parse_command_args,
 )
 from qodalis_cli_data_explorer_elasticsearch import (  # noqa: E402
     ElasticsearchDataExplorerProvider,
@@ -286,6 +287,23 @@ class TestRedisProvider:
         provider = RedisDataExplorerProvider()
         assert callable(getattr(provider, "execute_async", None))
         assert callable(getattr(provider, "get_schema_async", None))
+
+
+class TestParseCommandArgs:
+    def test_plain_words(self) -> None:
+        assert _parse_command_args("  GET  mykey ") == ["GET", "mykey"]
+
+    def test_double_quoted_word_is_one_argument(self) -> None:
+        assert _parse_command_args('SET "my key" "hello world"') == ["SET", "my key", "hello world"]
+
+    def test_single_quoted_word_is_one_argument(self) -> None:
+        assert _parse_command_args("SET 'spaced key' 'my value'") == ["SET", "spaced key", "my value"]
+
+    def test_other_quote_inside_quotes_is_text(self) -> None:
+        assert _parse_command_args("SET k \"it's\"") == ["SET", "k", "it's"]
+
+    def test_empty(self) -> None:
+        assert _parse_command_args("   ") == []
 
 
 class TestAllowedCommands:
