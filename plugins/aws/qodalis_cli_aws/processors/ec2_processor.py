@@ -5,6 +5,7 @@ import asyncio
 from typing import Any
 
 from qodalis_cli_server_abstractions import (
+    get_positional_text,
     CliCommandParameterDescriptor,
     CliCommandProcessor,
     CliProcessCommand,
@@ -111,7 +112,7 @@ class _Ec2DescribeProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Returns detailed metadata for the specified EC2 instance."""
-        instance_id = (command.value or "").strip()
+        instance_id = get_positional_text(command)
         if not instance_id:
             return build_error_response("Instance ID is required. Usage: ec2 describe <instance-id>")
 
@@ -184,7 +185,7 @@ class _Ec2StartProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Issues a start request for the specified EC2 instance."""
-        instance_id = (command.value or "").strip()
+        instance_id = get_positional_text(command)
         if not instance_id:
             return build_error_response("Instance ID is required. Usage: ec2 start <instance-id>")
 
@@ -229,7 +230,7 @@ class _Ec2StopProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Stops the specified instance, or previews the action in dry-run mode."""
-        instance_id = (command.value or "").strip()
+        instance_id = get_positional_text(command)
         if not instance_id:
             return build_error_response("Instance ID is required. Usage: ec2 stop <instance-id>")
 
@@ -277,7 +278,7 @@ class _Ec2RebootProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Reboots the specified instance, or previews the action in dry-run mode."""
-        instance_id = (command.value or "").strip()
+        instance_id = get_positional_text(command)
         if not instance_id:
             return build_error_response("Instance ID is required. Usage: ec2 reboot <instance-id>")
 

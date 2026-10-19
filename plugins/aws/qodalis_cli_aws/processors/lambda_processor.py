@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from qodalis_cli_server_abstractions import (
+    get_positional_text,
     CliCommandParameterDescriptor,
     CliCommandProcessor,
     CliProcessCommand,
@@ -108,7 +109,7 @@ class _LambdaInvokeProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Invokes the specified Lambda function with an optional JSON payload."""
-        function_name = (command.value or "").strip()
+        function_name = get_positional_text(command)
         if not function_name:
             return build_error_response("Function name is required. Usage: lambda invoke <function-name>")
 
@@ -177,7 +178,7 @@ class _LambdaLogsProcessor(CliCommandProcessor):
 
     async def handle_structured_async(self, command: CliProcessCommand) -> Any:
         """Queries the ``/aws/lambda/<name>`` log group for recent events."""
-        function_name = (command.value or "").strip()
+        function_name = get_positional_text(command)
         if not function_name:
             return build_error_response("Function name is required. Usage: lambda logs <function-name>")
 
