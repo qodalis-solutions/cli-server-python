@@ -1060,6 +1060,22 @@ These processors ship with the library and are included in the standalone server
 | `hash` | Hash computation (MD5, SHA1, SHA256, SHA512) |
 | `base64` | Base64 encode/decode (sub-commands) |
 
+### `http` and private networks
+
+`http get|post <url>` fetches only `http`/`https` URLs, and refuses a target whose host resolves (any of its addresses, or an IP literal) to a loopback, private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local (`169.254/16` incl. the cloud metadata service, `fe80::/10`), CGNAT (`100.64/10`) or unspecified address, including IPv4-mapped IPv6 forms (`::ffff:127.0.0.1`). Redirects are followed manually, at most 5, and every hop is checked the same way:
+
+```
+Blocked: 169.254.169.254 resolves to a private or local address (169.254.169.254). Set allow_private_networks to allow it.
+```
+
+To let the command reach internal hosts (e.g. a trusted intranet deployment), opt out per processor:
+
+```python
+builder.add_processor(CliHttpCommandProcessor(allow_private_networks=True))
+```
+
+The host is resolved for the check and again when connecting, so a DNS server that changes its answer in between can still bypass the check; restrict outbound traffic at the network level if that matters.
+
 ## Docker
 
 ```bash
