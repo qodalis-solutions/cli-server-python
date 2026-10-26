@@ -59,7 +59,7 @@ All providers implement the following async methods:
 |---|---|---|---|
 | `allowed_paths` | `list[str]` | `[]` | Absolute directory paths clients may access |
 
-Requests to paths outside the whitelist raise `FileStoragePermissionError`.
+Requests to paths outside the whitelist raise `FileStoragePermissionError`. An allowed root itself cannot be removed or moved/renamed (as source or target) either: those calls raise `FileStoragePermissionError` too (403 over HTTP), while everything inside the root can.
 
 ## License
 

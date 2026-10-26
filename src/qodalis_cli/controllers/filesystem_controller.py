@@ -407,6 +407,11 @@ def _create_legacy_router(
     async def remove_path(path: str) -> dict[str, str]:
         logger.debug("Removing path: %s", path)
         resolved = _safe_validate(validator, path)
+        if resolved in validator.allowed_paths:
+            # Removing an allowed root would wipe the whole share.
+            raise HTTPException(
+                status_code=403, detail=f"Access denied: '{path}' is an allowed root"
+            )
 
         if not os.path.exists(resolved):
             raise HTTPException(status_code=404, detail="Path not found")

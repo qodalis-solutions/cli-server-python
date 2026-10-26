@@ -138,6 +138,7 @@ class OsFileStorageProvider(IFileStorageProvider):
 
     async def remove(self, path: str, recursive: bool = False) -> None:
         resolved = self._validate(path)
+        self._ensure_not_root(resolved, path)
 
         if not os.path.exists(resolved):
             raise FileStorageNotFoundError(path)
@@ -165,6 +166,8 @@ class OsFileStorageProvider(IFileStorageProvider):
     async def move(self, src: str, dest: str) -> None:
         resolved_src = self._validate(src)
         resolved_dest = self._validate(dest)
+        self._ensure_not_root(resolved_src, src)
+        self._ensure_not_root(resolved_dest, dest)
 
         if not os.path.exists(resolved_src):
             raise FileStorageNotFoundError(src)
@@ -195,6 +198,17 @@ class OsFileStorageProvider(IFileStorageProvider):
 
     async def upload_file(self, path: str, content: bytes) -> None:
         await self.write_file(path, content)
+
+    def _ensure_not_root(self, resolved: str, path: str) -> None:
+        """An allowed root itself cannot be removed, moved/renamed or
+        replaced: ``rm /srv/files`` would wipe the whole share and leave the
+        provider pointing at nothing.
+
+        Raises:
+            FileStoragePermissionError: If *resolved* is an allowed root.
+        """
+        if resolved in self._allowed_paths:
+            raise FileStoragePermissionError(path)
 
     def _validate(self, path: str) -> str:
         """Resolve *path* and check it against the allowed whitelist.
