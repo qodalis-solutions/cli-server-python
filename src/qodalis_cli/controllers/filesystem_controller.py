@@ -8,8 +8,9 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Union
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.datastructures import UploadFile
 
 from qodalis_cli_filesystem import (
     FileStorageExistsError,
@@ -20,9 +21,77 @@ from qodalis_cli_filesystem import (
     IFileStorageProvider,
 )
 
+from ..filesystem.filesystem_options import DEFAULT_MAX_UPLOAD_BYTES
 from ..filesystem.filesystem_path_validator import FileSystemPathValidator
 
 logger = logging.getLogger(__name__)
+
+#: Room for the multipart framing and the ``path`` field on top of the file
+#: cap when limiting the raw request body.
+_MULTIPART_OVERHEAD = 1024 * 1024
+_UPLOAD_CHUNK = 64 * 1024
+
+
+class _UploadTooLarge(Exception):
+    pass
+
+
+def _too_large(max_bytes: int) -> HTTPException:
+    return HTTPException(
+        status_code=413,
+        detail=f"File exceeds the maximum upload size of {max_bytes} bytes",
+    )
+
+
+def _limited_receive(receive: Any, limit: int) -> Any:
+    """Wrap an ASGI ``receive`` so the body stops (``_UploadTooLarge``) once
+    more than ``limit`` bytes arrived: the multipart parser never spools an
+    oversize upload to memory or disk."""
+    received = 0
+
+    async def wrapped() -> dict:
+        nonlocal received
+        message = await receive()
+        if message.get("type") == "http.request":
+            received += len(message.get("body", b""))
+            if received > limit:
+                raise _UploadTooLarge()
+        return message
+
+    return wrapped
+
+
+async def _read_upload(request: Request, max_bytes: int) -> tuple[str, bytes]:
+    """Parse ``multipart/form-data`` with ``file`` and ``path`` fields and
+    return ``(path, contents)``; 413 when the file is larger than
+    ``max_bytes`` (read in chunks, never more than the cap is kept)."""
+    body_limit = max_bytes + _MULTIPART_OVERHEAD
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > body_limit:
+        raise _too_large(max_bytes)
+
+    limited = Request(request.scope, _limited_receive(request.receive, body_limit))
+    try:
+        form = await limited.form()
+    except _UploadTooLarge:
+        raise _too_large(max_bytes) from None
+    try:
+        file = form.get("file")
+        path = form.get("path")
+        if not isinstance(file, UploadFile) or not isinstance(path, str) or not path:
+            raise HTTPException(
+                status_code=422, detail="'file' and 'path' form fields are required"
+            )
+        chunks: list[bytes] = []
+        total = 0
+        while chunk := await file.read(_UPLOAD_CHUNK):
+            total += len(chunk)
+            if total > max_bytes:
+                raise _too_large(max_bytes)
+            chunks.append(chunk)
+        return path, b"".join(chunks)
+    finally:
+        await form.close()
 
 
 def _map_provider_error(exc: Exception) -> HTTPException:
@@ -40,20 +109,23 @@ def _map_provider_error(exc: Exception) -> HTTPException:
 
 def create_filesystem_router(
     provider_or_validator: Union[IFileStorageProvider, FileSystemPathValidator],
+    max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
 ) -> APIRouter:
     """Create a FastAPI router exposing filesystem operations.
 
     Accepts either a :class:`IFileStorageProvider` (new approach) or a
     :class:`FileSystemPathValidator` (legacy approach) for backward
-    compatibility.
+    compatibility.  ``max_upload_bytes`` caps one uploaded file (413 above).
     """
     if isinstance(provider_or_validator, FileSystemPathValidator):
-        return _create_legacy_router(provider_or_validator)
+        return _create_legacy_router(provider_or_validator, max_upload_bytes)
 
-    return _create_provider_router(provider_or_validator)
+    return _create_provider_router(provider_or_validator, max_upload_bytes)
 
 
-def _create_provider_router(provider: IFileStorageProvider) -> APIRouter:
+def _create_provider_router(
+    provider: IFileStorageProvider, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+) -> APIRouter:
     """Create a router that delegates to *provider*."""
 
     router = APIRouter()
@@ -125,13 +197,10 @@ def _create_provider_router(provider: IFileStorageProvider) -> APIRouter:
             raise _map_provider_error(exc) from exc
 
     @router.post("/upload")
-    async def upload_file(
-        file: UploadFile = File(...),
-        path: str = Form(...),
-    ) -> dict[str, str]:
+    async def upload_file(request: Request) -> dict[str, str]:
+        path, contents = await _read_upload(request, max_upload_bytes)
         logger.debug("Uploading file: %s", path)
         try:
-            contents = await file.read()
             await provider.upload_file(path, contents)
             return {"path": path, "status": "uploaded"}
         except FileStoragePermissionError as exc:
@@ -203,7 +272,9 @@ def _stat_entry(resolved: str) -> dict[str, Any]:
     }
 
 
-def _create_legacy_router(validator: FileSystemPathValidator) -> APIRouter:
+def _create_legacy_router(
+    validator: FileSystemPathValidator, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+) -> APIRouter:
     """Create a router using the legacy :class:`FileSystemPathValidator`."""
 
     router = APIRouter()
@@ -295,10 +366,8 @@ def _create_legacy_router(validator: FileSystemPathValidator) -> APIRouter:
         )
 
     @router.post("/upload")
-    async def upload_file(
-        file: UploadFile = File(...),
-        path: str = Form(...),
-    ) -> dict[str, str]:
+    async def upload_file(request: Request) -> dict[str, str]:
+        path, contents = await _read_upload(request, max_upload_bytes)
         logger.debug("Uploading file: %s", path)
         resolved = _safe_validate(validator, path)
 
@@ -309,7 +378,6 @@ def _create_legacy_router(validator: FileSystemPathValidator) -> APIRouter:
             )
 
         try:
-            contents = await file.read()
             with open(resolved, "wb") as fh:
                 fh.write(contents)
         except OSError as exc:
