@@ -159,6 +159,126 @@ class TestUploadEndpoint:
         assert resp.json()["content"] == "file content"
 
 
+class TestUploadLimit:
+    """``max_upload_bytes``: oversize uploads get 413 (JSON), not 500, and
+    are never buffered beyond the cap."""
+
+    @staticmethod
+    def _client(provider_or_validator, max_upload_bytes: int) -> TestClient:
+        app = FastAPI()
+        app.include_router(
+            create_filesystem_router(provider_or_validator, max_upload_bytes=max_upload_bytes),
+            prefix="/api/qcli/fs",
+        )
+        return TestClient(app)
+
+    @staticmethod
+    def _upload(client: TestClient, content: bytes, path: str = "/big.bin"):
+        return client.post(
+            "/api/qcli/fs/upload",
+            data={"path": path},
+            files={"file": ("big.bin", content, "application/octet-stream")},
+        )
+
+    def test_default_limit_is_100_mib(self) -> None:
+        from qodalis_cli.filesystem import FileSystemOptions
+
+        assert FileSystemOptions().max_upload_bytes == 104857600
+
+    def test_file_at_limit_is_accepted(self, provider: InMemoryFileStorageProvider) -> None:
+        client = self._client(provider, 10)
+        resp = self._upload(client, b"0123456789")
+        assert resp.status_code == 200
+        assert client.get("/api/qcli/fs/cat", params={"path": "/big.bin"}).json()["content"] == "0123456789"
+
+    def test_file_over_limit_is_413(self, provider: InMemoryFileStorageProvider) -> None:
+        client = self._client(provider, 10)
+        resp = self._upload(client, b"0123456789X")
+        assert resp.status_code == 413
+        assert resp.headers["content-type"] == "application/json"
+        assert resp.json() == {"detail": "File exceeds the maximum upload size of 10 bytes"}
+        assert client.get("/api/qcli/fs/stat", params={"path": "/big.bin"}).status_code == 404
+
+    def test_large_body_rejected_by_content_length(self, provider: InMemoryFileStorageProvider) -> None:
+        client = self._client(provider, 10)
+        resp = self._upload(client, b"x" * (2 * 1024 * 1024))
+        assert resp.status_code == 413
+
+    def test_chunked_body_stops_at_cap(self, provider: InMemoryFileStorageProvider) -> None:
+        """Without Content-Length the body is cut off once it passes the cap
+        (plus multipart overhead): the rest is never read."""
+        boundary = "qcliboundary"
+        head = (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"path\"\r\n\r\n/big.bin\r\n"
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"big.bin\"\r\n"
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ).encode()
+
+        def body():
+            yield head
+            for _ in range(64):  # 64 x 64 KiB = 4 MiB
+                yield b"x" * 65536
+            yield f"\r\n--{boundary}--\r\n".encode()
+
+        client = self._client(provider, 10)
+        resp = client.post(
+            "/api/qcli/fs/upload",
+            content=body(),
+            headers={"content-type": f"multipart/form-data; boundary={boundary}"},
+        )
+        assert resp.status_code == 413
+        assert client.get("/api/qcli/fs/stat", params={"path": "/big.bin"}).status_code == 404
+
+    def test_body_reader_stops_after_limit(self) -> None:
+        import asyncio
+
+        from qodalis_cli.controllers.filesystem_controller import _limited_receive, _UploadTooLarge
+
+        pulled = 0
+
+        async def receive():
+            nonlocal pulled
+            pulled += 1
+            return {"type": "http.request", "body": b"x" * 100, "more_body": True}
+
+        async def run():
+            limited = _limited_receive(receive, 250)
+            await limited()
+            await limited()
+            with pytest.raises(_UploadTooLarge):
+                await limited()
+
+        asyncio.run(run())
+        assert pulled == 3  # nothing read past the message that crossed the cap
+
+    def test_legacy_router_limit(self, tmp_path) -> None:
+        from qodalis_cli.filesystem import FileSystemPathValidator
+
+        validator = FileSystemPathValidator([str(tmp_path)])
+        client = self._client(validator, 10)
+        target = str(tmp_path / "big.bin")
+        assert self._upload(client, b"0123456789X", target).status_code == 413
+        assert not (tmp_path / "big.bin").exists()
+        assert self._upload(client, b"0123456789", target).status_code == 200
+        assert (tmp_path / "big.bin").read_bytes() == b"0123456789"
+
+    def test_server_option(self, tmp_path) -> None:
+        from qodalis_cli import CliServerOptions, create_cli_server
+        from qodalis_cli.filesystem import FileSystemOptions
+
+        result = create_cli_server(CliServerOptions(configure=lambda b: b.add_filesystem(
+            FileSystemOptions(allowed_paths=[str(tmp_path)], max_upload_bytes=10),
+        )))
+        client = TestClient(result.app)
+        assert self._upload(client, b"0123456789X", str(tmp_path / "a.bin")).status_code == 413
+        assert self._upload(client, b"0123456789", str(tmp_path / "a.bin")).status_code == 200
+
+    def test_missing_fields_is_422(self, provider: InMemoryFileStorageProvider) -> None:
+        client = self._client(provider, 10)
+        resp = client.post("/api/qcli/fs/upload", data={"path": "/x"})
+        assert resp.status_code == 422
+
+
 class TestDownloadEndpoint:
     def test_download_file(self, client: TestClient, provider: InMemoryFileStorageProvider) -> None:
         import asyncio

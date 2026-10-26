@@ -801,6 +801,14 @@ The server includes a pluggable file storage system exposed at `/api/qcli/fs/*`.
 | POST | `/api/qcli/fs/mkdir` | Create directory |
 | DELETE | `/api/qcli/fs/rm?path=/file.txt` | Delete file or directory |
 
+### Upload size limit
+
+`POST /api/qcli/fs/upload` accepts files up to `max_upload_bytes` (default 100 MiB = `104857600`). A larger upload is answered with `413` (`{"detail": "File exceeds the maximum upload size of <n> bytes"}`); the body is read in chunks and never buffered beyond the cap. Set it with `FileSystemOptions` (also when a custom storage provider is set):
+
+```python
+builder.add_filesystem(FileSystemOptions(allowed_paths=["/srv/files"], max_upload_bytes=500 * 1024 * 1024))
+```
+
 ### Storage Providers
 
 ```python
