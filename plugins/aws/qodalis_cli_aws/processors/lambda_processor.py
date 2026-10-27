@@ -50,7 +50,7 @@ class _LambdaListProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches and returns all Lambda functions as a table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("lambda", region=str(region) if region else None)
@@ -107,7 +107,7 @@ class _LambdaInvokeProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Invokes the specified Lambda function with an optional JSON payload."""
         function_name = get_positional_text(command)
         if not function_name:
@@ -176,7 +176,7 @@ class _LambdaLogsProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Queries the ``/aws/lambda/<name>`` log group for recent events."""
         function_name = get_positional_text(command)
         if not function_name:
