@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-users"
-version = "1.0.0b7"
+version = "1.0.0b8"
 description = "User management plugin for Qodalis CLI servers — authentication, sessions, groups, and audit log"
 readme = { text = "", content-type = "text/plain" }
 license = "MIT"
