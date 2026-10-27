@@ -23,8 +23,6 @@ from qodalis_cli_users import (
     InMemoryUserStore,
     SessionMetadata,
     UsersApiError,
-    UsersPluginOptions,
-    build_users_plugin,
     has_permission,
     merge_permissions,
     permission_matches,
@@ -334,16 +332,5 @@ async def test_custom_stores_are_used():
     try:
         assert plugin.user_store is users
         assert (await users.get_user("root")) is not None
-    finally:
-        await plugin.shutdown()
-
-
-async def test_build_users_plugin_is_deprecated_wrapper():
-    with pytest.warns(DeprecationWarning):
-        plugin = await build_users_plugin(UsersPluginOptions(default_admin_password="pw12"))
-    try:
-        assert plugin.prefix == "/api/v1/qcli"
-        assert plugin._cleanup_task is not None
-        assert (await plugin.auth_service.login("root", "pw12")).token
     finally:
         await plugin.shutdown()

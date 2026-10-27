@@ -51,7 +51,7 @@ class _Ec2ListProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Describes all EC2 instances and returns a summary table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("ec2", region=str(region) if region else None)
@@ -110,7 +110,7 @@ class _Ec2DescribeProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Returns detailed metadata for the specified EC2 instance."""
         instance_id = get_positional_text(command)
         if not instance_id:
@@ -183,7 +183,7 @@ class _Ec2StartProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Issues a start request for the specified EC2 instance."""
         instance_id = get_positional_text(command)
         if not instance_id:
@@ -228,7 +228,7 @@ class _Ec2StopProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Stops the specified instance, or previews the action in dry-run mode."""
         instance_id = get_positional_text(command)
         if not instance_id:
@@ -276,7 +276,7 @@ class _Ec2RebootProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Reboots the specified instance, or previews the action in dry-run mode."""
         instance_id = get_positional_text(command)
         if not instance_id:
@@ -320,7 +320,7 @@ class _Ec2SgListProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches and returns all EC2 security groups as a table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("ec2", region=str(region) if region else None)

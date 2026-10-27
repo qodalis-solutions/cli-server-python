@@ -50,7 +50,7 @@ class _DynamoDbTablesProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches and returns all DynamoDB table names."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("dynamodb", region=str(region) if region else None)
@@ -96,7 +96,7 @@ class _DynamoDbDescribeProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Returns key schema, status, and size details for the specified table."""
         table_name = get_positional_text(command)
         if not table_name:
@@ -163,7 +163,7 @@ class _DynamoDbScanProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Performs a scan on the specified table and returns items as JSON."""
         table_name = get_positional_text(command)
         if not table_name:
@@ -215,7 +215,7 @@ class _DynamoDbQueryProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Executes a DynamoDB query with the provided key condition."""
         table_name = get_positional_text(command)
         if not table_name:

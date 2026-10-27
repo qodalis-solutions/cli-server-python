@@ -47,7 +47,7 @@ class _IamUsersProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches and returns all IAM users as a table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("iam", region=str(region) if region else None)
@@ -100,7 +100,7 @@ class _IamRolesProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches and returns all IAM roles as a table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("iam", region=str(region) if region else None)
@@ -153,7 +153,7 @@ class _IamPoliciesProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches and returns customer-managed IAM policies as a table."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("iam", region=str(region) if region else None)

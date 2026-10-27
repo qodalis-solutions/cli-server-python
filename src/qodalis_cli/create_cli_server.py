@@ -17,6 +17,7 @@ from .controllers import create_cli_router, create_cli_version_router
 from .controllers.filesystem_controller import create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemPathValidator
+from .filesystem.filesystem_options import DEFAULT_MAX_UPLOAD_BYTES
 from .mcp import (
     CliMcpOptions,
     CommandsMcpToolProvider,
@@ -201,7 +202,14 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
             )
         )
     if fs_provider is not None:
-        fs_router = create_filesystem_router(fs_provider)
+        fs_router = create_filesystem_router(
+            fs_provider,
+            max_upload_bytes=(
+                builder.filesystem_options.max_upload_bytes
+                if builder.filesystem_options is not None
+                else DEFAULT_MAX_UPLOAD_BYTES
+            ),
+        )
         app.include_router(fs_router, prefix="/api/qcli/fs")
         mcp_tools.add_provider(FilesystemMcpToolProvider(fs_provider), builtin=True)
 

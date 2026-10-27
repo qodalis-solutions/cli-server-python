@@ -51,7 +51,7 @@ class _SqsListProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches and returns all SQS queue URLs."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("sqs", region=str(region) if region else None)
@@ -98,7 +98,7 @@ class _SqsSendProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Sends the provided message body to the specified SQS queue."""
         queue_url = get_positional_text(command)
         if not queue_url:
@@ -147,7 +147,7 @@ class _SqsReceiveProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Polls the specified queue for up to ``--max`` messages."""
         queue_url = get_positional_text(command)
         if not queue_url:
@@ -202,7 +202,7 @@ class _SqsPurgeProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Purges the queue, or previews the action in dry-run mode."""
         queue_url = get_positional_text(command)
         if not queue_url:

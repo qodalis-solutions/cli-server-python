@@ -64,7 +64,7 @@ class _AwsConfigureSetProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Applies credential, region, and profile updates from arguments."""
         key = command.args.get("key")
         secret = command.args.get("secret")
@@ -109,7 +109,7 @@ class _AwsConfigureGetProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Returns the current AWS config summary with secrets masked."""
         summary = self._config_service.get_config_summary()
         entries = {
@@ -135,7 +135,7 @@ class _AwsConfigureProfilesProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Parses AWS config files and returns discovered profile names."""
         profiles: set[str] = set()
 
@@ -220,7 +220,7 @@ class _AwsStatusProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Calls STS GetCallerIdentity and returns account details."""
         try:
             client = self._credential_manager.get_client("sts")
