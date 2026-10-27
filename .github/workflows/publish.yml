@@ -28,10 +28,11 @@ jobs:
           pip install ./plugins/jobs
           pip install ./plugins/users
           pip install ./plugins/admin
+          pip install ./plugins/aws
           pip install -e ".[test]"
 
       - name: Run tests
-        run: python -m pytest tests/ -v
+        run: python -m pytest tests/ plugins/aws/tests/ -v
 
       - name: Build abstractions package
         run: python -m build packages/abstractions/ --outdir dist-abstractions/
