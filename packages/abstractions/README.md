@@ -1,6 +1,11 @@
 # qodalis-cli-server-abstractions
 
-Shared interfaces and base classes for building [Qodalis CLI](https://qodalis.com/) command processors in Python. **Zero framework dependencies** — install this package when writing plugins, without pulling in FastAPI, uvicorn, or websockets.
+Zero-dependency base types for writing [Qodalis CLI](https://cli.qodalis.com/docs) server plugins in Python.
+
+[![PyPI](https://img.shields.io/pypi/v/qodalis-cli-server-abstractions)](https://pypi.org/project/qodalis-cli-server-abstractions/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/qodalis-solutions/cli-server-python/blob/main/LICENSE)
+
+Depend on this package from a plugin (command processors, modules, jobs, data explorer providers) without pulling in FastAPI, uvicorn or websockets. The server, [`qodalis-cli-server`](https://pypi.org/project/qodalis-cli-server/), re-exports the same types.
 
 ## Install
 
@@ -8,15 +13,14 @@ Shared interfaces and base classes for building [Qodalis CLI](https://qodalis.co
 pip install qodalis-cli-server-abstractions
 ```
 
-## Quick Start
-
-Create a custom command processor by subclassing `CliCommandProcessor`:
+## Example
 
 ```python
 from qodalis_cli_server_abstractions import (
-    CliCommandProcessor,
-    CliProcessCommand,
     CliCommandParameterDescriptor,
+    CliCommandProcessor,
+    CliModule,
+    CliProcessCommand,
 )
 
 
@@ -31,61 +35,57 @@ class GreetCommandProcessor(CliCommandProcessor):
 
     @property
     def parameters(self):
-        return [
-            CliCommandParameterDescriptor("--name", "Name to greet", required=True),
-        ]
+        return [CliCommandParameterDescriptor("name", "Name to greet", aliases=["-n"])]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
-        name = command.args.get("name", "World")
-        return f"Hello, {name}!"
+    async def handle_async(self, command: CliProcessCommand, cancellation_event=None) -> str:
+        return f"Hello, {command.args.get('name', 'World')}!"
+
+
+class GreetingsModule(CliModule):
+    @property
+    def name(self) -> str:
+        return "greetings"
+
+    @property
+    def version(self) -> str:
+        return "1.0.0"
+
+    @property
+    def description(self) -> str:
+        return "Greeting commands"
+
+    @property
+    def processors(self):
+        return [GreetCommandProcessor()]
 ```
 
-Then register the processor with the server package. See [`qodalis-cli-server`](https://pypi.org/project/qodalis-cli-server/) for server setup.
+Register it on the server with `builder.add_module(GreetingsModule())`; see the [server README](https://github.com/qodalis-solutions/cli-server-python#readme).
 
-## API Reference
+## Contents
 
-### Abstract Base Classes
+| Area | Types |
+|---|---|
+| Processors | `ICliCommandProcessor`, `CliCommandProcessor`, `ICliStreamCommandProcessor`, `is_stream_capable`, `ICliProcessorFilter` |
+| Input | `CliProcessCommand`, `ICliCommandParameterDescriptor`, `CliCommandParameterDescriptor`, `split_shell_words`, `join_shell_words`, `get_positionals`, `get_positional_text` |
+| Modules and metadata | `ICliModule`, `CliModule`, `ICliCommandAuthor`, `CliCommandAuthor`, `DEFAULT_LIBRARY_AUTHOR` |
+| Jobs | `ICliJob`, `ICliJobExecutionContext`, `ICliJobLogger`, `CliJobOptions`, `ICliJobStorageProvider`, `JobExecution`, `JobState`, `JobLogEntry` |
+| Data explorer | `IDataExplorerProvider`, `DataExplorerProviderOptions`, `DataExplorerExecutionContext`, `DataExplorerResult`, `DataExplorerLanguage`, `DataExplorerOutputFormat`, `DataExplorerTemplate`, `DataExplorerParameterDescriptor`, schema types |
 
-| Class | Description |
-|-------|-------------|
-| `ICliCommandProcessor` | Abstract base defining the processor contract: command, description, author, parameters, sub-processors, and `handle_async()` |
-| `CliCommandProcessor` | Convenience subclass of `ICliCommandProcessor` with sensible defaults |
-
-### Protocols
-
-| Protocol | Description |
-|----------|-------------|
-| `ICliCommandAuthor` | Author metadata: `name` and `email` (runtime-checkable) |
-| `ICliCommandParameterDescriptor` | Parameter declaration: name, type, required, aliases, default value (runtime-checkable) |
-
-### Data Classes
-
-| Class | Description |
-|-------|-------------|
-| `CliProcessCommand` | Parsed command input: `command`, `value`, `args`, `chain_commands`, `raw_command`, `data` |
-| `CliCommandAuthor` | Simple implementation of `ICliCommandAuthor` |
-| `CliCommandParameterDescriptor` | Simple implementation of `ICliCommandParameterDescriptor` |
-
-### Constants
-
-| Constant | Description |
-|----------|-------------|
-| `DEFAULT_LIBRARY_AUTHOR` | Default `CliCommandAuthor` instance used when no author is specified |
-
-### `ICliCommandProcessor` Properties
+### Processor properties
 
 | Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `command` | `str` | *(abstract)* | The command name users type to invoke this processor |
-| `description` | `str` | *(abstract)* | Human-readable description shown in help |
-| `author` | `ICliCommandAuthor` | `DEFAULT_LIBRARY_AUTHOR` | Author metadata |
+|---|---|---|---|
+| `command` | `str` | abstract | Name users type |
+| `description` | `str` | abstract | Help text |
+| `handle_async(command, cancellation_event=None)` | method | abstract | Runs the command, returns text |
+| `handle_structured_async(command, cancellation_event=None)` | method | falls back to `handle_async` | Return a structured server response |
+| `parameters` | `list \| None` | `None` | Declared parameters (help, autocompletion, MCP schemas) |
+| `processors` | `list \| None` | `None` | Sub-commands |
+| `allow_unlisted_commands` | `bool \| None` | `None` | Accept sub-commands not in `processors` |
+| `value_required` | `bool \| None` | `None` | Whether a positional value is required |
+| `required_permissions` | `list[str] \| None` | `None` | Enforced when the users plugin protects the server |
 | `version` | `str` | `"1.0.0"` | Processor version |
-| `api_version` | `int` | `1` | Minimum API version this processor targets |
-| `allow_unlisted_commands` | `bool \| None` | `None` | Accept sub-commands not in `processors` list |
-| `value_required` | `bool \| None` | `None` | Whether a positional value argument is required |
-| `processors` | `list \| None` | `None` | Nested sub-command processors |
-| `parameters` | `list \| None` | `None` | Declared parameters for autocompletion and validation |
-| `handle_async(command)` | method | *(abstract)* | Execute the command, return result string |
+| `author` | `ICliCommandAuthor` | `DEFAULT_LIBRARY_AUTHOR` | Author metadata |
 
 ## License
 
