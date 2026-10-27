@@ -143,8 +143,21 @@ jobs:
           verbose: true
           attestations: false
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The wheel embeds the dashboard SPA from the npm package @qodalis/cli-server-dashboard
+      - name: Bundle the dashboard into the admin plugin
+        run: |
+          npm ci --ignore-scripts --prefix plugins/admin
+          python plugins/admin/scripts/copy_dashboard.py
+          test -f plugins/admin/qodalis_cli_admin/dashboard/index.html
+
       - name: Build admin plugin
-        run: python -m build plugins/admin/ --outdir dist-plugin-admin/
+        run: |
+          python -m build plugins/admin/ --outdir dist-plugin-admin/
+          python -m zipfile -l dist-plugin-admin/*.whl | grep -q "qodalis_cli_admin/dashboard/index.html"
 
       - name: Publish admin plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
