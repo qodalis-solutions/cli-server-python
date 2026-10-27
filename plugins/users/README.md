@@ -38,8 +38,6 @@ result.app.router.lifespan_context = lifespan
 
 `startup()` seeds the built-in groups `admin` (`["*"]`) and `users` (`["commands:execute"]`) and, when the user store is empty and no external auth adapter is set, a `root` user (`root@localhost`, group `admin`). Without `set_default_admin_password(...)` a random 16-character password is generated, logged **once** (never to log sockets or the admin log buffer) and root must change it at first login; a well-known explicit password (`root`, `admin`, `password`) logs a warning. Requests that arrive before `startup()` also trigger seeding.
 
-`build_users_plugin(UsersPluginOptions(...))` is kept as a deprecated async wrapper.
-
 ## Builder
 
 | Method | Default | Description |
