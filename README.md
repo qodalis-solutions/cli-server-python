@@ -1,9 +1,35 @@
 # Qodalis CLI Server (Python)
 
-[![PyPI qodalis-cli-server](https://img.shields.io/pypi/v/qodalis-cli-server?label=qodalis-cli-server)](https://pypi.org/project/qodalis-cli-server/)
-[![PyPI qodalis-cli-server-abstractions](https://img.shields.io/pypi/v/qodalis-cli-server-abstractions?label=qodalis-cli-server-abstractions)](https://pypi.org/project/qodalis-cli-server-abstractions/)
+A FastAPI server that runs commands, files, data queries and shells for the Qodalis web terminal.
 
-A Python CLI server framework for the [Qodalis CLI](https://github.com/qodalis-solutions/web-cli) ecosystem. Build custom server-side commands that integrate with the Qodalis web terminal.
+[![PyPI](https://img.shields.io/pypi/v/qodalis-cli-server?label=qodalis-cli-server)](https://pypi.org/project/qodalis-cli-server/)
+[![PyPI abstractions](https://img.shields.io/pypi/v/qodalis-cli-server-abstractions?label=abstractions)](https://pypi.org/project/qodalis-cli-server-abstractions/)
+[![Build & Test](https://github.com/qodalis-solutions/cli-server-python/actions/workflows/build.yml/badge.svg?branch=develop)](https://github.com/qodalis-solutions/cli-server-python/actions/workflows/build.yml)
+[![Python](https://img.shields.io/pypi/pyversions/qodalis-cli-server)](https://pypi.org/project/qodalis-cli-server/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+## Overview
+
+`qodalis-cli-server` is the Python backend of the [Qodalis CLI](https://cli.qodalis.com/docs). You write command processors in Python, register them on a FastAPI app, and the browser terminal discovers and runs them over REST, Server-Sent Events and WebSockets. Plugins add authentication, a file system, data explorers, scheduled jobs, an admin dashboard and an MCP endpoint for AI clients.
+
+| Project | Role |
+|---|---|
+| [web-cli](https://github.com/qodalis-solutions/web-cli) | Browser terminal (Angular, React, Vue, vanilla) that connects to this server |
+| **cli-server-python** | This server (FastAPI) |
+| [cli-server-node](https://github.com/qodalis-solutions/cli-server-node) / [cli-server-dotnet](https://github.com/qodalis-solutions/cli-server-dotnet) | The same API in Node.js and .NET |
+| [cli-server-dashboard](https://github.com/qodalis-solutions/cli-server-dashboard) | Admin dashboard SPA served by the admin plugin |
+| [mcp-cli](https://github.com/qodalis-solutions/mcp-cli) | `@qodalis/mcp-cli`, a stdio bridge from Claude Code to this server's MCP endpoint |
+
+## Features
+
+- **Command processors** with typed parameters, sub-commands, modules and permission requirements
+- **Streaming output** over SSE (`/execute/stream`) for processors implementing `ICliStreamCommandProcessor`
+- **WebSockets** for server events, live logs and an opt-in PTY shell with access control and process cleanup
+- **File system API** with in-memory, OS, JSON, SQLite and S3 storage providers
+- **Data explorer** providers for SQLite, PostgreSQL, MySQL, SQL Server, MongoDB, Redis and Elasticsearch
+- **Users plugin**: sign-in, groups and permissions, sessions, audit log, API tokens; protects every route and socket
+- **MCP endpoint** exposing commands, files, data and jobs as tools for AI clients
+- **Jobs**, **admin dashboard**, **AWS** and **weather** (example) plugins
 
 ## Installation
 
@@ -11,32 +37,20 @@ A Python CLI server framework for the [Qodalis CLI](https://github.com/qodalis-s
 pip install qodalis-cli-server
 ```
 
-The package exports all types, base classes, and built-in processors. Full type hints included.
-
-Requires Python 3.10+.
-
-### Plugin Authors
-
-If you're building a command processor plugin and don't need the server runtime (FastAPI, uvicorn, websockets), install the abstractions package instead:
-
-```bash
-pip install qodalis-cli-server-abstractions
-```
-
-This gives you `CliCommandProcessor`, `CliProcessCommand`, `CliCommandParameterDescriptor`, and all other base types with **zero dependencies**. See [`qodalis-cli-server-abstractions`](https://pypi.org/project/qodalis-cli-server-abstractions/) for details.
+Requires Python 3.10+. Plugin authors who only need the base types (`CliCommandProcessor`, `CliProcessCommand`, `CliModule`, ...) can depend on the zero-dependency [`qodalis-cli-server-abstractions`](https://pypi.org/project/qodalis-cli-server-abstractions/) package instead.
 
 ## Quick Start
 
-### As a Library
-
 ```python
+import uvicorn
+
 from qodalis_cli import (
     CliCommandProcessor,
     CliProcessCommand,
     CliServerOptions,
     create_cli_server,
+    install_log_redaction,
 )
-import uvicorn
 
 
 class GreetProcessor(CliCommandProcessor):
@@ -48,83 +62,65 @@ class GreetProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "Says hello"
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
-        name = command.value or "World"
-        return f"Hello, {name}!"
+    async def handle_async(self, command: CliProcessCommand, cancellation_event=None) -> str:
+        return f"Hello, {command.value or 'World'}!"
 
 
 result = create_cli_server(
     CliServerOptions(
         configure=lambda builder: builder.add_processor(GreetProcessor()),
+        allowed_origins=["http://localhost:4200"],  # your web-cli app
     )
 )
 
+install_log_redaction()  # keep tickets, tokens and shell commands out of uvicorn logs
 uvicorn.run(result.app, host="0.0.0.0", port=8048)
 ```
 
-Disconnect broadcast is handled automatically via the lifespan shutdown event.
+Point the web terminal at `http://localhost:8048` and run `greet Ada`.
 
-uvicorn's own access and error logs contain request paths **with their query strings** — WebSocket tickets (`ticket=`), tokens (`token=`, `access_token=`), the legacy `_header_Authorization=Bearer%20…` and shell commands (`cmd=`). The standalone server (`python -m qodalis_cli.server` / `qodalis-cli-server`) and the demo redact them; when you run uvicorn yourself, install the same filter before `uvicorn.run`:
+uvicorn logs request paths with their query strings, which can contain WebSocket tickets (`ticket=`), tokens (`token=`, `access_token=`, `_header_Authorization=`) and shell commands (`cmd=`). `install_log_redaction()` adds a `RedactingLogFilter` to the `uvicorn`, `uvicorn.access` and `uvicorn.error` loggers; the filter class is exported for your own handlers.
 
-```python
-from qodalis_cli import install_log_redaction
+### Standalone server
 
-install_log_redaction()  # RedactingLogFilter on uvicorn, uvicorn.access, uvicorn.error
-uvicorn.run(result.app, host="0.0.0.0", port=8048)
-```
-
-`RedactingLogFilter` (a `logging.Filter`) is exported too, e.g. to attach it to your own loggers or handlers.
-
-### As a Standalone Server
+The package installs a `qodalis-cli-server` command that serves the built-in processors:
 
 ```bash
-qodalis-cli-server
-```
-
-Or with environment variables:
-
-```bash
+qodalis-cli-server                         # http://0.0.0.0:8048
 PORT=9000 HOST=127.0.0.1 qodalis-cli-server
 ```
 
-## Creating Custom Command Processors
+## Writing Commands
 
-### Simple Command
+### Processors
 
-Extend `CliCommandProcessor` and implement `command`, `description`, and `handle_async`:
+Extend `CliCommandProcessor` and implement `command`, `description` and `handle_async`. Optional properties:
 
-```python
-from qodalis_cli import CliCommandProcessor, CliProcessCommand
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `parameters` | `list[ICliCommandParameterDescriptor] \| None` | `None` | Declared parameters (used for help, autocompletion and MCP tool schemas) |
+| `processors` | `list[ICliCommandProcessor] \| None` | `None` | Sub-commands |
+| `allow_unlisted_commands` | `bool \| None` | `None` | Accept sub-commands not in `processors` |
+| `value_required` | `bool \| None` | `None` | `True`: a positional value is required; `False`: optional |
+| `required_permissions` | `list[str] \| None` | `None` | Permissions enforced when the users plugin protects the server |
+| `version` | `str` | `"1.0.0"` | Processor version |
+| `author` | `ICliCommandAuthor` | library author | Author metadata |
 
+Override `handle_structured_async` to return a `CliServerResponse` (tables, lists, JSON, key-value outputs) instead of plain text; `CliResponseBuilder` helps build one. Implement `ICliStreamCommandProcessor.handle_stream_async(command, emit, cancellation_event)` to emit output chunks over `/execute/stream`.
 
-class EchoProcessor(CliCommandProcessor):
-    @property
-    def command(self) -> str:
-        return "echo"
+Every processor receives a `CliProcessCommand`:
 
-    @property
-    def description(self) -> str:
-        return "Echoes input text back"
+| Field | Type | Description |
+|---|---|---|
+| `command` | `str` | Command name (`"time"`) |
+| `value` | `str \| None` | Positional input (`"hello"` in `echo hello`) |
+| `args` | `dict[str, Any]` | Named parameters (`--format "%H:%M"`) |
+| `chain_commands` | `list[str]` | Sub-command chain (`["add"]` in `math add`) |
+| `positionals` | `list[str] \| None` | Positional words, when the client sends them |
+| `raw_command` | `str` | Original input |
+| `data` | `Any` | Arbitrary payload from the client |
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
-        return command.value or "Usage: echo <text>"
-```
-
-Register it during server creation:
-
-```python
-result = create_cli_server(
-    CliServerOptions(
-        configure=lambda builder: (
-            builder
-            .add_processor(EchoProcessor())
-            .add_processor(AnotherProcessor())  # fluent chaining
-        ),
-    )
-)
-```
-
-### Command with Parameters
+### Parameters
 
 Declare parameters with names, types, aliases, and defaults. The CLI client uses this metadata for autocompletion and validation.
 
@@ -163,7 +159,7 @@ class TimeProcessor(CliCommandProcessor):
             ),
         ]
 
-    async def handle_async(self, command: CliProcessCommand) -> str:
+    async def handle_async(self, command: CliProcessCommand, cancellation_event=None) -> str:
         from datetime import datetime, timezone
 
         use_utc = "utc" in command.args
@@ -177,146 +173,20 @@ Parameter types: `"string"`, `"number"`, `"boolean"`.
 
 ### Sub-commands
 
-Nest processors to create command hierarchies like `math add --a 5 --b 3`:
+Return child processors from `processors` to build hierarchies such as `math add --a 5 --b 3`; `chain_commands` tells the handler which one ran. See [`demo/processors`](demo/processors) for complete examples (`math`, `time`, `hello`, `status`, `echo`).
+
+### Modules
+
+A module bundles processors under a name and version. Extend `CliModule` and register it with `builder.add_module(...)`, which registers each of its processors:
 
 ```python
-from qodalis_cli import (
-    CliCommandParameterDescriptor,
-    CliCommandProcessor,
-    CliProcessCommand,
-    ICliCommandParameterDescriptor,
-    ICliCommandProcessor,
-)
+from qodalis_cli import CliModule, ICliCommandProcessor
 
 
-class _MathAddProcessor(CliCommandProcessor):
-    @property
-    def command(self) -> str:
-        return "add"
-
-    @property
-    def description(self) -> str:
-        return "Adds two numbers"
-
-    @property
-    def parameters(self) -> list[ICliCommandParameterDescriptor]:
-        return [
-            CliCommandParameterDescriptor(
-                name="a", description="First number",
-                required=True, type="number",
-            ),
-            CliCommandParameterDescriptor(
-                name="b", description="Second number",
-                required=True, type="number",
-            ),
-        ]
-
-    async def handle_async(self, command: CliProcessCommand) -> str:
-        a = float(command.args.get("a", 0))
-        b = float(command.args.get("b", 0))
-        result = a + b
-        return f"{a} + {b} = {result}"
-
-
-class _MathMultiplyProcessor(CliCommandProcessor):
-    @property
-    def command(self) -> str:
-        return "multiply"
-
-    @property
-    def description(self) -> str:
-        return "Multiplies two numbers"
-
-    @property
-    def parameters(self) -> list[ICliCommandParameterDescriptor]:
-        return [
-            CliCommandParameterDescriptor(
-                name="a", description="First number",
-                required=True, type="number",
-            ),
-            CliCommandParameterDescriptor(
-                name="b", description="Second number",
-                required=True, type="number",
-            ),
-        ]
-
-    async def handle_async(self, command: CliProcessCommand) -> str:
-        a = float(command.args.get("a", 0))
-        b = float(command.args.get("b", 0))
-        result = a * b
-        return f"{a} * {b} = {result}"
-
-
-class MathProcessor(CliCommandProcessor):
-    @property
-    def command(self) -> str:
-        return "math"
-
-    @property
-    def description(self) -> str:
-        return "Performs basic math operations"
-
-    @property
-    def allow_unlisted_commands(self) -> bool:
-        return False
-
-    @property
-    def processors(self) -> list[ICliCommandProcessor]:
-        return [_MathAddProcessor(), _MathMultiplyProcessor()]
-
-    async def handle_async(self, command: CliProcessCommand) -> str:
-        return "Usage: math add|multiply --a <number> --b <number>"
-```
-
-## Modules
-
-Modules group related command processors into a reusable unit. Implement `ICliModule` (or extend the `CliModule` base class) to bundle processors under a single name and version.
-
-### Defining a Module
-
-```python
-from qodalis_cli import (
-    CliCommandProcessor,
-    CliModule,
-    CliProcessCommand,
-    ICliCommandProcessor,
-)
-
-
-class _WeatherCurrentProcessor(CliCommandProcessor):
-    @property
-    def command(self) -> str:
-        return "current"
-
-    @property
-    def description(self) -> str:
-        return "Shows current weather conditions"
-
-    async def handle_async(self, command: CliProcessCommand) -> str:
-        return "Weather: Sunny, 22°C"
-
-
-class _CliWeatherCommandProcessor(CliCommandProcessor):
-    @property
-    def command(self) -> str:
-        return "weather"
-
-    @property
-    def description(self) -> str:
-        return "Shows weather information for a location"
-
-    @property
-    def processors(self) -> list[ICliCommandProcessor]:
-        return [_WeatherCurrentProcessor()]
-
-    async def handle_async(self, command: CliProcessCommand) -> str:
-        return "Weather: Sunny, 22°C"
-
-
-class WeatherModule(CliModule):
+class GreetingsModule(CliModule):
     @property
     def name(self) -> str:
-        return "weather"
+        return "greetings"
 
     @property
     def version(self) -> str:
@@ -324,152 +194,80 @@ class WeatherModule(CliModule):
 
     @property
     def description(self) -> str:
-        return "Provides weather information commands"
+        return "Greeting commands"
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
-        return [_CliWeatherCommandProcessor()]
+        return [GreetProcessor()]
+
+
+create_cli_server(CliServerOptions(configure=lambda b: b.add_module(GreetingsModule())))
 ```
 
-### Registering a Module
+[`plugins/weather`](plugins/weather) is a complete module (`weather current`, `weather forecast`).
 
-```python
-result = create_cli_server(
-    CliServerOptions(
-        configure=lambda builder: builder.add_module(WeatherModule()),
-    )
-)
-```
+### Built-in processors
 
-`add_module()` iterates over the module's `processors` and registers each one, just like calling `add_processor()` for each individually.
+Used by the standalone server; import them from `qodalis_cli` to add them to your own.
 
-### ICliModule Interface
+| Command | Class | Description |
+|---|---|---|
+| `echo` | `CliEchoCommandProcessor` | Echoes input text |
+| `status` | `CliStatusCommandProcessor` | Server status (uptime, OS) |
+| `system` | `CliSystemCommandProcessor` | System information (hostname, CPU, memory) |
+| `http` | `CliHttpCommandProcessor` | HTTP requests (`get`, `post`), streamed |
+| `hash` | `CliHashCommandProcessor` | Hash text (`--algorithm`, default `sha256`) |
+| `base64` | `CliBase64CommandProcessor` | Base64 encode / decode |
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `name` | `str` | Unique module identifier |
-| `version` | `str` | Module version |
-| `description` | `str` | Short description |
-| `author` | `ICliCommandAuthor` | Author metadata (defaults to library author) |
-| `processors` | `Sequence[ICliCommandProcessor]` | Command processors provided by the module |
+## Configuration
 
-### Example: Weather Module
+`create_cli_server(options)` takes a `CliServerOptions`:
 
-The repository includes a weather module under `plugins/weather/` as a reference implementation. It registers a `weather` command with `current` and `forecast` sub-commands, using the [wttr.in](https://wttr.in) API:
+| Option | Default | Description |
+|---|---|---|
+| `configure` | `None` | `Callable[[CliBuilder], None]` that registers processors, modules and providers |
+| `allowed_origins` | `None` | Origins accepted for CORS and WebSocket upgrades (`*` globs allowed, e.g. `http://127.0.0.1:*`); `None` disables the Origin check |
+| `cors` | `None` | `True`/`False` forces CORS on/off; `None` enables it only when origins are configured |
+| `cors_origins` | `None` | CORS origins, when they differ from `allowed_origins` |
+| `base_path` | `"/api/qcli"` | Additional mount point of the command routes (always also at `/api/v1/qcli`) |
+| `enable_shell` | `False` | Enable the PTY shell WebSocket, see [Remote Shell Security](#remote-shell-security) |
+| `shell` | `CliShellOptions()` | Shell access, limits and environment |
+| `mcp` | `None` | `True`, a `CliMcpOptions` or a `dict` enables the [MCP endpoint](#mcp-endpoint) |
 
-```
-weather                    # Shows current weather (default: London)
-weather current London     # Current conditions for London
-weather forecast --location Paris  # 3-day forecast for Paris
-```
+CORS never combines `*` with credentials. With `allowed_origins` set, a WebSocket upgrade from another origin is closed with 4403 (a missing `Origin`, as sent by non-browser clients, is accepted; protected sockets still need a ticket). Same-origin requests, such as the bundled admin dashboard, always pass Origin and CSRF checks (`X-Forwarded-Proto`/`X-Forwarded-Host` are honoured only with `trust_proxy`).
 
-## Command Input
+`CliBuilder` methods (all chainable):
 
-Every processor receives a `CliProcessCommand` with the parsed command input:
+| Method | Description |
+|---|---|
+| `add_processor(processor)` | Register a command processor |
+| `add_module(module)` | Register every processor of a module |
+| `set_file_storage_provider(provider)` | Enable the file system API with a storage provider |
+| `add_filesystem(FileSystemOptions(allowed_paths=[...], max_upload_bytes=...))` | Enable the file system API on whitelisted OS paths |
+| `add_data_explorer_provider(provider, options)` | Register a data explorer source |
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `command` | `str` | Command name (e.g., `"time"`) |
-| `value` | `str \| None` | Positional argument (e.g., `"hello"` in `echo hello`) |
-| `args` | `dict[str, Any]` | Named parameters (e.g., `--format "%H:%M"`) |
-| `chain_commands` | `list[str]` | Sub-command chain (e.g., `["add"]` in `math add`) |
-| `raw_command` | `str` | Original unprocessed input |
-| `data` | `Any` | Arbitrary data payload from the client |
+`create_cli_server` returns a `CliServerResult` with `app` (FastAPI), `registry`, `builder`, `executor`, `event_socket_manager`, `log_socket_manager`, `shell_session_manager`, `mcp` (the MCP tool registry), `mount_plugin(plugin)` for router-based plugins (users, jobs, admin) and `set_shell_access_provider(...)` used by auth plugins.
 
-## API Versioning
-
-Processors declare which API version they target. The default is version 1.
-
-```python
-class DashboardProcessor(CliCommandProcessor):
-    @property
-    def command(self) -> str:
-        return "dashboard"
-
-    @property
-    def description(self) -> str:
-        return "Server dashboard (v2 only)"
-
-    @property
-    def api_version(self) -> int:
-        return 2
-
-    async def handle_async(self, command: CliProcessCommand) -> str:
-        return "Dashboard data..."
-```
-
-The server exposes versioned endpoints:
+## API
 
 | Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/qcli/versions` | Version discovery (supported versions, preferred version) |
-| GET | `/api/v1/qcli/version` | V1 server version |
-| GET | `/api/v1/qcli/commands` | V1 commands (all processors) |
-| POST | `/api/v1/qcli/execute` | V1 execute |
-| GET | `/api/v1/qcli/capabilities` | Server capabilities (OS, shell, features) |
-| WS | `/ws/v1/qcli/events` | WebSocket server-push event broadcast |
-| WS | `/ws/v1/qcli/logs` | WebSocket log streaming (supports `?level=` filter) |
-| WS | `/ws/v1/qcli/shell` | Interactive PTY shell session (supports `?cols=&rows=&cmd=`); opt-in via `enable_shell=True`, see [Remote Shell Security](#remote-shell-security) |
+|---|---|---|
+| GET | `/api/qcli/versions` | Version discovery (supported and preferred version) |
+| GET | `/api/v1/qcli/version` | Server version |
+| GET | `/api/v1/qcli/capabilities` | OS, shell, streaming, `shellAuth` |
+| GET | `/api/v1/qcli/commands` | Registered processors with their parameters |
+| POST | `/api/v1/qcli/execute` | Execute a command |
+| POST | `/api/v1/qcli/execute/stream` | Execute a command, output as Server-Sent Events |
+| GET/POST/DELETE | `/api/qcli/fs/*` | File system: `ls`, `cat`, `stat`, `download`, `upload`, `mkdir`, `rm` (when enabled) |
+| GET/POST | `/api/qcli/data-explorer/*` | `sources`, `schema`, `execute` (when a provider is registered) |
+| POST | `/api/qcli/mcp` | MCP endpoint (opt-in) |
+| WS | `/ws/v1/qcli/events` | Server-push events |
+| WS | `/ws/v1/qcli/logs` | Server log stream (`?level=` filter) |
+| WS | `/ws/v1/qcli/shell` | PTY shell (`?cols=&rows=&cmd=`), opt-in |
 
-The Qodalis CLI client auto-negotiates the highest mutually supported version via the `/api/cli/versions` discovery endpoint.
+Every WebSocket is also served without the version (`/ws/qcli/events`, ...). Plugins add their own routes, e.g. the users plugin's `/api/v1/qcli/sessions`, `/users`, `/groups` and `/tokens`.
 
-## Processor Base Class Reference
-
-`CliCommandProcessor` provides these overridable properties:
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `command` | `str` | (required) | Command name |
-| `description` | `str` | (required) | Help text shown to users |
-| `handle_async` | method | (required) | Execution logic |
-| `parameters` | `list[ICliCommandParameterDescriptor] \| None` | `None` | Declared parameters |
-| `processors` | `list[ICliCommandProcessor] \| None` | `None` | Sub-commands |
-| `allow_unlisted_commands` | `bool \| None` | `None` | Accept sub-commands not in `processors` |
-| `value_required` | `bool \| None` | `None` | Require a positional value |
-| `version` | `str` | `"1.0.0"` | Processor version string |
-| `api_version` | `int` | `1` | Target API version |
-| `author` | `ICliCommandAuthor` | default author | Author metadata (name, email) |
-
-## Server Options
-
-```python
-@dataclass
-class CliServerOptions:
-    base_path: str = "/api/qcli"           # API base path
-    cors: bool | None = None                # None: CORS only when origins are configured
-    cors_origins: list[str] | None = None   # Explicit CORS origins (default: allowed_origins)
-    allowed_origins: list[str] | None = None  # CORS + WebSocket Origin check ("*" globs allowed)
-    enable_shell: bool = False              # PTY shell WebSocket (opt-in, see Remote Shell Security)
-    shell: CliShellOptions = CliShellOptions()  # Shell access, limits and environment
-    mcp: bool | CliMcpOptions | dict | None = None  # MCP endpoint (opt-in, see MCP endpoint)
-    configure: Callable[[CliBuilder], None] | None = None  # Processor registration
-```
-
-CORS is disabled unless `allowed_origins` (or `cors_origins` / `cors=True`) is set, and `*` is never combined with credentials. When `allowed_origins` is set, a WebSocket upgrade whose `Origin` is not allowed is closed with code 4403 (a missing `Origin`, as sent by non-browser clients, is accepted; protected sockets still need a ticket).
-
-Same-origin requests (an `Origin` equal to the server's own scheme + host, e.g. the bundled admin dashboard) are always allowed by every Origin/CSRF check, so a deployment never needs to list its own origin (`X-Forwarded-Proto`/`X-Forwarded-Host` are honoured only with `trust_proxy`).
-
-Processors may declare `required_permissions` (e.g. `["deploy:run"]`); they are enforced when the server is protected by the users plugin.
-
-`create_cli_server()` returns:
-
-```python
-@dataclass
-class CliServerResult:
-    app: FastAPI                            # Configured FastAPI app
-    registry: CliCommandRegistry            # Processor registry
-    builder: CliBuilder                     # Registration builder
-    event_socket_manager: CliEventSocketManager  # WebSocket event manager
-    log_socket_manager: CliLogSocketManager  # WebSocket log manager
-    executor: CliCommandExecutorService | None  # Command executor service
-    shell_session_manager: CliShellSessionManager | None  # PTY shell sessions
-    mcp: McpToolRegistry                    # MCP tool providers (add_provider)
-
-    def mount_plugin(self, plugin: object) -> None: ...  # Mount a plugin with router/dashboard
-    def set_shell_access_provider(self, provider) -> None: ...  # Called by auth plugins (users mode)
-```
-
-## MCP endpoint
+## MCP Endpoint
 
 The server can expose **the whole system** to AI clients such as Claude Code as [MCP](https://modelcontextprotocol.io) tools: CLI commands, the filesystem API, the data explorer, background jobs and tools contributed by plugins — each with the same permissions as a CLI user. It works with or without the users plugin (which only supplies identities and API tokens).
 
@@ -641,7 +439,7 @@ curl -s http://localhost:8048/api/qcli/mcp \
 Responses (abridged):
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"qodalis-cli-server","version":"1.0.0b7"},"instructions":"…"}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"qodalis-cli-server","version":"1.0.0b8"},"instructions":"…"}}
 {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"server_info","description":"…","inputSchema":{…},"annotations":{"readOnlyHint":true}}, …]}}
 {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"Hello, MCP!"}],"isError":false}}
 ```
@@ -742,118 +540,32 @@ Refusals are sent after accepting the upgrade, so browsers can read the close co
 
 A disallowed `Origin` (when `allowed_origins` is set) is closed with 4403 before any of the above.
 
-## Exported Types
-
-All types are exported from the `qodalis_cli` package root:
-
-```python
-# Abstractions (for creating custom processors and modules)
-from qodalis_cli import (
-    ICliCommandProcessor,
-    CliCommandProcessor,
-    ICliCommandParameterDescriptor,
-    CliCommandParameterDescriptor,
-    CliProcessCommand,
-    ICliCommandAuthor,
-    CliCommandAuthor,
-    ICliModule,
-    CliModule,
-)
-
-# Models
-from qodalis_cli import (
-    CliServerResponse,
-    CliServerOutput,
-    CliServerCommandDescriptor,
-)
-
-# Services (for advanced integration)
-from qodalis_cli import (
-    ICliCommandRegistry,
-    CliCommandRegistry,
-    ICliCommandExecutorService,
-    CliCommandExecutorService,
-    ICliResponseBuilder,
-    CliResponseBuilder,
-    CliEventSocketManager,
-)
-
-# Factory
-from qodalis_cli import (
-    create_cli_server,
-    CliServerOptions,
-)
-```
-
 ## File Storage
 
-The server includes a pluggable file storage system exposed at `/api/qcli/fs/*`. Enable it with `set_file_storage_provider()` and choose a storage backend.
+Enable the file system API (`/api/qcli/fs/*`) with a storage provider:
 
-### Filesystem API Endpoints
+```python
+from qodalis_cli import InMemoryFileStorageProvider, OsFileStorageProvider, OsProviderOptions
+from qodalis_cli_filesystem_json import JsonFileStorageProvider, JsonFileProviderOptions
+from qodalis_cli_filesystem_sqlite import SqliteFileStorageProvider, SqliteProviderOptions
+from qodalis_cli_filesystem_s3 import S3FileStorageProvider, S3ProviderOptions
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/qcli/fs/ls?path=/` | List directory contents |
-| GET | `/api/qcli/fs/cat?path=/file.txt` | Read file content |
-| GET | `/api/qcli/fs/stat?path=/file.txt` | File/directory metadata |
-| GET | `/api/qcli/fs/download?path=/file.txt` | Download file |
-| POST | `/api/qcli/fs/upload` | Upload file (multipart) |
-| POST | `/api/qcli/fs/mkdir` | Create directory |
-| DELETE | `/api/qcli/fs/rm?path=/file.txt` | Delete file or directory |
+# pick one
+builder.set_file_storage_provider(InMemoryFileStorageProvider())
+builder.set_file_storage_provider(OsFileStorageProvider(OsProviderOptions(allowed_paths=["/srv/files"])))
+builder.set_file_storage_provider(JsonFileStorageProvider(JsonFileProviderOptions(file_path="./data/files.json")))
+builder.set_file_storage_provider(SqliteFileStorageProvider(SqliteProviderOptions(db_path="./data/files.db")))
+builder.set_file_storage_provider(S3FileStorageProvider(S3ProviderOptions(bucket="my-cli-files", region="us-east-1")))
+```
 
 ### Upload size limit
 
 `POST /api/qcli/fs/upload` accepts files up to `max_upload_bytes` (default 100 MiB = `104857600`). A larger upload is answered with `413` (`{"detail": "File exceeds the maximum upload size of <n> bytes"}`); the body is read in chunks and never buffered beyond the cap. Set it with `FileSystemOptions` (also when a custom storage provider is set):
 
 ```python
+from qodalis_cli import FileSystemOptions
+
 builder.add_filesystem(FileSystemOptions(allowed_paths=["/srv/files"], max_upload_bytes=500 * 1024 * 1024))
-```
-
-### Storage Providers
-
-```python
-from qodalis_cli import create_cli_server, CliServerOptions
-from qodalis_cli_filesystem import InMemoryFileStorageProvider, OsFileStorageProvider
-from qodalis_cli_filesystem_json import JsonFileStorageProvider, JsonFileProviderOptions
-from qodalis_cli_filesystem_sqlite import SqliteFileStorageProvider, SqliteProviderOptions
-from qodalis_cli_filesystem_s3 import S3FileStorageProvider, S3ProviderOptions
-
-result = create_cli_server(
-    CliServerOptions(
-        configure=lambda builder: (
-            # In-memory (default) — files lost on restart
-            builder.set_file_storage_provider(InMemoryFileStorageProvider())
-
-            # OS filesystem
-            # builder.set_file_storage_provider(OsFileStorageProvider())
-
-            # JSON file — persists to a single JSON file
-            # builder.set_file_storage_provider(
-            #     JsonFileStorageProvider(JsonFileProviderOptions(
-            #         file_path='./data/files.json',
-            #     ))
-            # )
-
-            # SQLite — persists to a SQLite database
-            # builder.set_file_storage_provider(
-            #     SqliteFileStorageProvider(SqliteProviderOptions(
-            #         db_path='./data/files.db',
-            #     ))
-            # )
-
-            # Amazon S3
-            # builder.set_file_storage_provider(
-            #     S3FileStorageProvider(S3ProviderOptions(
-            #         bucket='my-cli-files',
-            #         region='us-east-1',
-            #         prefix='uploads/',
-            #         aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-            #         aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
-            #     ))
-            # )
-        ),
-    )
-)
 ```
 
 ### Custom Provider
@@ -885,14 +597,7 @@ builder.set_file_storage_provider(MyProvider())
 
 ## Data Explorer
 
-The Data Explorer plugin provides interactive access to data sources through a provider-based API. Each data source type (SQL, MongoDB, etc.) is a separate plugin implementing `IDataExplorerProvider`.
-
-### API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/qcli/data-explorer/sources` | List registered data sources with metadata |
-| POST | `/api/qcli/data-explorer/execute` | Execute a query against a named source |
+Register data sources with `builder.add_data_explorer_provider(provider, options)`; the web terminal queries them through `/api/qcli/data-explorer` (`sources`, `schema`, `execute`). Each source type is a separate plugin implementing `IDataExplorerProvider` (`execute_async`, optional `get_schema_async`); one provider class can be registered several times under different names.
 
 ### SQL Provider
 
@@ -990,83 +695,33 @@ builder.add_data_explorer_provider(
 
 The same provider class can be registered multiple times with different configurations (e.g., two databases with different names).
 
-## AWS Cloud Services
+## Plugins
 
-The AWS plugin adds commands for managing AWS resources (S3, EC2, Lambda, CloudWatch, SNS, SQS, IAM, DynamoDB, ECS) directly from the CLI. It uses boto3 and supports the full credential chain.
+Each plugin is a separate package under [`plugins/`](plugins) with its own README.
 
-```python
-from qodalis_cli_aws import AwsModule
+| Package | Import | Description |
+|---|---|---|
+| [`qodalis-cli-server-plugin-users`](plugins/users/README.md) | `qodalis_cli_users` | Sign-in, users, groups and permissions, sessions, audit log, API tokens; protects the whole server |
+| [`qodalis-cli-server-plugin-admin`](plugins/admin/README.md) | `qodalis_cli_admin` | Admin dashboard at `/qcli/admin` and its API |
+| [`qodalis-cli-server-plugin-jobs`](plugins/jobs/README.md) | `qodalis_cli_jobs` | Scheduled background jobs with history and logs |
+| [`qodalis-cli-server-plugin-filesystem`](plugins/filesystem/README.md) | `qodalis_cli_filesystem` | `IFileStorageProvider` with in-memory and OS providers (installed with the server) |
+| [`...-filesystem-json`](plugins/filesystem-json/README.md), [`-sqlite`](plugins/filesystem-sqlite/README.md), [`-s3`](plugins/filesystem-s3/README.md) | `qodalis_cli_filesystem_json`, `_sqlite`, `_s3` | Persistent file storage |
+| [`qodalis-cli-server-plugin-data-explorer`](plugins/data-explorer/README.md) | `qodalis_cli_data_explorer` | Data explorer routes and executor |
+| [`...-data-explorer-sql`](plugins/data-explorer-sql/README.md), [`-postgres`](plugins/data-explorer-postgres/README.md), [`-mysql`](plugins/data-explorer-mysql/README.md), [`-mssql`](plugins/data-explorer-mssql/README.md), [`-mongo`](plugins/data-explorer-mongo/README.md), [`-redis`](plugins/data-explorer-redis/README.md), [`-elasticsearch`](plugins/data-explorer-elasticsearch/README.md) | `qodalis_cli_data_explorer_<name>` | Data explorer providers |
+| [`qodalis-cli-server-plugin-weather`](plugins/weather/README.md) | `qodalis_cli_weather` | Example module (`weather current`, `weather forecast`) |
+| [AWS](plugins/aws/README.md) | `qodalis_cli_aws` | `aws` commands for S3, EC2, Lambda, CloudWatch, SNS, SQS, IAM, DynamoDB, ECS (boto3) |
 
-result = create_cli_server(
-    CliServerOptions(configure=lambda builder: builder.add_module(AwsModule()))
-)
-```
-
-### Authentication
-
-The plugin resolves credentials in this order:
-
-1. **CLI configure**: `aws configure set --key <KEY> --secret <SECRET> --region <REGION>`
-2. **Environment variables**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
-3. **AWS profiles**: `aws configure set --profile <name>`
-4. **IAM roles**: Automatic on EC2/ECS/Lambda
-
-Verify connectivity with `aws status`.
-
-### Available Commands
-
-| Service | Commands |
-|---------|----------|
-| **configure** | `aws configure set`, `aws configure get`, `aws configure profiles` |
-| **status** | `aws status` — STS GetCallerIdentity connectivity check |
-| **S3** | `aws s3 ls`, `aws s3 cp`, `aws s3 rm`, `aws s3 mb`, `aws s3 rb`, `aws s3 presign` |
-| **EC2** | `aws ec2 list`, `aws ec2 describe`, `aws ec2 start`, `aws ec2 stop`, `aws ec2 reboot`, `aws ec2 sg list` |
-| **Lambda** | `aws lambda list`, `aws lambda invoke`, `aws lambda logs` |
-| **CloudWatch** | `aws cloudwatch alarms`, `aws cloudwatch logs`, `aws cloudwatch metrics` |
-| **SNS** | `aws sns topics`, `aws sns publish`, `aws sns subscriptions` |
-| **SQS** | `aws sqs list`, `aws sqs send`, `aws sqs receive`, `aws sqs purge` |
-| **IAM** | `aws iam users`, `aws iam roles`, `aws iam policies` |
-| **DynamoDB** | `aws dynamodb tables`, `aws dynamodb describe`, `aws dynamodb scan`, `aws dynamodb query` |
-| **ECS** | `aws ecs clusters`, `aws ecs services`, `aws ecs tasks` |
-
-All commands support `--region` (`-r`) for region override and `--output` (`-o`) for format selection (`table`, `json`, `text`). Destructive commands support `--dry-run`.
-
-See [`plugins/aws/README.md`](plugins/aws/README.md) for the full command reference.
-
-### Users Plugin
-
-The users plugin (`qodalis-cli-server-plugin-users`) adds endpoints under `/api/v1/qcli` for authentication, users, groups with permissions, sessions and an audit log, with swappable storage (in-memory by default). It is the server side of the `@qodalis/cli-users` browser plugin's *server mode*.
+Router-based plugins are built with a builder and mounted on the server; run their `startup()` / `shutdown()` from the app lifespan:
 
 ```python
 from qodalis_cli_users import CliUsersBuilder
 
-users_plugin = (
-    CliUsersBuilder()
-    .set_default_admin_password("admin")
-    .build(broadcast_fn=result.event_socket_manager.broadcast_message)
-)
+users_plugin = CliUsersBuilder().build()
 result.mount_plugin(users_plugin)  # protects every route and socket of the server
-# In the app lifespan: await users_plugin.startup() / await users_plugin.shutdown()
+# app lifespan: await users_plugin.startup() ... await users_plugin.shutdown()
 ```
 
-Once mounted, every CLI server route and WebSocket requires a users session (login, version discovery and health stay public); WebSockets authenticate with single-use tickets from `POST /api/v1/qcli/sessions/ws-ticket`.
-
-It also issues long-lived, revocable **API tokens** (`qcli_pat_…`) for MCP clients, CI and scripts (`/api/v1/qcli/tokens`).
-
-See [`plugins/users/README.md`](plugins/users/README.md) for options, endpoints, API tokens, custom storage and external auth adapters.
-
-## Built-in Processors
-
-These processors ship with the library and are included in the standalone server:
-
-| Command | Description |
-|---------|-------------|
-| `echo` | Echoes input text |
-| `status` | Server status (uptime, OS info) |
-| `system` | Detailed system information (hostname, CPU, memory) |
-| `http` | HTTP request operations |
-| `hash` | Hash computation (MD5, SHA1, SHA256, SHA512) |
-| `base64` | Base64 encode/decode (sub-commands) |
+The users plugin README shows the full lifespan wiring, server protection, permissions and [API tokens](plugins/users/README.md#api-tokens).
 
 ## Docker
 
@@ -1074,80 +729,37 @@ These processors ship with the library and are included in the standalone server
 docker run -p 8048:8048 ghcr.io/qodalis-solutions/cli-server-python
 ```
 
-## Demo
+The image runs the demo server (all plugins, users plugin with `root` / `admin`). To build it from source: `docker compose up --build` (or `./docker-run.sh`).
+
+## Development
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e packages/abstractions/ -e plugins/filesystem/ -e plugins/filesystem-json/ \
+    -e plugins/filesystem-sqlite/ -e plugins/filesystem-s3/ -e plugins/weather/ \
+    -e plugins/jobs/ -e plugins/users/ -e plugins/admin/
+pip install -e ".[test]"
+pytest                                   # the suite CI runs (tests/)
+```
+
+Run the demo server (port 8048, `root` / `admin`):
 
 ```bash
 cd demo
 pip install -r requirements.txt
 python main.py
-# Server starts on http://localhost:8048
 ```
 
-## Testing
+| Path | Contents |
+|---|---|
+| `src/qodalis_cli/` | Server: `create_cli_server`, controllers, services, MCP, shell security, built-in processors |
+| `packages/abstractions/` | `qodalis-cli-server-abstractions`, zero-dependency base types |
+| `plugins/` | Plugin packages |
+| `demo/` | Demo server with sample processors and every plugin |
+| `tests/` | pytest suite |
 
-```bash
-pip install -e ".[test]"
-pytest              # Run test suite
-pytest -v           # Verbose output
-pytest --tb=short   # Short tracebacks
-```
-
-## Project Structure
-
-```
-packages/
-  abstractions/                       # qodalis-cli-server-abstractions (zero-dep)
-    src/qodalis_cli_server_abstractions/
-      cli_command_processor.py        # ICliCommandProcessor ABC & base class
-      cli_module.py                   # ICliModule ABC & base class
-      cli_process_command.py          # Command input dataclass
-      cli_command_parameter_descriptor.py  # Parameter declaration
-      cli_command_author.py           # Author metadata
-plugins/
-  filesystem/                         # Core file storage abstraction (IFileStorageProvider, InMemory, OS)
-  filesystem-json/                    # JSON file persistence provider
-  filesystem-sqlite/                  # SQLite persistence provider (stdlib sqlite3)
-  filesystem-s3/                      # Amazon S3 storage provider (boto3)
-  data-explorer/                      # Base data exploration framework
-  data-explorer-sql/                  # SQLite data explorer provider
-  data-explorer-mongo/                # MongoDB data explorer provider
-  data-explorer-postgres/             # PostgreSQL data explorer provider
-  data-explorer-mysql/                # MySQL data explorer provider
-  data-explorer-mssql/                # MS SQL Server data explorer provider
-  data-explorer-redis/                # Redis data explorer provider
-  data-explorer-elasticsearch/        # Elasticsearch data explorer provider
-  users/                              # Users plugin (auth, sessions, groups, audit)
-  weather/                            # Weather module (example plugin)
-  admin/                              # Admin dashboard and monitoring
-  jobs/                               # Job scheduling and management
-  aws/                                # AWS cloud resource management
-src/qodalis_cli/
-  abstractions/                       # Re-exports from qodalis_cli_server_abstractions
-  models/
-    cli_server_response.py            # Response wrapper (exitCode + outputs)
-    cli_server_output.py              # Output types (text, table, list, json, key-value)
-    cli_server_command_descriptor.py  # Command metadata for /commands endpoint
-  services/
-    cli_command_registry.py           # Processor registry and lookup
-    cli_command_executor_service.py   # Command execution pipeline
-    cli_response_builder.py           # Structured output builder
-    cli_event_socket_manager.py       # WebSocket event broadcasting
-    cli_log_socket_manager.py         # WebSocket log streaming
-    cli_shell_session_manager.py      # Interactive PTY shell sessions (access, limits, env)
-  controllers/
-    cli_controller.py                 # REST API (/api/v1/qcli)
-    cli_version_controller.py         # Version discovery (/api/qcli/versions)
-    filesystem_controller.py          # Filesystem API (/api/qcli/fs)
-  extensions/
-    cli_builder.py                    # Fluent registration API (add_processor, add_module)
-  processors/                         # Built-in processors
-  create_cli_server.py               # Factory function
-  server.py                          # Standalone CLI entry point
-  __init__.py                        # Package exports
-demo/                                # Demo app with sample processors
-tests/                               # Test suite (pytest)
-```
+Branches: work on `feature/*`, open pull requests into `develop`; pushes to `main` publish to PyPI and ghcr.io.
 
 ## License
 
-MIT
+[MIT](LICENSE)
