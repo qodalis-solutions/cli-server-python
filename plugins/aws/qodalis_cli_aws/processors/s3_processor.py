@@ -91,7 +91,7 @@ class _S3LsProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Lists buckets when no value is given, or objects at the specified S3 URI."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("s3", region=str(region) if region else None)
@@ -174,7 +174,7 @@ class _S3CpProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Copies an S3 object from the source URI to the destination URI."""
         source = get_positional_text(command)
         dest = command.args.get("dest")
@@ -236,7 +236,7 @@ class _S3RmProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Deletes the specified S3 object, or previews the action in dry-run mode."""
         value = get_positional_text(command)
         if not value:
@@ -287,7 +287,7 @@ class _S3MbProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Creates a new S3 bucket with the specified name."""
         bucket_name = get_positional_text(command)
         if not bucket_name:
@@ -332,7 +332,7 @@ class _S3RbProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Deletes the specified bucket, or previews the action in dry-run mode."""
         bucket_name = get_positional_text(command)
         if not bucket_name:
@@ -380,7 +380,7 @@ class _S3PresignProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Generates and returns a time-limited pre-signed URL for the S3 object."""
         value = get_positional_text(command)
         if not value:

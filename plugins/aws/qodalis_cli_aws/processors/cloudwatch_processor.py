@@ -48,7 +48,7 @@ class _CloudWatchAlarmsProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches and returns all CloudWatch metric alarms."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("cloudwatch", region=str(region) if region else None)
@@ -106,7 +106,7 @@ class _CloudWatchLogsProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Retrieves and formats recent log events from the specified log group."""
         log_group_name = get_positional_text(command)
         if not log_group_name:
@@ -179,7 +179,7 @@ class _CloudWatchMetricsProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Queries metrics for the specified CloudWatch namespace."""
         namespace = get_positional_text(command)
         if not namespace:

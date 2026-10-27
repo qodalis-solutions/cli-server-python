@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 
 from qodalis_cli_server_abstractions import ICliStreamCommandProcessor
 
@@ -21,6 +22,14 @@ def _url(command: CliProcessCommand) -> str | None:
     """The URL: the first positional argument, unquoted."""
     positionals = get_positionals(command)
     return positionals[0] if positionals else None
+
+
+def _scheme_error(url: str) -> str | None:
+    """An error message unless the URL is http(s): urlopen also reads file://, ftp:// and data: URLs."""
+    scheme = urllib.parse.urlsplit(url).scheme.lower()
+    if scheme in ("http", "https"):
+        return None
+    return f"Unsupported URL scheme '{scheme or '(none)'}': only http and https are allowed."
 
 
 class _HttpGetProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
@@ -139,6 +148,10 @@ async def _do_stream_request(
     emit,
     cancellation_event: asyncio.Event | None = None,
 ) -> int:
+    error = _scheme_error(url)
+    if error:
+        emit({"type": "text", "value": error, "style": "error"})
+        return 1
     try:
         if cancellation_event and cancellation_event.is_set():
             return 1
@@ -201,6 +214,9 @@ def _do_request(
     Returns:
         A formatted string containing the status, headers (if requested), and body.
     """
+    error = _scheme_error(url)
+    if error:
+        return error
     try:
         data = body.encode("utf-8") if body else None
         req = urllib.request.Request(url, data=data, method=method)

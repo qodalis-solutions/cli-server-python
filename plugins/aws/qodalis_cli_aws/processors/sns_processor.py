@@ -50,7 +50,7 @@ class _SnsTopicsProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches and returns all SNS topic ARNs."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("sns", region=str(region) if region else None)
@@ -98,7 +98,7 @@ class _SnsPublishProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Publishes the provided message to the specified SNS topic ARN."""
         topic_arn = get_positional_text(command)
         if not topic_arn:
@@ -143,7 +143,7 @@ class _SnsSubscriptionsProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches subscriptions for a specific topic or all subscriptions."""
         topic_arn = get_positional_text(command) or None
 

@@ -48,7 +48,7 @@ class _EcsClustersProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches cluster ARNs and describes each cluster's status."""
         region = command.args.get("region")
         client = self._credential_manager.get_client("ecs", region=str(region) if region else None)
@@ -108,7 +108,7 @@ class _EcsServicesProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches and describes all services in the specified ECS cluster."""
         cluster = get_positional_text(command)
         if not cluster:
@@ -173,7 +173,7 @@ class _EcsTasksProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return ""
 
-    async def handle_structured_async(self, command: CliProcessCommand) -> Any:
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> Any:
         """Fetches and describes all tasks running in the specified ECS cluster."""
         cluster = get_positional_text(command)
         if not cluster:
