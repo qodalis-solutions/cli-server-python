@@ -55,7 +55,7 @@ result.app.router.lifespan_context = lifespan
 | `set_max_login_attempts(n)` | `5` | Consecutive failures before lockout |
 | `set_lockout(ms)` | `300000` (5 min) | Lockout duration |
 | `set_cleanup_interval(ms)` | `300000` (5 min) | Background expired-session sweep |
-| `set_auth_adapter(adapter)` | `None` | Delegate authentication to the host app |
+| `set_auth_adapter(adapter)` | `None` | Delegate authentication to the host app (a sync or async callable; see below) |
 | `build(broadcast_fn=None)` | | Returns a `CliUsersPlugin` (`prefix`, `router`, `startup()`, `shutdown()`, `require_auth`, `require_permission(p)`, `protect(app)`, `auth_service`, stores) |
 
 When mounted with `result.mount_plugin(...)`, user-scoped events (`session-kicked`) go only to event sockets authenticated as that user. `broadcast_fn` (JSON strings, sync or async) is only used when the plugin is not mounted on a CLI server.
@@ -197,6 +197,18 @@ users_plugin = CliUsersBuilder().set_user_store(PostgresUserStore(pool)).build()
 ## External auth adapter
 
 If the host application already authenticates requests, call `set_auth_adapter(adapter)`. The adapter (sync or async) receives the request and returns an `ExternalAuthResult` (user + admin flag) or `None`. Login, logout, password change and `verify-password` then answer `501`; no `root` user is seeded (the built-in groups still are), and adapter sessions are not stored or listed.
+
+The adapter may return the result directly or an awaitable of it, so it can load the user, their roles or their disabled state from a database. A plain function, an `async def` function and an object with a sync or async `__call__` are all accepted; the plugin awaits the result for every request, ticket issuance and socket re-check:
+
+```python
+async def host_auth(request):
+    current = await user_access.current(request)   # e.g. a database lookup
+    if current is None:
+        return None
+    return ExternalAuthResult(user=to_cli_user(current), is_admin=current.is_admin)
+
+users_plugin = CliUsersBuilder().set_auth_adapter(host_auth).build()
+```
 
 An open remote shell of an adapter identity has no stored session to re-check, so at every shell re-check (right after the shell opens, on every change event and every `session_check_interval`) the adapter is **called again with the shell's original WebSocket upgrade request** — only its headers, cookies and query string, without any state set by middleware. The adapter must therefore be able to authenticate that request on its own (e.g. from a session cookie the browser sends with the upgrade); a header the browser cannot attach to a WebSocket is not enough. `None` or an exception closes the shell with 4401 `session ended` (audit reason `session ended`); a different user, or one without `shell:execute`, closes it too (audit reason `permission removed` for the latter).
 

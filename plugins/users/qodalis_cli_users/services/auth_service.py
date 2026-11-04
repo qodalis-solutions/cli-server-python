@@ -646,11 +646,17 @@ class AuthService:
         user = await self.user_store.get_user(record.user_id)
         return record.to_view(user.name if user else "")
 
-    async def authenticate_external(self, request: Any) -> AuthContext:
+    async def run_auth_adapter(self, request: Any) -> ExternalAuthResult | None:
+        """Call the external auth adapter on ``request``, awaiting its result
+        when the adapter is async (or returns an awaitable)."""
         assert self.auth_adapter is not None
         result = self.auth_adapter(request)
         if inspect.isawaitable(result):
             result = await result
+        return result
+
+    async def authenticate_external(self, request: Any) -> AuthContext:
+        result = await self.run_auth_adapter(request)
         if not isinstance(result, ExternalAuthResult) or result.user is None:
             raise unauthorized()
         groups = list(result.user.groups or [])

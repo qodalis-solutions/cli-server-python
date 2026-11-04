@@ -271,7 +271,14 @@ class CliUsersBuilder:
         return self
 
     def set_auth_adapter(self, adapter: ExternalAuthAdapter | None) -> CliUsersBuilder:
-        """Delegate authentication to the host app (see README)."""
+        """Delegate authentication to the host app (see README).
+
+        ``adapter(request)`` returns an :class:`ExternalAuthResult` or
+        ``None``, either directly or as an awaitable: plain functions,
+        ``async def`` functions and objects with a sync or async ``__call__``
+        are all accepted.  ``None`` turns external auth off again."""
+        if adapter is not None and not callable(adapter):
+            raise TypeError("auth adapter must be callable (sync or async)")
         self._auth_adapter = adapter
         return self
 
