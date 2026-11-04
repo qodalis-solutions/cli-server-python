@@ -171,6 +171,37 @@ class TimeProcessor(CliCommandProcessor):
 
 Parameter types: `"string"`, `"number"`, `"boolean"`.
 
+### Paging
+
+List commands that can return many rows page them: declare `CliPaging.parameters()` (`--skip`, default 0, and `--take`, default 50, at most 500), read the request with `CliPaging.from_command(command)` and write the rows with `write_paged_table`. The table carries a `page` (`{"skip": 50, "take": 50, "total": 120, "hasMore": true}`), which the terminal shows under it with the command for the next rows.
+
+```python
+from qodalis_cli import (
+    CliCommandProcessor,
+    CliPaging,
+    CliProcessCommand,
+    CliResponseBuilder,
+    CliServerResponse,
+)
+
+
+class OrdersProcessor(CliCommandProcessor):
+    # command, description ...
+
+    @property
+    def parameters(self):
+        return [*CliPaging.parameters()]
+
+    async def handle_structured_async(self, command: CliProcessCommand, cancellation_event=None) -> CliServerResponse:
+        page = CliPaging.from_command(command)
+        total, rows = await orders.query(offset=page.skip, limit=page.take)
+        builder = CliResponseBuilder()
+        builder.write_paged_table(["Id", "Customer", "Total"], rows, page, total=total)
+        return builder.build()
+```
+
+Without a `total`, pass `has_more` (query `take + 1` rows to find out). Tables from commands that do not page are cut at `CliServerOptions.max_table_rows` (default 200, `0` = no limit) and marked `truncated`, for `/execute`, `/execute/stream` and MCP tool calls; paged tables are never cut.
+
 ### Sub-commands
 
 Return child processors from `processors` to build hierarchies such as `math add --a 5 --b 3`; `chain_commands` tells the handler which one ran. See [`demo/processors`](demo/processors) for complete examples (`math`, `time`, `hello`, `status`, `echo`).
@@ -233,6 +264,7 @@ Used by the standalone server; import them from `qodalis_cli` to add them to you
 | `enable_shell` | `False` | Enable the PTY shell WebSocket, see [Remote Shell Security](#remote-shell-security) |
 | `shell` | `CliShellOptions()` | Shell access, limits and environment |
 | `mcp` | `None` | `True`, a `CliMcpOptions` or a `dict` enables the [MCP endpoint](#mcp-endpoint) |
+| `max_table_rows` | `200` | Rows an unpaged table may return; longer ones are cut and marked `truncated` (`0` = no limit), see [Paging](#paging) |
 
 CORS never combines `*` with credentials. With `allowed_origins` set, a WebSocket upgrade from another origin is closed with 4403 (a missing `Origin`, as sent by non-browser clients, is accepted; protected sockets still need a ticket). Same-origin requests, such as the bundled admin dashboard, always pass Origin and CSRF checks (`X-Forwarded-Proto`/`X-Forwarded-Host` are honoured only with `trust_proxy`).
 
@@ -316,7 +348,7 @@ Tools are collected from **tool providers** on every request, so registrations, 
 
 Read-only tools carry the MCP annotation `readOnlyHint`, `fs_delete` / `jobs_stop` / `jobs_cancel` carry `destructiveHint`. Feature tools reuse the same services as the HTTP routes (file storage provider and its path whitelist, data-explorer executor and its limits, job scheduler); their errors come back as `isError: true` results. The interactive shell is never a tool.
 
-**Command tools.** Every root processor and its sub-processors are walked; a node becomes a tool when it has no sub-processors, declares `parameters`, or takes a value (`value_required` is `True` — required — or `False` — optional). The name is the command path joined with `_` (`weather`, `weather_current`), lower-cased, characters outside `[a-z0-9_-]` replaced by `-`, at most 64 characters. The input schema has one property per parameter (`string`/`number`/`boolean`, `array` → array of strings, anything else → string; with `description`, `default` and `required`) plus `value` (the positional input) when the command takes a value, and `additionalProperties: false`. A call is validated against the schema, then runs through the same executor as `/execute`; the result is `{ content: [{ type: "text", text }], isError }` with the outputs rendered as text (tables as `a | b` rows, lists one item per line, JSON pretty-printed, key-value as `key: value`) and `isError` = `exitCode != 0`. A single JSON-object output is also returned as `structuredContent`.
+**Command tools.** Every root processor and its sub-processors are walked; a node becomes a tool when it has no sub-processors, declares `parameters`, or takes a value (`value_required` is `True` — required — or `False` — optional). The name is the command path joined with `_` (`weather`, `weather_current`), lower-cased, characters outside `[a-z0-9_-]` replaced by `-`, at most 64 characters. The input schema has one property per parameter (`string`/`number`/`boolean`, `array` → array of strings, anything else → string; with `description`, `default` and `required`) plus `value` (the positional input) when the command takes a value, and `additionalProperties: false`. A call is validated against the schema, then runs through the same executor as `/execute`; the result is `{ content: [{ type: "text", text }], isError }` with the outputs rendered as text (tables as `a | b` rows, followed by a line such as `(rows 51-100 of 120; next: skip=100)` when paged or cut, lists one item per line, JSON pretty-printed, key-value as `key: value`) and `isError` = `exitCode != 0`. A single JSON-object output is also returned as `structuredContent`.
 
 Name collisions: built-in feature tools (server, filesystem, data explorer, jobs) win, then plugin/host providers in registration order, then command tools (a warning is logged for each skipped tool).
 
