@@ -143,6 +143,22 @@ jobs:
           verbose: true
           attestations: false
 
+      - name: Build aws and data explorer plugins
+        run: |
+          for plugin in aws data-explorer data-explorer-sql data-explorer-postgres data-explorer-mysql \
+                        data-explorer-mssql data-explorer-mongo data-explorer-redis data-explorer-elasticsearch; do
+            python -m build plugins/$plugin/ --outdir dist-plugins/
+          done
+
+      - name: Publish aws and data explorer plugins to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+          packages-dir: dist-plugins/
+          skip-existing: true
+          verbose: true
+          attestations: false
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
