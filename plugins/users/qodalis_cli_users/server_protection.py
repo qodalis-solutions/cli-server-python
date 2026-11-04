@@ -34,6 +34,8 @@ PUBLIC_PATHS: list[tuple[re.Pattern[str], frozenset[str] | None]] = [
     (re.compile(r"^/api/(qcli|cli|v1/qcli|v1/cli)/versions?/?$"), frozenset({"GET", "HEAD"})),
     (re.compile(r"^/api/(qcli|cli|v1/qcli|v1/cli)/capabilities/?$"), frozenset({"GET", "HEAD"})),
     (re.compile(r"^/(api/)?(qcli/)?health(z|/.*)?$"), None),
+    # Admin dashboard: which sign-in to show (password form or the host's).
+    (re.compile(r"^/api/v1/qcli/auth/mode/?$"), frozenset({"GET", "HEAD"})),
 ]
 
 #: Routes of the users plugin itself — they authenticate in their own

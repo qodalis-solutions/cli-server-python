@@ -5,8 +5,10 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 logger = logging.getLogger("qcli-admin")
 
@@ -23,6 +25,11 @@ class AdminConfig:
     password: str = ""
     jwt_secret: str = ""
     warn_default: bool = True
+    #: Where the host application signs users in, shown by the dashboard in
+    #: external sign-in mode and returned by ``GET /api/v1/qcli/auth/mode``.
+    #: An absolute ``http(s)`` URL or a root-relative path (``/sign-in``).
+    #: ``None``: the dashboard tells users to sign in through the host app.
+    sign_in_url: str | None = None
 
     # Mutable runtime settings
     _mutable_settings: dict[str, Any] = field(default_factory=dict)
@@ -43,6 +50,15 @@ class AdminConfig:
             logger.warning(
                 "Using default admin credentials. Set QCLI_ADMIN_USERNAME"
                 " and QCLI_ADMIN_PASSWORD environment variables."
+            )
+
+    def validate(self) -> None:
+        """Validate the options set by the host; raises :class:`ValueError`
+        on an invalid :attr:`sign_in_url`."""
+        if self.sign_in_url is not None and not is_valid_sign_in_url(self.sign_in_url):
+            raise ValueError(
+                "AdminConfig.sign_in_url must be an absolute http(s) URL or a root-relative path, "
+                f"got {self.sign_in_url!r}."
             )
 
     def validate_credentials(self, username: str, password: str) -> bool:
@@ -108,6 +124,25 @@ class AdminConfig:
     def get_settings(self) -> dict[str, Any]:
         """Return a copy of the current mutable runtime settings."""
         return dict(self._mutable_settings)
+
+
+def is_valid_sign_in_url(value: str | None) -> bool:
+    """True for an absolute ``http``/``https`` URL with a host, or a
+    root-relative path (``/sign-in``; not protocol-relative ``//host`` or
+    ``/\\host``).  Rejects other schemes such as ``javascript:``, and control
+    characters or whitespace."""
+    if not value or not isinstance(value, str):
+        return False
+    if any(c.isspace() or unicodedata.category(c) == "Cc" for c in value):
+        return False
+    if value.startswith("/"):
+        return len(value) == 1 or value[1] not in "/\\"
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018  (raises ValueError on an invalid port)
+    except ValueError:
+        return False
+    return parts.scheme in ("http", "https") and bool(parts.hostname)
 
 
 def _infer_type(val: Any) -> str:
