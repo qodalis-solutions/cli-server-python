@@ -68,6 +68,12 @@ logger = logging.getLogger(__name__)
 
 PREFIX = "/api/v1/qcli"
 DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000
+#: Re-check interval (seconds) of events/logs sockets opened through the
+#: external auth adapter: the server's ``shell.session_check_interval``
+#: (default 30), at most 60, as for shells.
+DEFAULT_SESSION_CHECK_INTERVAL = 30.0
+MAX_SESSION_CHECK_INTERVAL = 60.0
+LOGS_READ = "logs:read"
 
 
 @dataclass
@@ -102,6 +108,10 @@ class CliUsersPlugin:
     _base_paths: list = field(default_factory=list, repr=False)
     _protected_apps: list = field(default_factory=list, repr=False)
     _cleanup_task: Optional[asyncio.Task] = field(default=None, repr=False)
+    #: ``(socket manager, permission)`` of the server's events/logs sockets.
+    _session_sockets: list = field(default_factory=list, repr=False)
+    _session_check_interval: Optional[float] = field(default=None, repr=False)
+    _external_check_task: Optional[asyncio.Task] = field(default=None, repr=False)
     _seeded: bool = field(default=False, repr=False)
     _seed_lock: Optional[asyncio.Lock] = field(default=None, repr=False)
 
@@ -168,41 +178,98 @@ class CliUsersPlugin:
             self.protect(server.app)
         # Events/logs sockets are bound to their session: closed (4401
         # "session ended") on logout, revoke, disable/delete and expiry.
-        for name in ("event_socket_manager", "log_socket_manager"):
+        # Those of adapter identities are re-checked through the adapter
+        # (see startup()).
+        for name, permission in (("event_socket_manager", None), ("log_socket_manager", LOGS_READ)):
             sockets = getattr(server, name, None)
             if sockets is not None and hasattr(sockets, "set_session_check"):
                 sockets.set_session_check(self.auth_service.is_context_active)
                 self.auth_service.add_change_listener(sockets.request_recheck)
+                if hasattr(sockets, "close_ended_sessions") and not any(
+                    s is sockets for s, _ in self._session_sockets
+                ):
+                    self._session_sockets.append((sockets, permission))
+        shell_options = getattr(options, "shell", None)
+        interval = getattr(shell_options, "session_check_interval", None)
+        if isinstance(interval, (int, float)):
+            self._session_check_interval = float(interval)
         # Remote shell: users mode (ticket + shell:execute, session-bound).
         set_shell_provider = getattr(server, "set_shell_access_provider", None)
         if callable(set_shell_provider):
             set_shell_provider(UsersShellAccess(self.auth_service))
 
+    @property
+    def external_socket_check_interval(self) -> float:
+        """Seconds between re-checks of events/logs sockets opened through the
+        external auth adapter: the server's ``shell.session_check_interval``
+        (default 30), capped at 60 like the shell re-check."""
+        value = self._session_check_interval
+        if not value or value <= 0:
+            return DEFAULT_SESSION_CHECK_INTERVAL
+        return min(value, MAX_SESSION_CHECK_INTERVAL)
+
     async def startup(self) -> None:
-        """Seed and start the background session sweep on the running loop."""
+        """Seed and start the background tasks on the running loop: the
+        session sweep and, with an external auth adapter, the re-check of
+        the events/logs sockets opened through it."""
         await self.ensure_seeded()
+        loop = asyncio.get_running_loop()
         if self._cleanup_task is None or self._cleanup_task.done():
-            self._cleanup_task = asyncio.get_running_loop().create_task(self._cleanup_loop())
+            self._cleanup_task = loop.create_task(self._cleanup_loop())
+        if self.auth_service.external_auth and (
+            self._external_check_task is None or self._external_check_task.done()
+        ):
+            self._external_check_task = loop.create_task(self._external_socket_loop())
 
     async def shutdown(self) -> None:
-        """Stop the background session sweep."""
-        task, self._cleanup_task = self._cleanup_task, None
-        if task is None:
-            return
-        task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, RuntimeError):
-            pass
+        """Stop the background tasks."""
+        tasks = [self._cleanup_task, self._external_check_task]
+        self._cleanup_task = self._external_check_task = None
+        for task in tasks:
+            if task is None:
+                continue
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, RuntimeError):
+                pass
 
     def dispose(self) -> None:
         """Synchronous best-effort stop (prefer :meth:`shutdown`)."""
-        task, self._cleanup_task = self._cleanup_task, None
-        if task is not None:
+        tasks = [self._cleanup_task, self._external_check_task]
+        self._cleanup_task = self._external_check_task = None
+        for task in tasks:
+            if task is not None:
+                try:
+                    task.cancel()
+                except RuntimeError:
+                    pass  # loop already closed
+
+    async def recheck_external_sockets(self) -> None:
+        """Run the external auth adapter again for every events/logs socket
+        opened through it (on the snapshot of the request it accepted) and
+        close with 4401 ``session ended`` those whose user is gone, another
+        user, disabled, or no longer holds the socket's permission
+        (``logs:read`` for logs), or when the adapter raises.  Sockets with a
+        stored session or API token are left alone."""
+        checks = []
+        for sockets, permission in self._session_sockets:
+            async def check(ctx: Any, permission: str | None = permission) -> bool:
+                return await self.auth_service.is_external_socket_active(ctx, permission)
+
+            checks.append(sockets.close_ended_sessions(check))
+        if checks:
+            await asyncio.gather(*checks)
+
+    async def _external_socket_loop(self) -> None:
+        # One check at a time: the next sleep starts after the previous check
+        # finished, so a slow adapter never stacks checks.
+        while True:
+            await asyncio.sleep(self.external_socket_check_interval)
             try:
-                task.cancel()
-            except RuntimeError:
-                pass  # loop already closed
+                await self.recheck_external_sockets()
+            except Exception:
+                logger.exception("External-auth socket check error")
 
     async def _cleanup_loop(self) -> None:
         interval = max(self.cleanup_interval_ms, 1) / 1000

@@ -26,7 +26,7 @@ original_lifespan = result.app.router.lifespan_context
 
 @asynccontextmanager
 async def lifespan(app):
-    await users_plugin.startup()   # seed built-ins + start the session sweep
+    await users_plugin.startup()   # seed built-ins + start the session sweep (and adapter socket re-checks)
     try:
         async with original_lifespan(app) as state:
             yield state
@@ -96,7 +96,7 @@ When mounted on a CLI server, every route and socket requires a users session ex
 
 WebSockets authenticate with a single-use ticket: `POST /sessions/ws-ticket` → `201 { ticket, expiresIn: 30 }`, then connect with `?ticket=<ticket>`. Missing/invalid tickets close with 4401, missing permissions with 4403. Bearer tokens are not accepted in query strings.
 
-Events and logs sockets stay bound to the session behind their ticket: on logout, revoke (kick), the user being disabled or deleted, or session expiry (detected on every session/user/group change and by the background sweep) they are closed with 4401 `session ended`. Revocations (kick, disable, delete, password reset) first send `session-kicked` to the user's event sockets. Sockets of external-adapter identities have no stored session and are not closed this way.
+Events and logs sockets stay bound to the session behind their ticket: on logout, revoke (kick), the user being disabled or deleted, or session expiry (detected on every session/user/group change and by the background sweep) they are closed with 4401 `session ended`. Revocations (kick, disable, delete, password reset) first send `session-kicked` to the user's event sockets. Sockets opened through an external auth adapter are re-checked through the adapter every `session_check_interval` (see [External auth adapter](#external-auth-adapter)).
 
 Remote shell: when mounted, the plugin owns shell access (`shellAuth: "users"`). A shell is bound to the session that opened it and is closed with 4401 `session ended` after logout, expiry, revoke, user disable/delete or loss of `shell:execute` (re-checked immediately on every change and every 30 s by default, at most 60 s). Opens and closes are audited as `shell_opened` / `shell_closed` (`metadata: { mode, sessionId, durationMs, exitCode, reason }`; `reason` is `permission removed` when `shell:execute` was lost; never the command). See the main README, *Remote Shell Security*.
 
@@ -210,7 +210,11 @@ async def host_auth(request):
 users_plugin = CliUsersBuilder().set_auth_adapter(host_auth).build()
 ```
 
-An open remote shell of an adapter identity has no stored session to re-check, so at every shell re-check (right after the shell opens, on every change event and every `session_check_interval`) the adapter is **called again with the shell's original WebSocket upgrade request** — only its headers, cookies and query string, without any state set by middleware. The adapter must therefore be able to authenticate that request on its own (e.g. from a session cookie the browser sends with the upgrade); a header the browser cannot attach to a WebSocket is not enough. `None` or an exception closes the shell with 4401 `session ended` (audit reason `session ended`); a different user, or one without `shell:execute`, closes it too (audit reason `permission removed` for the latter).
+**Shells opened by adapter identities** have no stored session to re-check, so at every shell re-check (right after the shell opens, on every change event and every `session_check_interval`) the adapter is **run again on a snapshot of the request it accepted**: the `POST /sessions/ws-ticket` request the shell's ticket came from (request line, headers and cookies, client address and app; no body and no state set by middleware). The adapter must therefore be able to authenticate that request again on its own. `None`, an exception, a different user or a disabled user closes the shell with 4401 `session ended` (audit reason `session ended`); a user without `shell:execute` closes it too (audit reason `permission removed`).
+
+**Events and logs sockets opened by adapter identities** are re-checked the same way: every `session_check_interval` (the server's `CliShellOptions.session_check_interval`, default 30 s, capped at 60 s; it applies whether or not the shell is enabled) the adapter runs again on the snapshot of the ticket request. `None`, a different user, a disabled user, an exception, or a user who no longer holds the socket's permission (`logs:read` for the logs socket; the events socket only needs authentication) closes the socket with 4401 `session ended`. The checks run from `startup()` (call it from the app's lifespan, see [Quick Start](#quick-start)), one at a time: a slow adapter delays the next check rather than stacking them. `users_plugin.recheck_external_sockets()` runs one on demand.
+
+A user the adapter returns with `disabled=True` is refused (401 `account disabled`) on requests, ticket issuance and re-checks.
 
 ## Client
 
