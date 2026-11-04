@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Union
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -326,5 +326,14 @@ class ExternalAuthResult:
     is_admin: bool = False
 
 
-# (Request) -> ExternalAuthResult | None  (may also be async)
-ExternalAuthAdapter = Callable[["Request"], Optional[ExternalAuthResult]]
+ExternalAuthAdapter = Callable[
+    ["Request"],
+    Union[Optional[ExternalAuthResult], Awaitable[Optional[ExternalAuthResult]]],
+]
+"""``(request) -> ExternalAuthResult | None``, or an awaitable of it.
+
+Any callable works: a function, an ``async def`` function (to load the user,
+their roles or their disabled state from a database), or an object with a
+sync or async ``__call__``.  The plugin awaits the result whenever it is
+awaitable: for requests, ticket issuance and every re-check of open sockets.
+"""
