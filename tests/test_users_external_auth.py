@@ -10,11 +10,19 @@ import time
 from typing import Any, Callable
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from qodalis_cli import CliServerOptions, CliShellOptions, create_cli_server
-from qodalis_cli_users import CliUsersBuilder, ExternalAuthResult, User
+from qodalis_cli_users import (
+    CliUsersBuilder,
+    ExternalAuthResult,
+    Group,
+    InMemoryGroupStore,
+    InMemoryUserStore,
+    User,
+)
 
 BASE = "/api/v1/qcli"
 ORIGIN = "http://app.test"
@@ -317,3 +325,268 @@ class TestSocketRecheck:
         assert interval(5) == 5
         assert interval(600) == 60
         assert interval(0) == 30
+
+
+# =========================================================================
+# ExternalAuthResult.permissions and read-only stores (mirrors
+# cli-server-dotnet#27)
+# =========================================================================
+
+USERS_MESSAGE = "Users are managed by the host application"
+GROUPS_MESSAGE = "Groups are managed by the host application"
+
+
+def _csv(value: str | None) -> list[str] | None:
+    return None if value is None else [p for p in value.split(",") if p]
+
+
+def _header_adapter(request):
+    name = request.headers.get("x-test-user")
+    if not name:
+        return None
+    return ExternalAuthResult(
+        user=User(id=f"ext-{name}", name=name, email=f"{name}@external.com",
+                  groups=_csv(request.headers.get("x-test-groups")) or []),
+        is_admin=request.headers.get("x-test-admin") == "true",
+        permissions=_csv(request.headers.get("x-test-permissions")),
+    )
+
+
+def _send(client: TestClient, method: str, path: str, user: str = "alice", admin: bool = True,
+          groups: str | None = None, permissions: str | None = None, body: Any = None):
+    headers = {"x-test-user": user}
+    if admin:
+        headers["x-test-admin"] = "true"
+    if groups is not None:
+        headers["x-test-groups"] = groups
+    if permissions is not None:
+        headers["x-test-permissions"] = permissions
+    if method != "GET":
+        headers["origin"] = "http://testserver"
+    url = path if path.startswith("/") else f"{BASE}/{path}"
+    return client.request(method, url, headers=headers, json=body)
+
+
+class RecordingUserStore(InMemoryUserStore):
+    """Holds alice (admin) and bob; counts and fails every write."""
+
+    def __init__(self, seeded: bool = True) -> None:
+        super().__init__()
+        self.writes = 0
+        if seeded:
+            for user in (
+                User(id="ext-alice", name="alice", email="alice@external.com", groups=["admin"]),
+                User(id="ext-bob", name="bob", email="bob@external.com", groups=[]),
+            ):
+                self._users[user.id] = user
+
+    async def create_user(self, *args: Any, **kwargs: Any):
+        self.writes += 1
+        raise RuntimeError("write")
+
+    async def update_user(self, *args: Any, **kwargs: Any):
+        self.writes += 1
+        raise RuntimeError("write")
+
+    async def delete_user(self, *args: Any, **kwargs: Any):
+        self.writes += 1
+        raise RuntimeError("write")
+
+
+class RecordingGroupStore(InMemoryGroupStore):
+    """Holds admin (``*``), users and ops (``jobs:read``); counts and fails
+    every write."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.writes = 0
+        for group in (
+            Group(id="admin", name="admin", permissions=["*"], built_in=True),
+            Group(id="users", name="users", permissions=[], built_in=True),
+            Group(id="ops", name="ops", permissions=["jobs:read"]),
+        ):
+            self._groups[group.name] = group
+
+    async def create_group(self, *args: Any, **kwargs: Any):
+        self.writes += 1
+        raise RuntimeError("write")
+
+    async def update_group(self, *args: Any, **kwargs: Any):
+        self.writes += 1
+        raise RuntimeError("write")
+
+    async def delete_group(self, *args: Any, **kwargs: Any):
+        self.writes += 1
+        raise RuntimeError("write")
+
+
+def _app(builder: CliUsersBuilder):
+    plugin = builder.build()
+    app = FastAPI()
+    app.include_router(plugin.router, prefix=plugin.prefix)
+    return TestClient(app), plugin
+
+
+def _read_only(users: bool, groups: bool):
+    user_store, group_store = RecordingUserStore(), RecordingGroupStore()
+    client, plugin = _app(
+        CliUsersBuilder().set_auth_adapter(_header_adapter)
+        .set_user_store(user_store).set_group_store(group_store)
+        .set_read_only_users(users).set_read_only_groups(groups),
+    )
+    return client, user_store, group_store
+
+
+class TestAdapterPermissions:
+    def test_permissions_are_added_to_the_groups_permissions(self):
+        client, _ = _app(CliUsersBuilder().set_auth_adapter(_header_adapter))
+        # 'users' grants commands:execute; the result adds logs:read and
+        # jobs:read; 'nope' does not exist.
+        body = _send(client, "GET", "sessions/current", "bob", admin=False, groups="users,nope",
+                     permissions="logs:read,jobs:read, ,LOGS:READ").json()
+        assert body["permissions"] == ["commands:execute", "logs:read", "jobs:read"]
+        assert body["user"]["groups"] == ["users", "nope"]
+
+    def test_permissions_alone_authorize_routes(self):
+        client, _ = _app(CliUsersBuilder().set_auth_adapter(_header_adapter))
+        assert _send(client, "GET", "audit", "carol", admin=False).status_code == 403
+        assert _send(client, "GET", "audit", "carol", admin=False, permissions="audit:read").status_code == 200
+
+    def test_permissions_with_is_admin_keep_everything(self):
+        client, _ = _app(CliUsersBuilder().set_auth_adapter(_header_adapter))
+        body = _send(client, "GET", "sessions/current", "dana", permissions="logs:read").json()
+        assert body["permissions"] == ["*", "logs:read"]
+
+    def test_permissions_open_the_logs_socket(self, make_server):
+        client, _ = make_server(_header_adapter)
+        denied = {"x-test-user": "erin", "origin": ORIGIN}
+        with client.websocket_connect(f"{LOGS}?ticket={_ticket(client, denied)}", headers=denied) as ws:
+            with pytest.raises(WebSocketDisconnect) as exc:
+                ws.receive_text()
+        assert exc.value.code == 4403
+        allowed = {**denied, "x-test-permissions": "logs:read"}
+        with client.websocket_connect(f"{LOGS}?ticket={_ticket(client, allowed)}", headers=allowed) as ws:
+            _connected(ws)
+
+
+USER_WRITES = [
+    ("POST", "users", {"name": "new-user", "email": "new@test.com"}),
+    ("PUT", "users/bob", {"email": "bob2@test.com"}),
+    ("PUT", "users/alice", {"data": {"theme": "dark"}}),  # self update
+    ("DELETE", "users/bob", None),
+    ("POST", "groups/ops/members/bob", None),
+    ("DELETE", "groups/admin/members/alice", None),
+]
+
+GROUP_WRITES = [
+    ("POST", "groups", {"name": "new-group", "permissions": ["jobs:read"]}),
+    ("PUT", "groups/ops", {"description": "x"}),
+    ("DELETE", "groups/ops", None),
+]
+
+
+class TestReadOnlyStores:
+    @pytest.mark.parametrize("method,path,body", USER_WRITES)
+    def test_read_only_users_writes_answer_501_without_touching_the_stores(self, method, path, body):
+        client, users, groups = _read_only(users=True, groups=False)
+        res = _send(client, method, path, body=body)
+        assert res.status_code == 501
+        assert res.json() == {"error": USERS_MESSAGE}
+        assert users.writes == 0 and groups.writes == 0
+
+    @pytest.mark.parametrize("method,path,body", USER_WRITES + GROUP_WRITES)
+    def test_read_only_answers_before_authentication(self, method, path, body):
+        client, users, groups = _read_only(users=True, groups=True)
+        res = client.request(method, f"{BASE}/{path}", json=body)
+        assert res.status_code == 501
+        assert res.json()["error"] in (USERS_MESSAGE, GROUPS_MESSAGE)
+
+    def test_read_only_users_password_changes_answer_501_without_external_auth(self):
+        client, plugin = _app(CliUsersBuilder().set_default_admin_password("rootpass1"))
+        token = client.post(BASE + "/sessions", json={"username": "root", "password": "rootpass1"}).json()["token"]
+        plugin.auth_service.options.read_only_users = True  # read on every request
+        h = {"Authorization": f"Bearer {token}"}
+        res = client.put(BASE + "/users/root/password", headers=h,
+                         json={"password": "new-password", "currentPassword": "rootpass1"})
+        assert (res.status_code, res.json()) == (501, {"error": USERS_MESSAGE})
+        res = client.post(BASE + "/users", headers=h, json={"name": "x", "email": "x@test.com"})
+        assert res.status_code == 501
+        # Nothing changed: the old password still signs in.
+        res = client.post(BASE + "/sessions", json={"username": "root", "password": "rootpass1"})
+        assert res.status_code == 201
+
+    def test_read_only_users_root_is_not_seeded(self):
+        store = RecordingUserStore(seeded=False)
+        client, _ = _app(CliUsersBuilder().set_user_store(store).set_read_only_users())
+        res = client.post(BASE + "/sessions", json={"username": "root", "password": "root"})
+        assert res.status_code == 401
+        assert store.writes == 0
+
+    def test_read_only_users_reads_still_work(self):
+        client, users, _ = _read_only(users=True, groups=False)
+        assert len(_send(client, "GET", "users").json()) == 2
+        assert _send(client, "GET", "users/bob").status_code == 200
+        assert _send(client, "GET", "groups/admin/members").status_code == 200
+        assert users.writes == 0
+
+    @pytest.mark.parametrize("method,path,body", GROUP_WRITES)
+    def test_read_only_groups_writes_answer_501_without_touching_the_stores(self, method, path, body):
+        client, users, groups = _read_only(users=False, groups=True)
+        res = _send(client, method, path, body=body)
+        assert res.status_code == 501
+        assert res.json() == {"error": GROUPS_MESSAGE}
+        assert users.writes == 0 and groups.writes == 0
+
+    def test_read_only_groups_are_not_seeded_and_reads_work(self):
+        store = RecordingGroupStore()
+        client, _ = _app(CliUsersBuilder().set_auth_adapter(_header_adapter)
+                         .set_group_store(store).set_read_only_groups())
+        assert len(_send(client, "GET", "groups").json()) == 3
+        assert store.writes == 0
+
+    def test_read_only_groups_with_writable_users_keep_user_writes_and_memberships(self):
+        store = RecordingGroupStore()
+        client, _ = _app(CliUsersBuilder().set_auth_adapter(_header_adapter)
+                         .set_group_store(store).set_read_only_groups())
+        res = _send(client, "POST", "users", body={"name": "new-user", "email": "new@test.com"})
+        assert res.status_code == 201, res.text
+        assert _send(client, "POST", "groups/ops/members/new-user").status_code == 204
+        assert store.writes == 0
+
+    def test_read_only_users_group_delete_keeps_memberships(self):
+        users = RecordingUserStore()
+        client, _ = _app(CliUsersBuilder().set_auth_adapter(_header_adapter)
+                         .set_user_store(users).set_read_only_users())
+        assert _send(client, "POST", "groups", body={"name": "temp", "permissions": []}).status_code == 201
+        users._users["ext-bob"].groups = ["temp"]
+        assert _send(client, "DELETE", "groups/temp").status_code == 204
+        assert users.writes == 0
+        assert users._users["ext-bob"].groups == ["temp"]
+
+    def test_writable_stores_are_unaffected(self):
+        client, _ = _app(CliUsersBuilder().set_auth_adapter(_header_adapter))
+        res = _send(client, "POST", "groups", body={"name": "auditors", "permissions": ["audit:read"]})
+        assert res.status_code == 201
+        res = _send(client, "POST", "users", body={"name": "new-user", "email": "new@test.com"})
+        assert res.status_code == 201
+
+    @pytest.mark.parametrize("users,groups", [(False, False), (True, False), (False, True), (True, True)])
+    def test_current_session_publishes_the_read_only_flags(self, users, groups):
+        client, _, _ = _read_only(users, groups)
+        body = _send(client, "GET", "sessions/current").json()
+        assert body["usersReadOnly"] is users
+        assert body["groupsReadOnly"] is groups
+
+    def test_login_publishes_the_read_only_flags(self):
+        client, _ = _app(CliUsersBuilder().set_default_admin_password("rootpass1").set_read_only_groups())
+        session = client.post(BASE + "/sessions", json={"username": "root", "password": "rootpass1"}).json()["session"]
+        assert session["usersReadOnly"] is False
+        assert session["groupsReadOnly"] is True
+
+    def test_builder_fluent_options(self):
+        builder = CliUsersBuilder()
+        assert builder.set_read_only_users() is builder
+        assert builder.set_read_only_groups() is builder
+        options = builder.build().auth_service.options
+        assert options.read_only_users and options.read_only_groups
+        assert not builder.set_read_only_users(False).build().auth_service.options.read_only_users

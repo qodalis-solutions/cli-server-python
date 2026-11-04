@@ -133,7 +133,9 @@ class TestLogin:
         body = api.login_full("root", ROOT_PASS)
         assert set(body.keys()) == {"token", "session"}
         session = body["session"]
-        assert set(session.keys()) == {"id", "user", "permissions", "loginTime", "lastActivity", "expiresAt"}
+        assert set(session.keys()) == {
+            "id", "user", "permissions", "loginTime", "lastActivity", "expiresAt", "usersReadOnly", "groupsReadOnly",
+        }
         assert session["permissions"] == ["*"]
         assert session["user"]["name"] == "root"
         assert session["user"]["email"] == "root@localhost"
@@ -999,7 +1001,9 @@ class TestExternalAuthAdapter:
         res = ext.get(BASE + "/sessions/current", headers=_ext_headers("jane", False))
         assert res.status_code == 200
         body = res.json()
-        assert set(body) == {"id", "user", "permissions", "loginTime", "lastActivity", "expiresAt"}
+        assert set(body) == {
+            "id", "user", "permissions", "loginTime", "lastActivity", "expiresAt", "usersReadOnly", "groupsReadOnly",
+        }
         assert body["user"]["name"] == "jane"
         assert body["user"]["email"] == "jane@external.test"
         assert body["permissions"] == []
