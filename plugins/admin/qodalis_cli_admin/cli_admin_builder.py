@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any, Callable, Awaitable
 
 from fastapi import APIRouter
@@ -19,6 +20,7 @@ from .controllers.config_controller import create_config_router
 from .controllers.logs_controller import create_logs_router
 from .controllers.ws_clients_controller import create_ws_clients_router
 from .services.admin_config import AdminConfig
+from .services.admin_theme import admin_theme_json
 from .services.log_ring_buffer import LogRingBuffer
 from .services.module_registry import ModuleRegistry
 from .dashboard_resolver import resolve_dashboard_dir
@@ -64,6 +66,7 @@ class CliAdminBuilder:
         self._dashboard_path: str | None = None
         self._trust_proxy = False
         self._users_plugin: Any = None
+        self._theme_json: bytes = admin_theme_json(None)
 
     def set_credentials(self, username: str, password: str) -> CliAdminBuilder:
         """Set admin login credentials (overrides env vars)."""
@@ -89,6 +92,27 @@ class CliAdminBuilder:
         rightmost for one proxy), the leftmost if there are fewer entries.
         """
         self._trust_proxy = trust
+        return self
+
+    def set_theme(self, theme: Mapping[str, Any]) -> CliAdminBuilder:
+        """Set the dashboard's color scheme.
+
+        ``{"mode": "dark" | "light" | "system", "dark": {...}, "light": {...}}``
+        with color overrides per scheme; tokens left out keep the dashboard
+        defaults. Token keys are camelCase (``primaryHover``) or snake_case
+        (``primary_hover``). Values must be plain CSS colors (hex,
+        ``rgb()``/``hsl()``/``oklch()``... or a named color); anything else
+        raises :class:`ValueError` here.
+
+        Example::
+
+            builder.set_theme({
+                "mode": "system",
+                "light": {"primary": "#2a6bba", "background": "#f1f6fa"},
+                "dark": {"primary": "#4f9be0", "background": "#0d1823"},
+            })
+        """
+        self._theme_json = admin_theme_json(theme)
         return self
 
     def set_users_plugin(self, users_plugin: Any) -> CliAdminBuilder:
@@ -164,7 +188,9 @@ class CliAdminBuilder:
         dashboard_app = None
 
         if dashboard_dir:
-            dashboard_app = SPAStaticFiles(directory=dashboard_dir, html=True)
+            dashboard_app = SPAStaticFiles(
+                directory=dashboard_dir, html=True, theme_json=self._theme_json,
+            )
 
         return CliAdminPlugin(
             prefix="/api/v1/qcli",
