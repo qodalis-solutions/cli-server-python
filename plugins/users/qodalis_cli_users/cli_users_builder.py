@@ -165,6 +165,9 @@ class CliUsersPlugin:
         if manager is not None and hasattr(manager, "send_to_user"):
             self.auth_service.user_event_sender = manager.send_to_user
         options = getattr(server, "options", None)
+        # The host application signs users in (read by the admin dashboard).
+        if self.auth_service.external_auth and hasattr(options, "external_authentication"):
+            options.external_authentication = True
         origins = getattr(options, "allowed_origins", None)
         if origins and self.auth_service.options.allowed_origins is None:
             self.auth_service.options.allowed_origins = list(origins)

@@ -15,11 +15,18 @@ def create_users_auth_dependency(users_plugin: Any):
     ``admin:access`` (admin ``*`` has it)."""
 
     async def require_auth(request: Request) -> dict[str, Any]:
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-        await users_plugin.ensure_seeded()
-        ctx = await users_plugin.auth_service.authenticate_token(auth_header[7:].strip())
+        auth_service = users_plugin.auth_service
+        if auth_service.external_auth:
+            # The host application signs users in: its external auth adapter
+            # authenticates the request (e.g. the bearer token handed to the
+            # dashboard through /qcli/admin/#token=…).
+            ctx = await users_plugin.require_auth(request)
+        else:
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+            await users_plugin.ensure_seeded()
+            ctx = await auth_service.authenticate_token(auth_header[7:].strip())
         if ctx.must_change_password:
             raise HTTPException(status_code=403, detail="password change required")
         if not ctx.can("admin:access"):
