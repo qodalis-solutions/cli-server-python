@@ -490,6 +490,84 @@ Responses (abridged):
 | `-32602 Invalid arguments for tool <name>: …` | The arguments do not match the tool's `inputSchema`. |
 | `claude mcp list` shows `qcli` as failed, or `/mcp` lists no tools | Run the curl checks of step 4 with the same URL and token: they show the HTTP status and error. Re-add the server after creating a new token (`claude mcp remove qcli`, then `claude mcp add …`). |
 
+## Use with your app's sign-in
+
+When your application already signs users in (cookies, JWT, an identity provider), the users plugin can take its users from your app instead of its own logins. The browser terminal, the MCP endpoint and the admin dashboard then all use your session.
+
+```python
+from contextlib import asynccontextmanager
+
+from qodalis_cli import CliServerOptions, create_cli_server
+from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder
+from qodalis_cli_users import CliUsersBuilder, ExternalAuthResult, User
+
+# Your app's origin: the browser terminal and the dashboard call the API and open sockets from it
+result = create_cli_server(CliServerOptions(allowed_origins=["https://app.example.com"]))
+app = result.app
+
+# Your sign-in (optional): outer middleware run before the users plugin's protection
+app.add_middleware(HostSessionMiddleware)
+
+
+# Runs on every CLI request and ticket request, and again on open sockets (see below)
+async def host_auth(request):
+    account = await accounts.from_request(request)   # read your session cookie / bearer token
+    if account is None:
+        return None
+    return ExternalAuthResult(
+        user=User(id=account.id, name=account.email, email=account.email, disabled=account.disabled),
+        permissions=account.cli_permissions,   # e.g. ["commands:execute", "logs:read"]
+        is_admin=account.is_admin,
+    )
+
+
+users_plugin = (
+    CliUsersBuilder()
+    .set_auth_adapter(host_auth)
+    # Your app owns accounts and roles: the CLI's user and group endpoints answer 501
+    .set_read_only_users()
+    .set_read_only_groups()
+    .build()
+)
+result.mount_plugin(users_plugin)   # protects every CLI route and socket (innermost middleware)
+
+admin_plugin = (
+    CliAdminBuilder()
+    .set_users_plugin(users_plugin)
+    .set_sign_in_url("https://app.example.com/sign-in")
+    .build(AdminBuildDeps(registry=result.registry, event_socket_manager=result.event_socket_manager,
+                          builder=result.builder))
+)
+result.mount_plugin(admin_plugin)
+
+original_lifespan = app.router.lifespan_context
+
+
+@asynccontextmanager
+async def lifespan(app):
+    await users_plugin.startup()   # seeding, session sweep and the socket re-checks
+    try:
+        async with original_lifespan(app) as state:
+            yield state
+    finally:
+        await users_plugin.shutdown()
+
+
+app.router.lifespan_context = lifespan
+```
+
+The order matters: `mount_plugin(users_plugin)` installs the users protection as the **innermost** middleware, and `app.add_middleware(...)` adds yours outside it (with CORS and the WebSocket origin check), so your sign-in middleware runs first and the adapter sees what it set on the request. Mount the plugins before the app starts, and call `startup()`/`shutdown()` from the lifespan: without `startup()` open sockets are not re-checked.
+
+- **The adapter** (`set_auth_adapter`) returns an `ExternalAuthResult` for a request, or `None` when it is not signed in. It can be `async`, so it can load the account, its roles and its disabled state from your database. A user returned with `disabled=True` is refused (401 `account disabled`).
+- **Re-checks run on a copy of the request:** open sockets are re-checked by running the adapter again on a snapshot of the request that opened them (the ticket request): its headers, cookies, path and client, but none of the state your middleware set. Authenticate from the headers or cookies inside the adapter (verify the cookie or JWT there) rather than only reading `request.state`/`request.user`, or every re-check ends the socket.
+- **Permissions:** a command's `required_permissions` are checked against the user's permissions: those in `ExternalAuthResult.permissions`, those of the groups the user is in (`User.groups`, from the group store; unknown names grant nothing), and every permission when `is_admin` is set. Running commands needs `commands:execute`, the logs stream needs `logs:read`.
+- **CSRF:** with cookie sessions, state-changing requests without a bearer token must come from one of the `allowed_origins` (or the server's own origin).
+- **WebSockets:** the browser cannot send headers on a WebSocket, so clients first get a single-use ticket (`POST /api/v1/qcli/sessions/ws-ticket` with your session) and connect with `?ticket=`; the web CLI does this by itself. Open sockets are checked again through the adapter every `CliShellOptions.session_check_interval` (30 s by default, at most 60 s) and closed with `4401` when the user is gone, disabled, or lost the socket's permission.
+- **Read-only stores:** with `set_read_only_users()` / `set_read_only_groups()` the CLI's create, update and delete endpoints answer `501` instead of writing; the session response carries `usersReadOnly` / `groupsReadOnly` so clients can hide those commands.
+- **Admin dashboard:** with an external adapter the users plugin sets `CliServerOptions.external_authentication` and the dashboard signs in through your app: `GET /api/v1/qcli/auth/mode` answers `external` with the `set_sign_in_url` value, its own username/password form is off, and your app opens it as `/qcli/admin/#token=<your bearer token>` (a URL fragment, never sent to servers or logs). See [plugins/admin/README.md](plugins/admin/README.md#sign-in-with-the-host-apps-session).
+
+Details: [plugins/users/README.md](plugins/users/README.md#external-auth-adapter).
+
 ## Remote Shell Security
 
 The PTY shell (`/ws/v1/qcli/shell`, `/ws/qcli/shell`) gives OS-level access. It is **off** unless `enable_shell=True`, and once enabled every connection must pass exactly one access mode (reported as `shellAuth` by `/capabilities`):
