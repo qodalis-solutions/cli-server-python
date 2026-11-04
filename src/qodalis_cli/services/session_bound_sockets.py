@@ -50,12 +50,23 @@ class SessionBoundSockets:
             except RuntimeError:
                 pass  # loop closed
 
+    async def close_ended_sessions(self, check: SessionCheck) -> None:
+        """Run ``check`` on every bound socket (concurrently) and close with
+        4401 ``session ended`` those for which it returns ``False`` or raises.
+        Completes once every check is done, so a periodic caller never stacks
+        checks (e.g. re-checks of external-auth identities)."""
+        bound = list(self._bound.items())
+        if bound:
+            await asyncio.gather(*(
+                self._check(websocket, identity, check) for websocket, (identity, _) in bound
+            ))
+
     def _spawn_check(self, websocket: WebSocket, identity: Any) -> None:
         if websocket in self._bound:
             asyncio.ensure_future(self._check(websocket, identity))
 
-    async def _check(self, websocket: WebSocket, identity: Any) -> None:
-        check = self._session_check
+    async def _check(self, websocket: WebSocket, identity: Any, check: SessionCheck | None = None) -> None:
+        check = check or self._session_check
         if check is None:
             return
         try:
