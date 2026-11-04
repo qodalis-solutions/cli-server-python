@@ -17,7 +17,7 @@ from ..models import (
 from ..permissions import USERS_CREATE, USERS_DELETE, USERS_READ, USERS_UPDATE
 from ..services.auth_service import AuthContext, AuthService
 from ..services.users_service import UsersService
-from ._routing import collection, new_router
+from ._routing import collection, new_router, store_write
 
 MANAGED_BY_HOST = "Authentication is managed by the host application"
 API_TOKENS_CANNOT_CHANGE_PASSWORDS = "forbidden: API tokens cannot change passwords"
@@ -34,6 +34,7 @@ def create_users_router(
     router = new_router("/users", "users")
     user_store = auth_service.user_store
     external = auth_service.external_auth
+    user_write = store_write(auth_service, users=True)
 
     async def load_target(id_or_name: str, ctx: AuthContext, permission: str, *, allow_self: bool) -> User:
         """Resolve the target user, enforcing ``permission`` (or self).
@@ -59,7 +60,7 @@ def create_users_router(
         users = await users_service.list_users(query, skip, take)
         return [u.to_dict() for u in users]
 
-    @collection(router, "POST", status_code=201)
+    @collection(router, "POST", status_code=201, dependencies=user_write)
     async def create_user(
         body: CreateUserRequest,
         ctx: AuthContext = Depends(require_permission(USERS_CREATE)),
@@ -91,7 +92,7 @@ def create_users_router(
             "permissions": await auth_service.effective_permissions(groups),
         }
 
-    @router.put("/{id_or_name}")
+    @router.put("/{id_or_name}", dependencies=user_write)
     async def update_user(
         id_or_name: str,
         body: UpdateUserRequest,
@@ -122,7 +123,7 @@ def create_users_router(
         )
         return user.to_dict()
 
-    @router.delete("/{id_or_name}", status_code=204)
+    @router.delete("/{id_or_name}", status_code=204, dependencies=user_write)
     async def delete_user(
         id_or_name: str,
         ctx: AuthContext = Depends(require_permission(USERS_DELETE)),
@@ -142,7 +143,7 @@ def create_users_router(
 
         return router
 
-    @router.put("/{id_or_name}/password", status_code=204)
+    @router.put("/{id_or_name}/password", status_code=204, dependencies=user_write)
     async def change_password(
         id_or_name: str,
         body: PasswordChangeRequest,

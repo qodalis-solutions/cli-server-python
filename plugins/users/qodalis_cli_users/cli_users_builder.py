@@ -292,6 +292,8 @@ class CliUsersBuilder:
         self._group_store: IGroupStore | None = None
         self._api_token_store: IApiTokenStore | None = None
         self._allow_non_expiring_tokens = False
+        self._read_only_users = False
+        self._read_only_groups = False
         self._auth_adapter: ExternalAuthAdapter | None = None
         self._default_admin_password: str | None = None
         self._session_timeout_ms = DEFAULT_SESSION_TIMEOUT_MS
@@ -335,6 +337,23 @@ class CliUsersBuilder:
         """Allow API tokens that never expire (``expiresInDays: null``;
         default ``False``)."""
         self._allow_non_expiring_tokens = allow
+        return self
+
+    def set_read_only_users(self, read_only: bool = True) -> CliUsersBuilder:
+        """The host application owns the users (e.g. a read-only
+        ``IUserStore`` over its own accounts): creating, updating and deleting
+        users, password changes and group membership changes answer ``501``
+        without calling the stores, no ``root`` user is seeded, and the
+        current session reports ``usersReadOnly: true``."""
+        self._read_only_users = read_only
+        return self
+
+    def set_read_only_groups(self, read_only: bool = True) -> CliUsersBuilder:
+        """The host application owns the groups: creating, updating and
+        deleting groups answer ``501`` without calling the store, the built-in
+        groups are not seeded, and the current session reports
+        ``groupsReadOnly: true``."""
+        self._read_only_groups = read_only
         return self
 
     def set_auth_adapter(self, adapter: ExternalAuthAdapter | None) -> CliUsersBuilder:
@@ -433,6 +452,8 @@ class CliUsersBuilder:
                 trust_proxy=self._trust_proxy,
                 allowed_origins=self._allowed_origins,
                 allow_non_expiring_tokens=self._allow_non_expiring_tokens,
+                read_only_users=self._read_only_users,
+                read_only_groups=self._read_only_groups,
             ),
             broadcast_fn=broadcast_fn,
             auth_adapter=self._auth_adapter,

@@ -55,6 +55,8 @@ result.app.router.lifespan_context = lifespan
 | `set_max_login_attempts(n)` | `5` | Consecutive failures before lockout |
 | `set_lockout(ms)` | `300000` (5 min) | Lockout duration |
 | `set_cleanup_interval(ms)` | `300000` (5 min) | Background expired-session sweep |
+| `set_read_only_users(bool=True)` | `False` | The host owns the users: user writes answer `501` (see [Read-only stores](#read-only-stores)) |
+| `set_read_only_groups(bool=True)` | `False` | The host owns the groups: group writes answer `501` |
 | `set_auth_adapter(adapter)` | `None` | Delegate authentication to the host app (a sync or async callable; see below) |
 | `build(broadcast_fn=None)` | | Returns a `CliUsersPlugin` (`prefix`, `router`, `startup()`, `shutdown()`, `require_auth`, `require_permission(p)`, `protect(app)`, `auth_service`, stores) |
 
@@ -110,7 +112,7 @@ All routes are mounted under `/api/v1/qcli`; collections accept paths with and w
 |----------|-------------|-------------|
 | `POST /sessions` | public | Login `{ username, password }` (name or email) → `201 { token, session }` |
 | `POST /sessions/ws-ticket` | authenticated | Single-use WebSocket ticket `{ ticket, expiresIn }` |
-| `GET /sessions/current` | authenticated | Current session `{ id, user, permissions, loginTime, lastActivity, expiresAt }` |
+| `GET /sessions/current` | authenticated | Current session `{ id, user, permissions, loginTime, lastActivity, expiresAt, usersReadOnly, groupsReadOnly }` |
 | `DELETE /sessions/current` | authenticated | Logout (204) |
 | `GET /sessions` | `sessions:read` | Active sessions (never includes tokens) |
 | `DELETE /sessions/{id}` | `sessions:revoke` or own session | Revoke (204) |
@@ -196,7 +198,7 @@ users_plugin = CliUsersBuilder().set_user_store(PostgresUserStore(pool)).build()
 
 ## External auth adapter
 
-If the host application already authenticates requests, call `set_auth_adapter(adapter)`. The adapter (sync or async) receives the request and returns an `ExternalAuthResult` (user + admin flag) or `None`. Login, logout, password change and `verify-password` then answer `501`; no `root` user is seeded (the built-in groups still are), and adapter sessions are not stored or listed.
+If the host application already authenticates requests, call `set_auth_adapter(adapter)`. The adapter (sync or async) receives the request and returns an `ExternalAuthResult` (user + admin flag + optional permissions) or `None`. Login, logout, password change and `verify-password` then answer `501`; no `root` user is seeded (the built-in groups still are), and adapter sessions are not stored or listed. Permissions come from the groups the adapter returns (`is_admin` adds `admin`) plus the result's `permissions`; group names missing from the group store grant nothing (and break nothing).
 
 The adapter may return the result directly or an awaitable of it, so it can load the user, their roles or their disabled state from a database. A plain function, an `async def` function and an object with a sync or async `__call__` are all accepted; the plugin awaits the result for every request, ticket issuance and socket re-check:
 
@@ -210,11 +212,39 @@ async def host_auth(request):
 users_plugin = CliUsersBuilder().set_auth_adapter(host_auth).build()
 ```
 
+Hosts with their own roles can grant permissions directly instead of keeping a group per permission:
+
+```python
+return ExternalAuthResult(
+    user=to_cli_user(account),                       # groups may be empty
+    permissions=["commands:execute", "logs:read"],   # added to the groups' permissions
+)
+```
+
 **Shells opened by adapter identities** have no stored session to re-check, so at every shell re-check (right after the shell opens, on every change event and every `session_check_interval`) the adapter is **run again on a snapshot of the request it accepted**: the `POST /sessions/ws-ticket` request the shell's ticket came from (request line, headers and cookies, client address and app; no body and no state set by middleware). The adapter must therefore be able to authenticate that request again on its own. `None`, an exception, a different user or a disabled user closes the shell with 4401 `session ended` (audit reason `session ended`); a user without `shell:execute` closes it too (audit reason `permission removed`).
 
 **Events and logs sockets opened by adapter identities** are re-checked the same way: every `session_check_interval` (the server's `CliShellOptions.session_check_interval`, default 30 s, capped at 60 s; it applies whether or not the shell is enabled) the adapter runs again on the snapshot of the ticket request. `None`, a different user, a disabled user, an exception, or a user who no longer holds the socket's permission (`logs:read` for the logs socket; the events socket only needs authentication) closes the socket with 4401 `session ended`. The checks run from `startup()` (call it from the app's lifespan, see [Quick Start](#quick-start)), one at a time: a slow adapter delays the next check rather than stacking them. `users_plugin.recheck_external_sockets()` runs one on demand.
 
 A user the adapter returns with `disabled=True` is refused (401 `account disabled`) on requests, ticket issuance and re-checks.
+
+## Read-only stores
+
+When the host application owns the users or groups (a custom `IUserStore`/`IGroupStore` over its own accounts and roles), mark them read-only instead of raising from the store's write methods:
+
+```python
+users_plugin = (
+    CliUsersBuilder()
+    .set_auth_adapter(host_auth)
+    .set_user_store(HostUserStore())   # only the read methods need real implementations
+    .set_read_only_users()
+    .set_read_only_groups()
+    .build()
+)
+```
+
+- **`set_read_only_users()`**: `POST /users`, `PUT /users/{idOrName}` (self updates too), `DELETE /users/{idOrName}`, `PUT /users/{idOrName}/password` and `POST`/`DELETE /groups/{name}/members/{idOrName}` answer `501 { "error": "Users are managed by the host application" }` without calling any store (before authentication). No `root` user is seeded, and deleting a group leaves the users' memberships alone.
+- **`set_read_only_groups()`**: `POST /groups`, `PUT /groups/{name}` and `DELETE /groups/{name}` answer `501 { "error": "Groups are managed by the host application" }` without calling the store, and the built-in `admin` and `users` groups are not seeded (the host's store provides the groups it needs).
+- Reads keep working. `GET /sessions/current` and the login response (`session`) carry `usersReadOnly` and `groupsReadOnly` (always present, `false` by default) so clients can hide `adduser`, `groupadd` and the like.
 
 ## Client
 

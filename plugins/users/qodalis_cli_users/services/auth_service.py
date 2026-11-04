@@ -168,6 +168,12 @@ class AuthServiceOptions:
     ticket_ttl_ms: int = TICKET_TTL_MS
     #: Allow API tokens that never expire (``expiresInDays: null``).
     allow_non_expiring_tokens: bool = False
+    #: The host owns the users: user writes (create, update, delete, password,
+    #: group membership) answer 501 and no ``root`` user is seeded.
+    read_only_users: bool = False
+    #: The host owns the groups: group writes answer 501 and the built-in
+    #: groups are not seeded.
+    read_only_groups: bool = False
 
 
 class AuthService:
@@ -566,6 +572,8 @@ class AuthService:
             "loginTime": session.created_at,
             "lastActivity": session.last_activity,
             "expiresAt": self.expires_at(session),
+            "usersReadOnly": bool(self.options.read_only_users),
+            "groupsReadOnly": bool(self.options.read_only_groups),
         }
 
     # ------------------------------------------------------------------
@@ -689,10 +697,13 @@ class AuthService:
             created_at=now,
             last_activity=now,
         )
+        permissions = await self.effective_permissions(groups)
+        if result.permissions:
+            permissions = merge_permissions(permissions, result.permissions)
         return AuthContext(
             user=user,
             groups=groups,
-            permissions=await self.effective_permissions(groups),
+            permissions=permissions,
             session=session,
             external=True,
             external_request=request,
@@ -895,17 +906,19 @@ class AuthService:
         """Seed the built-in groups and (unless external auth) the root user.
 
         Without a configured password a random one is generated, logged once
-        and the root account must change it at first login."""
-        if not await self.group_store.get_group(ADMIN_GROUP):
-            await self.group_store.create_group(
-                ADMIN_GROUP, "Administrators", ["*"], built_in=True,
-            )
-        if not await self.group_store.get_group(USERS_GROUP):
-            await self.group_store.create_group(
-                USERS_GROUP, "Default group for new accounts",
-                list(DEFAULT_USERS_GROUP_PERMISSIONS), built_in=True,
-            )
-        if self.external_auth:
+        and the root account must change it at first login.  Read-only stores
+        belong to the host application: nothing is seeded into them."""
+        if not self.options.read_only_groups:
+            if not await self.group_store.get_group(ADMIN_GROUP):
+                await self.group_store.create_group(
+                    ADMIN_GROUP, "Administrators", ["*"], built_in=True,
+                )
+            if not await self.group_store.get_group(USERS_GROUP):
+                await self.group_store.create_group(
+                    USERS_GROUP, "Default group for new accounts",
+                    list(DEFAULT_USERS_GROUP_PERMISSIONS), built_in=True,
+                )
+        if self.external_auth or self.options.read_only_users:
             return
         if len(await self.user_store.get_users()) != 0:
             return

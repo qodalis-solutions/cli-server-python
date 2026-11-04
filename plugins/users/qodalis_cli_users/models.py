@@ -319,11 +319,15 @@ class ExternalAuthResult:
     """Result returned by an external auth adapter.
 
     ``is_admin`` adds the built-in ``admin`` group to the user's effective
-    groups (the adapter's ``user`` object is never mutated).
+    groups (the adapter's ``user`` object is never mutated).  ``permissions``
+    are granted directly by the host (e.g. ``logs:read``), added to those of
+    the user's groups, so hosts with their own roles need no group per
+    permission.  Group names missing from the group store grant nothing.
     """
 
     user: User
     is_admin: bool = False
+    permissions: list[str] | None = None
 
 
 ExternalAuthAdapter = Callable[

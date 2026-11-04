@@ -11,7 +11,7 @@ from ..models import CreateGroupRequest, Group, UpdateGroupRequest
 from ..permissions import GROUPS_CREATE, GROUPS_DELETE, GROUPS_READ, GROUPS_UPDATE
 from ..services.auth_service import AuthContext, AuthService
 from ..services.users_service import UsersService
-from ._routing import collection, new_router
+from ._routing import collection, new_router, store_write
 
 
 def create_groups_router(
@@ -23,6 +23,9 @@ def create_groups_router(
     router = new_router("/groups", "groups")
     group_store = auth_service.group_store
     user_store = auth_service.user_store
+    group_write = store_write(auth_service, groups=True)
+    # Membership lives on the users (their ``groups``).
+    member_write = store_write(auth_service, users=True)
 
     async def load_group(name: str) -> Group:
         group = await group_store.get_group(name)
@@ -40,7 +43,7 @@ def create_groups_router(
     async def list_groups(ctx: AuthContext = Depends(get_auth)):
         return [g.to_dict() for g in await group_store.get_groups()]
 
-    @collection(router, "POST", status_code=201)
+    @collection(router, "POST", status_code=201, dependencies=group_write)
     async def create_group(
         body: CreateGroupRequest,
         ctx: AuthContext = Depends(require_permission(GROUPS_CREATE)),
@@ -61,7 +64,7 @@ def create_groups_router(
             raise forbidden(f"missing permission: {GROUPS_READ}")
         return [u.to_dict() for u in await users_service.group_members(group)]
 
-    @router.put("/{name}")
+    @router.put("/{name}", dependencies=group_write)
     async def update_group(
         name: str,
         body: UpdateGroupRequest,
@@ -73,7 +76,7 @@ def create_groups_router(
         )
         return updated.to_dict()
 
-    @router.delete("/{name}", status_code=204)
+    @router.delete("/{name}", status_code=204, dependencies=group_write)
     async def delete_group(
         name: str,
         ctx: AuthContext = Depends(require_permission(GROUPS_DELETE)),
@@ -81,7 +84,7 @@ def create_groups_router(
         await users_service.delete_group(ctx, await load_group(name))
         return Response(status_code=204)
 
-    @router.post("/{name}/members/{id_or_name}", status_code=204)
+    @router.post("/{name}/members/{id_or_name}", status_code=204, dependencies=member_write)
     async def add_member(
         name: str,
         id_or_name: str,
@@ -95,7 +98,7 @@ def create_groups_router(
         await users_service.add_member(ctx, group, user)
         return Response(status_code=204)
 
-    @router.delete("/{name}/members/{id_or_name}", status_code=204)
+    @router.delete("/{name}/members/{id_or_name}", status_code=204, dependencies=member_write)
     async def remove_member(
         name: str,
         id_or_name: str,
