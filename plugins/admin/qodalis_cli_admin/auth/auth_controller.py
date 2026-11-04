@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .jwt_service import JwtService
@@ -52,6 +53,11 @@ class _RateLimiter:
 
 
 ADMIN_ACCESS = "admin:access"
+#: ``GET /auth/mode``: the dashboard's own username/password form.
+MODE_PASSWORD = "password"
+#: ``GET /auth/mode``: sign-in through the host application.
+MODE_EXTERNAL = "external"
+EXTERNAL_AUTH_CODE = "EXTERNAL_AUTH"
 
 
 def trusted_hops(trust_proxy: bool | int | None) -> int:
@@ -107,18 +113,44 @@ def create_auth_router(
     *,
     trust_proxy: bool | int = False,
     users_plugin: Any = None,
+    is_external: Callable[[], bool] | None = None,
 ) -> APIRouter:
-    """Create a FastAPI router with ``POST /login`` and ``GET /me``.
+    """Create a FastAPI router with ``GET /mode``, ``POST /login`` and
+    ``GET /me``.
 
     With ``users_plugin`` the login goes through the users auth service and
     requires the ``admin:access`` permission; the returned token is the
     users session token.  Otherwise the static admin credentials are used.
+    In external sign-in mode (``is_external()``: the server's
+    ``external_authentication``) the login answers 501.
     """
     router = APIRouter()
     limiter = _RateLimiter()
 
+    def external() -> bool:
+        return is_external is not None and is_external()
+
+    @router.get("/mode")
+    async def mode() -> JSONResponse:
+        """Which sign-in the dashboard shows (public).  ``external`` when the
+        host application signs users in (it hands its token to the dashboard
+        through ``/qcli/admin/#token=…``), otherwise ``password``."""
+        return JSONResponse(
+            {"mode": MODE_EXTERNAL if external() else MODE_PASSWORD, "signInUrl": admin_config.sign_in_url},
+            headers={"Cache-Control": "no-store"},
+        )
+
     @router.post("/login", response_model=LoginResponse)
     async def login(body: LoginRequest, request: Request) -> Any:
+        if external():
+            # The static admin credentials sign no one in here.
+            url = admin_config.sign_in_url
+            where = f" at {url}" if url is not None else " through the host application"
+            return JSONResponse(status_code=501, content={
+                "error": f"Sign-in is managed by the host application. Sign in{where}.",
+                "code": EXTERNAL_AUTH_CODE,
+                "signInUrl": url,
+            })
         ip = client_ip(request, trust_proxy)
         limiter.check(ip)
 

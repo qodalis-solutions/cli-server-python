@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Mapping
 from typing import Any, Callable, Awaitable
 
@@ -41,6 +41,10 @@ class AdminBuildDeps:
     #: When set, the dashboard authenticates through the users plugin
     #: (``admin:access`` permission); static credentials are not used.
     users_plugin: Any = None
+    #: The server's ``CliServerOptions`` (``result.options``): its
+    #: ``external_authentication`` selects the dashboard's sign-in mode.
+    #: Taken from the server by ``mount_plugin`` when not given.
+    server_options: Any = None
 
 
 @dataclass
@@ -54,6 +58,14 @@ class CliAdminPlugin:
     log_buffer: LogRingBuffer
     dashboard_app: Any  # ASGI app (SPA fallback) or None
     module_registry: ModuleRegistry | None = None
+    #: Holds the server options read by ``GET /auth/mode`` (see on_mount).
+    _server: dict = field(default_factory=dict, repr=False)
+
+    def on_mount(self, server: Any) -> None:
+        """Hook called by ``CliServerResult.mount_plugin``: the sign-in mode
+        follows the server's ``options.external_authentication``."""
+        if self._server.get("options") is None:
+            self._server["options"] = getattr(server, "options", None)
 
 
 class CliAdminBuilder:
@@ -67,6 +79,7 @@ class CliAdminBuilder:
         self._trust_proxy = False
         self._users_plugin: Any = None
         self._theme_json: bytes = admin_theme_json(None)
+        self._sign_in_url: str | None = None
 
     def set_credentials(self, username: str, password: str) -> CliAdminBuilder:
         """Set admin login credentials (overrides env vars)."""
@@ -115,6 +128,15 @@ class CliAdminBuilder:
         self._theme_json = admin_theme_json(theme)
         return self
 
+    def set_sign_in_url(self, url: str | None) -> CliAdminBuilder:
+        """Where the host application signs users in, shown by the dashboard
+        in external sign-in mode (users plugin with an external auth adapter)
+        and returned by ``GET /api/v1/qcli/auth/mode``.  An absolute
+        ``http(s)`` URL or a root-relative path (``/sign-in``); anything else
+        raises :class:`ValueError` in :meth:`build`."""
+        self._sign_in_url = url
+        return self
+
     def set_users_plugin(self, users_plugin: Any) -> CliAdminBuilder:
         """Authenticate the dashboard through the users plugin."""
         self._users_plugin = users_plugin
@@ -130,7 +152,13 @@ class CliAdminBuilder:
             password=self._password,
             jwt_secret=self._jwt_secret,
             warn_default=users_plugin is None,
+            sign_in_url=self._sign_in_url,
         )
+        config.validate()
+        server: dict = {"options": deps.server_options}
+
+        def is_external() -> bool:
+            return bool(getattr(server["options"], "external_authentication", False))
         jwt_service = JwtService(secret=config.jwt_secret)
         log_buffer = LogRingBuffer(broadcast_fn=deps.broadcast_fn)
         log_buffer.install_handler()
@@ -148,6 +176,7 @@ class CliAdminBuilder:
         auth_router = create_auth_router(
             config, jwt_service, auth_dependency=auth_dep,
             trust_proxy=self._trust_proxy, users_plugin=users_plugin,
+            is_external=is_external,
         )
         router.include_router(auth_router, prefix="/auth")
 
@@ -200,4 +229,5 @@ class CliAdminBuilder:
             log_buffer=log_buffer,
             dashboard_app=dashboard_app,
             module_registry=module_registry,
+            _server=server,
         )

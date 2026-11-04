@@ -68,6 +68,12 @@ logger = logging.getLogger(__name__)
 
 PREFIX = "/api/v1/qcli"
 DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000
+#: Re-check interval (seconds) of events/logs sockets opened through the
+#: external auth adapter: the server's ``shell.session_check_interval``
+#: (default 30), at most 60, as for shells.
+DEFAULT_SESSION_CHECK_INTERVAL = 30.0
+MAX_SESSION_CHECK_INTERVAL = 60.0
+LOGS_READ = "logs:read"
 
 
 @dataclass
@@ -102,6 +108,10 @@ class CliUsersPlugin:
     _base_paths: list = field(default_factory=list, repr=False)
     _protected_apps: list = field(default_factory=list, repr=False)
     _cleanup_task: Optional[asyncio.Task] = field(default=None, repr=False)
+    #: ``(socket manager, permission)`` of the server's events/logs sockets.
+    _session_sockets: list = field(default_factory=list, repr=False)
+    _session_check_interval: Optional[float] = field(default=None, repr=False)
+    _external_check_task: Optional[asyncio.Task] = field(default=None, repr=False)
     _seeded: bool = field(default=False, repr=False)
     _seed_lock: Optional[asyncio.Lock] = field(default=None, repr=False)
 
@@ -155,6 +165,9 @@ class CliUsersPlugin:
         if manager is not None and hasattr(manager, "send_to_user"):
             self.auth_service.user_event_sender = manager.send_to_user
         options = getattr(server, "options", None)
+        # The host application signs users in (read by the admin dashboard).
+        if self.auth_service.external_auth and hasattr(options, "external_authentication"):
+            options.external_authentication = True
         origins = getattr(options, "allowed_origins", None)
         if origins and self.auth_service.options.allowed_origins is None:
             self.auth_service.options.allowed_origins = list(origins)
@@ -168,41 +181,98 @@ class CliUsersPlugin:
             self.protect(server.app)
         # Events/logs sockets are bound to their session: closed (4401
         # "session ended") on logout, revoke, disable/delete and expiry.
-        for name in ("event_socket_manager", "log_socket_manager"):
+        # Those of adapter identities are re-checked through the adapter
+        # (see startup()).
+        for name, permission in (("event_socket_manager", None), ("log_socket_manager", LOGS_READ)):
             sockets = getattr(server, name, None)
             if sockets is not None and hasattr(sockets, "set_session_check"):
                 sockets.set_session_check(self.auth_service.is_context_active)
                 self.auth_service.add_change_listener(sockets.request_recheck)
+                if hasattr(sockets, "close_ended_sessions") and not any(
+                    s is sockets for s, _ in self._session_sockets
+                ):
+                    self._session_sockets.append((sockets, permission))
+        shell_options = getattr(options, "shell", None)
+        interval = getattr(shell_options, "session_check_interval", None)
+        if isinstance(interval, (int, float)):
+            self._session_check_interval = float(interval)
         # Remote shell: users mode (ticket + shell:execute, session-bound).
         set_shell_provider = getattr(server, "set_shell_access_provider", None)
         if callable(set_shell_provider):
             set_shell_provider(UsersShellAccess(self.auth_service))
 
+    @property
+    def external_socket_check_interval(self) -> float:
+        """Seconds between re-checks of events/logs sockets opened through the
+        external auth adapter: the server's ``shell.session_check_interval``
+        (default 30), capped at 60 like the shell re-check."""
+        value = self._session_check_interval
+        if not value or value <= 0:
+            return DEFAULT_SESSION_CHECK_INTERVAL
+        return min(value, MAX_SESSION_CHECK_INTERVAL)
+
     async def startup(self) -> None:
-        """Seed and start the background session sweep on the running loop."""
+        """Seed and start the background tasks on the running loop: the
+        session sweep and, with an external auth adapter, the re-check of
+        the events/logs sockets opened through it."""
         await self.ensure_seeded()
+        loop = asyncio.get_running_loop()
         if self._cleanup_task is None or self._cleanup_task.done():
-            self._cleanup_task = asyncio.get_running_loop().create_task(self._cleanup_loop())
+            self._cleanup_task = loop.create_task(self._cleanup_loop())
+        if self.auth_service.external_auth and (
+            self._external_check_task is None or self._external_check_task.done()
+        ):
+            self._external_check_task = loop.create_task(self._external_socket_loop())
 
     async def shutdown(self) -> None:
-        """Stop the background session sweep."""
-        task, self._cleanup_task = self._cleanup_task, None
-        if task is None:
-            return
-        task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, RuntimeError):
-            pass
+        """Stop the background tasks."""
+        tasks = [self._cleanup_task, self._external_check_task]
+        self._cleanup_task = self._external_check_task = None
+        for task in tasks:
+            if task is None:
+                continue
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, RuntimeError):
+                pass
 
     def dispose(self) -> None:
         """Synchronous best-effort stop (prefer :meth:`shutdown`)."""
-        task, self._cleanup_task = self._cleanup_task, None
-        if task is not None:
+        tasks = [self._cleanup_task, self._external_check_task]
+        self._cleanup_task = self._external_check_task = None
+        for task in tasks:
+            if task is not None:
+                try:
+                    task.cancel()
+                except RuntimeError:
+                    pass  # loop already closed
+
+    async def recheck_external_sockets(self) -> None:
+        """Run the external auth adapter again for every events/logs socket
+        opened through it (on the snapshot of the request it accepted) and
+        close with 4401 ``session ended`` those whose user is gone, another
+        user, disabled, or no longer holds the socket's permission
+        (``logs:read`` for logs), or when the adapter raises.  Sockets with a
+        stored session or API token are left alone."""
+        checks = []
+        for sockets, permission in self._session_sockets:
+            async def check(ctx: Any, permission: str | None = permission) -> bool:
+                return await self.auth_service.is_external_socket_active(ctx, permission)
+
+            checks.append(sockets.close_ended_sessions(check))
+        if checks:
+            await asyncio.gather(*checks)
+
+    async def _external_socket_loop(self) -> None:
+        # One check at a time: the next sleep starts after the previous check
+        # finished, so a slow adapter never stacks checks.
+        while True:
+            await asyncio.sleep(self.external_socket_check_interval)
             try:
-                task.cancel()
-            except RuntimeError:
-                pass  # loop already closed
+                await self.recheck_external_sockets()
+            except Exception:
+                logger.exception("External-auth socket check error")
 
     async def _cleanup_loop(self) -> None:
         interval = max(self.cleanup_interval_ms, 1) / 1000
@@ -225,6 +295,8 @@ class CliUsersBuilder:
         self._group_store: IGroupStore | None = None
         self._api_token_store: IApiTokenStore | None = None
         self._allow_non_expiring_tokens = False
+        self._read_only_users = False
+        self._read_only_groups = False
         self._auth_adapter: ExternalAuthAdapter | None = None
         self._default_admin_password: str | None = None
         self._session_timeout_ms = DEFAULT_SESSION_TIMEOUT_MS
@@ -270,8 +342,32 @@ class CliUsersBuilder:
         self._allow_non_expiring_tokens = allow
         return self
 
+    def set_read_only_users(self, read_only: bool = True) -> CliUsersBuilder:
+        """The host application owns the users (e.g. a read-only
+        ``IUserStore`` over its own accounts): creating, updating and deleting
+        users, password changes and group membership changes answer ``501``
+        without calling the stores, no ``root`` user is seeded, and the
+        current session reports ``usersReadOnly: true``."""
+        self._read_only_users = read_only
+        return self
+
+    def set_read_only_groups(self, read_only: bool = True) -> CliUsersBuilder:
+        """The host application owns the groups: creating, updating and
+        deleting groups answer ``501`` without calling the store, the built-in
+        groups are not seeded, and the current session reports
+        ``groupsReadOnly: true``."""
+        self._read_only_groups = read_only
+        return self
+
     def set_auth_adapter(self, adapter: ExternalAuthAdapter | None) -> CliUsersBuilder:
-        """Delegate authentication to the host app (see README)."""
+        """Delegate authentication to the host app (see README).
+
+        ``adapter(request)`` returns an :class:`ExternalAuthResult` or
+        ``None``, either directly or as an awaitable: plain functions,
+        ``async def`` functions and objects with a sync or async ``__call__``
+        are all accepted.  ``None`` turns external auth off again."""
+        if adapter is not None and not callable(adapter):
+            raise TypeError("auth adapter must be callable (sync or async)")
         self._auth_adapter = adapter
         return self
 
@@ -359,6 +455,8 @@ class CliUsersBuilder:
                 trust_proxy=self._trust_proxy,
                 allowed_origins=self._allowed_origins,
                 allow_non_expiring_tokens=self._allow_non_expiring_tokens,
+                read_only_users=self._read_only_users,
+                read_only_groups=self._read_only_groups,
             ),
             broadcast_fn=broadcast_fn,
             auth_adapter=self._auth_adapter,
