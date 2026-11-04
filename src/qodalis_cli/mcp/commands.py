@@ -59,10 +59,27 @@ def command_input_schema(proc: ICliCommandProcessor) -> dict[str, Any]:
     return object_schema(properties, required)
 
 
+def describe_page(page: dict[str, Any], row_count: int) -> str:
+    """The line under a paged table: which rows these are (1-based), and the
+    ``skip`` for the next ones."""
+    total = page.get("total")
+    of_total = f" of {total}" if total is not None else ""
+    skip = int(page.get("skip") or 0)
+    if page.get("truncated") is True:
+        return (
+            f"(first {row_count}{of_total} rows; "
+            "the command does not page, narrow it down to see the rest)"
+        )
+    if row_count == 0:
+        return f"(no rows at skip={skip}{of_total})"
+    next_text = f"; next: skip={skip + row_count}" if page.get("hasMore") else ""
+    return f"(rows {skip + 1}-{skip + row_count}{of_total}{next_text})"
+
+
 def render_outputs(outputs: list[dict[str, Any]]) -> str:
     """Outputs as plain text: text as-is, tables header + rows joined with
-    `` | ``, lists one item per line, json pretty-printed, key-value as
-    ``key: value``."""
+    `` | `` (and a line saying which rows these are, when paged or cut), lists one item per
+    line, json pretty-printed, key-value as ``key: value``."""
     lines: list[str] = []
     for out in outputs:
         kind = out.get("type")
@@ -70,7 +87,10 @@ def render_outputs(outputs: list[dict[str, Any]]) -> str:
             lines.append(str(out.get("value", "")))
         elif kind == "table":
             lines.append(" | ".join(str(h) for h in out.get("headers") or []))
-            lines.extend(" | ".join(str(c) for c in row) for row in out.get("rows") or [])
+            rows = out.get("rows") or []
+            lines.extend(" | ".join(str(c) for c in row) for row in rows)
+            if isinstance(out.get("page"), dict):
+                lines.append(describe_page(out["page"], len(rows)))
         elif kind == "list":
             lines.extend(str(item) for item in out.get("items") or [])
         elif kind == "json":

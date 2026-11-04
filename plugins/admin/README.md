@@ -66,6 +66,72 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli`). Exce
 
 The plugin can serve an optional SPA dashboard. Install the `@qodalis/cli-server-dashboard` npm package and the plugin will auto-detect the built assets, or set a custom path via `set_dashboard_path()`.
 
+## Color scheme
+
+Match the dashboard to your own design with `set_theme()`:
+
+```python
+admin_plugin = (
+    CliAdminBuilder()
+    .set_credentials("admin", "my-secret-password")
+    .set_theme({
+        "mode": "system",
+        "light": {
+            "primary": "#2a6bba", "primaryHover": "#1f5596", "accent": "#2a6bba",
+            "background": "#f1f6fa", "backgroundAccent": "#f1f6fa", "surface": "#ffffff",
+            "border": "#d9e3ec", "heading": "#142231", "text": "#142231", "muted": "#5d6f82",
+        },
+        "dark": {
+            "primary": "#4f9be0", "primaryHover": "#3f8ad3", "onPrimary": "#0d1823", "accent": "#4f9be0",
+            "background": "#0d1823", "backgroundAccent": "#0d1823", "surface": "#13212f", "popover": "#13212f",
+            "border": "#22364a", "text": "#e6eef6", "muted": "#93a6b9",
+        },
+    })
+    .build(deps)
+)
+```
+
+Token keys are camelCase as on the wire, or snake_case (`primary_hover`). `set_theme()` raises `ValueError` on an
+invalid theme; `validate_admin_theme()` and `ADMIN_THEME_TOKENS` are exported.
+
+`mode` is `dark` (default), `light`, or `system` to follow the browser's `prefers-color-scheme`. Each scheme takes any
+subset of the tokens below; the ones you leave out keep their defaults.
+
+Values must be plain CSS colors: hex (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`), a color function with numeric arguments
+(`rgb()`, `rgba()`, `hsl()`, `hsla()`, `hwb()`, `lab()`, `lch()`, `oklab()`, `oklch()`) or a named color. Anything else
+(an unknown mode or token, `var()`, `url()`, `;` ...) is rejected at startup with an error naming the token, so a theme
+cannot inject CSS.
+
+The plugin serves the validated scheme at `GET /qcli/admin/theme.json` (public, like the dashboard files, since the
+sign-in page uses it), e.g. `{"mode":"system","dark":{"primary":"#4f9be0"},"light":{"primary":"#2a6bba"}}`. The
+dashboard applies it before its first render.
+
+The defaults match the Qodalis CLI panel: its grays, indigo accent with the violet glow, and status colors in dark; the same palette for light backgrounds in light.
+
+| Token | CSS variable | Used for | Dark default | Light default |
+| --- | --- | --- | --- | --- |
+| `primary` | `--qcli-primary` | Primary buttons, active navigation, toggles, focus rings | `#818cf8` | `#4f46e5` |
+| `primaryHover` | `--qcli-primary-hover` | Primary buttons on hover | `#a5b4fc` | `#4338ca` |
+| `onPrimary` | `--qcli-on-primary` | Text and icons on `primary` | `#111827` | `#ffffff` |
+| `accent` | `--qcli-accent` | Highlighted text: links, command names, active items | `#a78bfa` | `#7c3aed` |
+| `background` | `--qcli-background` | Page background | `#111827` | `#f9fafb` |
+| `backgroundAccent` | `--qcli-background-accent` | Start of the page background gradient (set it to `background` for a flat page) | `#1f2937` | `#eef2ff` |
+| `sidebar` | `--qcli-sidebar` | Sidebar background | `#1f2937` | `#ffffff` |
+| `surface` | `--qcli-surface` | Cards, panels and tables | `rgba(255, 255, 255, 0.04)` | `#ffffff` |
+| `popover` | `--qcli-popover` | Dialogs and dropdown menus (opaque) | `#1f2937` | `#ffffff` |
+| `control` | `--qcli-control` | Inputs, secondary buttons, chips | `rgba(255, 255, 255, 0.06)` | `rgba(17, 24, 39, 0.05)` |
+| `controlHover` | `--qcli-control-hover` | Inputs and secondary buttons on hover | `rgba(255, 255, 255, 0.1)` | `rgba(17, 24, 39, 0.1)` |
+| `border` | `--qcli-border` | Borders and dividers | `#374151` | `#e5e7eb` |
+| `overlay` | `--qcli-overlay` | Backdrop behind dialogs | `rgba(0, 0, 0, 0.6)` | `rgba(17, 24, 39, 0.45)` |
+| `heading` | `--qcli-heading` | Headings and values | `#ffffff` | `#111827` |
+| `text` | `--qcli-text` | Body text | `rgba(255, 255, 255, 0.87)` | `#1f2937` |
+| `muted` | `--qcli-muted` | Secondary text and labels | `rgba(255, 255, 255, 0.6)` | `#4b5563` |
+| `subtle` | `--qcli-subtle` | Hints, placeholders, timestamps | `rgba(255, 255, 255, 0.4)` | `#6b7280` |
+| `success` | `--qcli-success` | Success states | `#3fb950` | `#1a7f37` |
+| `warning` | `--qcli-warning` | Warning states | `#f0883e` | `#bc4c00` |
+| `error` | `--qcli-error` | Errors and destructive actions | `#f85149` | `#cf222e` |
+| `info` | `--qcli-info` | Informational states | `#58a6ff` | `#0969da` |
+
 ## Dependencies
 
 - `PyJWT>=2.0.0`

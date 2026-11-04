@@ -3,6 +3,7 @@ from __future__ import annotations
 import abc
 from typing import Any
 
+from ..abstractions import CliPageRequest
 from ..models.cli_server_output import (
     CliServerKeyValueEntry,
     CliServerKeyValueOutput,
@@ -10,6 +11,7 @@ from ..models.cli_server_output import (
     CliServerListOutput,
     CliServerOutput,
     CliServerTableOutput,
+    CliServerTablePage,
     CliServerTextOutput,
 )
 from ..models.cli_server_response import CliServerResponse
@@ -30,6 +32,29 @@ class ICliResponseBuilder(abc.ABC):
     @abc.abstractmethod
     def write_table(self, headers: list[str], rows: list[list[str]]) -> None:
         """Append a table output."""
+        ...
+
+    @abc.abstractmethod
+    def write_paged_table(
+        self,
+        headers: list[str],
+        rows: list[list[str]],
+        page: CliPageRequest,
+        total: int | None = None,
+        has_more: bool | None = None,
+    ) -> None:
+        """Append one page of a longer table.  The terminal shows which rows
+        these are under it and the command for the next ones.
+
+        Args:
+            headers: Column headers.
+            rows: The rows of this page.
+            page: The rows that were asked for (``CliPaging.from_command``).
+            total: All rows across pages, when known.
+            has_more: Whether more rows follow; defaults to
+                ``page.skip + len(rows) < total`` (query ``take + 1`` rows to
+                find out when the total is unknown).
+        """
         ...
 
     @abc.abstractmethod
@@ -70,6 +95,29 @@ class CliResponseBuilder(ICliResponseBuilder):
 
     def write_table(self, headers: list[str], rows: list[list[str]]) -> None:
         self._outputs.append(CliServerTableOutput(headers=headers, rows=rows))
+
+    def write_paged_table(
+        self,
+        headers: list[str],
+        rows: list[list[str]],
+        page: CliPageRequest,
+        total: int | None = None,
+        has_more: bool | None = None,
+    ) -> None:
+        if has_more is None:
+            has_more = total is not None and page.skip + len(rows) < total
+        self._outputs.append(
+            CliServerTableOutput(
+                headers=headers,
+                rows=rows,
+                page=CliServerTablePage(
+                    skip=page.skip,
+                    take=page.take,
+                    total=total,
+                    has_more=has_more,
+                ),
+            )
+        )
 
     def write_list(self, items: list[str], ordered: bool = False) -> None:
         self._outputs.append(CliServerListOutput(items=items, ordered=ordered or None))

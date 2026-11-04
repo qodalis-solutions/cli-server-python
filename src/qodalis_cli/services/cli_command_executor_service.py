@@ -9,6 +9,7 @@ from ..abstractions import CliProcessCommand, ICliCommandProcessor, ICliProcesso
 from ..models.cli_server_output import CliServerTextOutput
 from ..models.cli_server_response import CliServerResponse
 from .cli_command_registry import ICliCommandRegistry
+from .cli_output_limits import DEFAULT_MAX_TABLE_ROWS, apply_response_limits
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +48,18 @@ class CliCommandExecutorService(ICliCommandExecutorService):
         self,
         registry: ICliCommandRegistry,
         filters: Sequence[ICliProcessorFilter] | None = None,
+        max_table_rows: int = DEFAULT_MAX_TABLE_ROWS,
     ) -> None:
+        """
+        Args:
+            registry: The command processor registry.
+            filters: Optional processor filters for runtime enable/disable checks.
+            max_table_rows: Unpaged tables longer than this are cut and marked
+                truncated (``CliServerOptions.max_table_rows``; 0 = no limit).
+        """
         self._registry = registry
         self._filters: list[ICliProcessorFilter] = list(filters or [])
+        self.max_table_rows = max_table_rows
 
     def add_filter(self, filter_: ICliProcessorFilter) -> None:
         """Register an additional processor filter at runtime.
@@ -107,7 +117,7 @@ class CliCommandExecutorService(ICliCommandExecutorService):
             structured = await processor.handle_structured_async(command, cancellation_event)
             if structured is not processor._STRUCTURED_NOT_IMPLEMENTED:
                 logger.info("Command completed (structured): %s", full_command)
-                return structured
+                return apply_response_limits(structured, self.max_table_rows)
             result = await processor.handle_async(command, cancellation_event)
             logger.info("Command completed: %s", full_command)
             return CliServerResponse(
