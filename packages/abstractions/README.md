@@ -67,6 +67,7 @@ Register it on the server with `builder.add_module(GreetingsModule())`; see the 
 |---|---|
 | Processors | `ICliCommandProcessor`, `CliCommandProcessor`, `ICliStreamCommandProcessor`, `is_stream_capable`, `ICliProcessorFilter` |
 | Input | `CliProcessCommand`, `ICliCommandParameterDescriptor`, `CliCommandParameterDescriptor`, `split_shell_words`, `join_shell_words`, `get_positionals`, `get_positional_text` |
+| Paging | `CliPaging` (`parameters()`, `from_command()`), `CliPageRequest` (`skip`, `take`), `DEFAULT_TAKE`, `MAX_TAKE` |
 | Modules and metadata | `ICliModule`, `CliModule`, `ICliCommandAuthor`, `CliCommandAuthor`, `DEFAULT_LIBRARY_AUTHOR` |
 | Jobs | `ICliJob`, `ICliJobExecutionContext`, `ICliJobLogger`, `CliJobOptions`, `ICliJobStorageProvider`, `JobExecution`, `JobState`, `JobLogEntry` |
 | Data explorer | `IDataExplorerProvider`, `DataExplorerProviderOptions`, `DataExplorerExecutionContext`, `DataExplorerResult`, `DataExplorerLanguage`, `DataExplorerOutputFormat`, `DataExplorerTemplate`, `DataExplorerParameterDescriptor`, schema types |
