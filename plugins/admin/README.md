@@ -68,6 +68,8 @@ needs the `admin:access` permission; the static `QCLI_ADMIN_USERNAME`/`QCLI_ADMI
 
 ### Sign in with the host app's session
 
+The full setup (adapter, middleware order, permissions) is in [Use with your app's sign-in](../../README.md#use-with-your-apps-sign-in).
+
 When the users plugin delegates authentication to your application (`CliUsersBuilder().set_auth_adapter(...)`), it
 sets the server option `external_authentication` when mounted and the dashboard runs in **external** mode:
 

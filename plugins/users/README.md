@@ -198,6 +198,8 @@ users_plugin = CliUsersBuilder().set_user_store(PostgresUserStore(pool)).build()
 
 ## External auth adapter
 
+The middleware order and a complete setup with the admin dashboard are in [Use with your app's sign-in](../../README.md#use-with-your-apps-sign-in).
+
 If the host application already authenticates requests, call `set_auth_adapter(adapter)`. The adapter (sync or async) receives the request and returns an `ExternalAuthResult` (user + admin flag + optional permissions) or `None`. Login, logout, password change and `verify-password` then answer `501`; no `root` user is seeded (the built-in groups still are), and adapter sessions are not stored or listed. Permissions come from the groups the adapter returns (`is_admin` adds `admin`) plus the result's `permissions`; group names missing from the group store grant nothing (and break nothing).
 
 The adapter may return the result directly or an awaitable of it, so it can load the user, their roles or their disabled state from a database. A plain function, an `async def` function and an object with a sync or async `__call__` are all accepted; the plugin awaits the result for every request, ticket issuance and socket re-check:
