@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Awaitable, Callable, Optional, Union
 
 from .._http import forwarded_client_ip
+from ..external_request import ExternalRequestSnapshot
 from ..errors import UsersApiError, forbidden, unauthorized
 from ..models import (
     ApiToken,
@@ -102,6 +103,9 @@ class AuthContext:
     external: bool = False
     #: Set when authenticated by an API token (then ``session`` is ``None``).
     api_token: ApiToken | None = None
+    #: External adapter identities: the request the adapter accepted (the
+    #: ``ws-ticket`` request for sockets), re-run to re-check open sockets.
+    external_request: ExternalRequestSnapshot | None = None
 
     @property
     def api_token_id(self) -> str | None:
@@ -164,6 +168,12 @@ class AuthServiceOptions:
     ticket_ttl_ms: int = TICKET_TTL_MS
     #: Allow API tokens that never expire (``expiresInDays: null``).
     allow_non_expiring_tokens: bool = False
+    #: The host owns the users: user writes (create, update, delete, password,
+    #: group membership) answer 501 and no ``root`` user is seeded.
+    read_only_users: bool = False
+    #: The host owns the groups: group writes answer 501 and the built-in
+    #: groups are not seeded.
+    read_only_groups: bool = False
 
 
 class AuthService:
@@ -535,7 +545,8 @@ class AuthService:
         """Whether the session behind an authenticated WebSocket is still
         alive (not logged out, revoked, expired; user neither disabled nor
         deleted).  Never extends the session.  Adapter identities have no
-        stored session and stay valid."""
+        stored session and stay valid here: they are re-checked through the
+        adapter (:meth:`is_external_socket_active`)."""
         if not isinstance(ctx, AuthContext):
             return True
         if ctx.external:
@@ -561,6 +572,8 @@ class AuthService:
             "loginTime": session.created_at,
             "lastActivity": session.last_activity,
             "expiresAt": self.expires_at(session),
+            "usersReadOnly": bool(self.options.read_only_users),
+            "groupsReadOnly": bool(self.options.read_only_groups),
         }
 
     # ------------------------------------------------------------------
@@ -646,13 +659,31 @@ class AuthService:
         user = await self.user_store.get_user(record.user_id)
         return record.to_view(user.name if user else "")
 
-    async def authenticate_external(self, request: Any) -> AuthContext:
+    async def run_auth_adapter(self, request: Any) -> ExternalAuthResult | None:
+        """Call the external auth adapter on ``request``, awaiting its result
+        when the adapter is async (or returns an awaitable)."""
         assert self.auth_adapter is not None
         result = self.auth_adapter(request)
         if inspect.isawaitable(result):
             result = await result
+        return result
+
+    async def authenticate_external(self, request: Any) -> AuthContext:
+        """Authenticate ``request`` through the external auth adapter.
+
+        401 when the adapter returns no user, 401 ``account disabled`` for a
+        disabled user.  The context keeps a snapshot of ``request`` so open
+        sockets can be re-checked against it (:meth:`revalidate_external`)."""
+        result = await self.run_auth_adapter(request)
         if not isinstance(result, ExternalAuthResult) or result.user is None:
             raise unauthorized()
+        return await self._external_context(result, ExternalRequestSnapshot.capture(request))
+
+    async def _external_context(
+        self, result: ExternalAuthResult, request: ExternalRequestSnapshot | None,
+    ) -> AuthContext:
+        if result.user.disabled:
+            raise unauthorized(ACCOUNT_DISABLED)
         groups = list(result.user.groups or [])
         if result.is_admin and not any(g.lower() == ADMIN_GROUP for g in groups):
             groups.append(ADMIN_GROUP)
@@ -666,13 +697,59 @@ class AuthService:
             created_at=now,
             last_activity=now,
         )
+        permissions = await self.effective_permissions(groups)
+        if result.permissions:
+            permissions = merge_permissions(permissions, result.permissions)
         return AuthContext(
             user=user,
             groups=groups,
-            permissions=await self.effective_permissions(groups),
+            permissions=permissions,
             session=session,
             external=True,
+            external_request=request,
         )
+
+    async def revalidate_external(self, ctx: AuthContext, connection: Any = None) -> AuthContext | None:
+        """Re-run the external auth adapter for an adapter identity on a request
+        rebuilt from the snapshot of the request it was authenticated with
+        (``connection`` when there is no snapshot).
+
+        ``None`` when there is nothing to re-run it on, or the adapter returns
+        no user, another user or a disabled user, or raises."""
+        if not ctx.external or self.auth_adapter is None:
+            return None
+        if ctx.external_request is not None:
+            request = ctx.external_request.to_request()
+            snapshot = ctx.external_request
+        elif connection is not None:
+            request = connection
+            snapshot = ExternalRequestSnapshot.capture(connection)
+        else:
+            return None
+        try:
+            result = await self.run_auth_adapter(request)
+        except Exception:
+            logger.warning("External auth adapter failed while re-validating user %s",
+                           ctx.user.id, exc_info=True)
+            return None
+        if (
+            not isinstance(result, ExternalAuthResult)
+            or result.user is None
+            or result.user.id != ctx.user.id
+            or result.user.disabled
+        ):
+            return None
+        return await self._external_context(result, snapshot)
+
+    async def is_external_socket_active(self, ctx: Any, permission: str | None = None) -> bool:
+        """Whether an adapter identity behind an events/logs socket is still
+        authenticated by the adapter (same user, enabled) and holds
+        ``permission``.  ``True`` for every other identity: those are checked
+        against their stored session or token (:meth:`is_context_active`)."""
+        if not isinstance(ctx, AuthContext) or not ctx.external:
+            return True
+        current = await self.revalidate_external(ctx)
+        return current is not None and (permission is None or current.can(permission))
 
     @staticmethod
     def ensure_password_changed(ctx: AuthContext) -> None:
@@ -829,17 +906,19 @@ class AuthService:
         """Seed the built-in groups and (unless external auth) the root user.
 
         Without a configured password a random one is generated, logged once
-        and the root account must change it at first login."""
-        if not await self.group_store.get_group(ADMIN_GROUP):
-            await self.group_store.create_group(
-                ADMIN_GROUP, "Administrators", ["*"], built_in=True,
-            )
-        if not await self.group_store.get_group(USERS_GROUP):
-            await self.group_store.create_group(
-                USERS_GROUP, "Default group for new accounts",
-                list(DEFAULT_USERS_GROUP_PERMISSIONS), built_in=True,
-            )
-        if self.external_auth:
+        and the root account must change it at first login.  Read-only stores
+        belong to the host application: nothing is seeded into them."""
+        if not self.options.read_only_groups:
+            if not await self.group_store.get_group(ADMIN_GROUP):
+                await self.group_store.create_group(
+                    ADMIN_GROUP, "Administrators", ["*"], built_in=True,
+                )
+            if not await self.group_store.get_group(USERS_GROUP):
+                await self.group_store.create_group(
+                    USERS_GROUP, "Default group for new accounts",
+                    list(DEFAULT_USERS_GROUP_PERMISSIONS), built_in=True,
+                )
+        if self.external_auth or self.options.read_only_users:
             return
         if len(await self.user_store.get_users()) != 0:
             return

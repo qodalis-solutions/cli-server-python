@@ -4,9 +4,9 @@ Registered on the CLI server when the plugin is mounted.  An open shell is
 bound to the session that opened it: the server re-checks it periodically and
 on every session/user/group change, and closes it (4401 ``session ended``)
 after logout, expiry, revoke, disable/delete or loss of ``shell:execute``.
-Identities from an external auth adapter are re-validated by calling the
-adapter again with the shell's WebSocket request, so the adapter must be able
-to authenticate it from its headers/cookies.
+Identities from an external auth adapter are re-validated by running the
+adapter again on a snapshot of the request it accepted (the ``ws-ticket``
+request), with the same headers and cookies.
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ class UsersShellPrincipal:
     user_name: str
     session_id: str | None
     context: AuthContext
-    #: The shell's WebSocket: adapter identities are re-validated by calling
-    #: the external auth adapter again with it.
+    #: The shell's WebSocket: adapter identities without a request snapshot
+    #: are re-validated by calling the external auth adapter again with it.
     connection: Any = None
 
 
@@ -104,17 +104,13 @@ class UsersShellAccess:
         return True
 
     async def _adapter_active(self, principal: UsersShellPrincipal) -> bool | str:
-        """Adapter identities have no stored session: ask the external auth
-        adapter again with the shell's WebSocket (its headers and cookies).
-        ``None`` or an exception ends the shell; a different user or one
-        without ``shell:execute`` too."""
-        if principal.connection is None or not self.auth.external_auth:
-            return False
-        try:
-            fresh = await self.auth.authenticate_external(principal.connection)
-        except Exception:
-            return False
-        if fresh.user.id != principal.user_id or fresh.must_change_password:
+        """Adapter identities have no stored session: run the external auth
+        adapter again on the snapshot of the request it accepted (the
+        ``ws-ticket`` request; the shell's WebSocket when there is none).
+        ``None``, an exception, a different or disabled user end the shell;
+        a user without ``shell:execute`` too (``permission removed``)."""
+        fresh = await self.auth.revalidate_external(principal.context, principal.connection)
+        if fresh is None or fresh.must_change_password:
             return False
         if not fresh.can(SHELL_PERMISSION):
             return PERMISSION_REMOVED

@@ -300,7 +300,9 @@ class UsersService:
     async def delete_group(self, ctx: AuthContext | None, group: Group) -> None:
         if self._is_built_in(group):
             raise conflict(f"cannot delete built-in group: {group.name}")
-        for user in await self.group_members(group):
+        # A read-only user store keeps its memberships (the host owns them).
+        members = [] if self.auth.options.read_only_users else await self.group_members(group)
+        for user in members:
             await self.users.update_user(
                 user.id,
                 groups=[g for g in user.groups if g.lower() != group.name.lower()],

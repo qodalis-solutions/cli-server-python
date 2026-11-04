@@ -71,6 +71,11 @@ class CliServerOptions:
     #: is cut to this many rows and marked ``truncated``, so a terminal never
     #: receives thousands of rows at once.
     max_table_rows: int = DEFAULT_MAX_TABLE_ROWS
+    #: ``True`` when requests are authenticated by the host application rather
+    #: than by the CLI's own sign-in.  Set by an authentication plugin (the
+    #: users plugin with an external auth adapter) when mounted; the admin
+    #: dashboard then signs in through the host (``GET /api/v1/qcli/auth/mode``).
+    external_authentication: bool = False
     configure: Callable[[CliBuilder], None] | None = None
 
 
