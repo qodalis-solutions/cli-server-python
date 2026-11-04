@@ -13,6 +13,10 @@ from .abstractions import (
     CliCommandParameterDescriptor,
     ICliCommandProcessor,
     CliCommandProcessor,
+    CliPageRequest,
+    CliPaging,
+    DEFAULT_TAKE,
+    MAX_TAKE,
     ICliModule,
     CliModule,
     ICliProcessorFilter,
@@ -20,6 +24,7 @@ from .abstractions import (
 from .models import (
     CliServerOutput,
     CliServerResponse,
+    CliServerTablePage,
     CliServerCommandDescriptor,
     CliServerCommandParameterDescriptorDto,
 )
@@ -32,6 +37,7 @@ from .services import (
     CliCommandExecutorService,
     CliEventSocketManager,
     CliShellSessionManager,
+    apply_output_limits,
 )
 from .controllers import create_cli_router, create_cli_version_router, create_filesystem_router
 from .extensions import CliBuilder
@@ -90,11 +96,16 @@ __all__ = [
     "CliCommandParameterDescriptor",
     "ICliCommandProcessor",
     "CliCommandProcessor",
+    "CliPageRequest",
+    "CliPaging",
+    "DEFAULT_TAKE",
+    "MAX_TAKE",
     "ICliModule",
     "CliModule",
     "ICliProcessorFilter",
     "CliServerOutput",
     "CliServerResponse",
+    "CliServerTablePage",
     "CliServerCommandDescriptor",
     "CliServerCommandParameterDescriptorDto",
     "ICliCommandRegistry",
@@ -105,6 +116,7 @@ __all__ = [
     "CliCommandExecutorService",
     "CliEventSocketManager",
     "CliShellSessionManager",
+    "apply_output_limits",
     "create_cli_router",
     "create_cli_version_router",
     "create_filesystem_router",

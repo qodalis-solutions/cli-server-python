@@ -37,6 +37,7 @@ from .services import (
     CliEventSocketManager,
     CliLogSocketManager,
     CliShellSessionManager,
+    DEFAULT_MAX_TABLE_ROWS,
     WebSocketLogHandler,
 )
 
@@ -65,6 +66,11 @@ class CliServerOptions:
     #: MCP endpoint (``POST /api/qcli/mcp``) — opt-in.  ``True`` or a
     #: :class:`CliMcpOptions` (or an equivalent ``dict``) enables it.
     mcp: bool | CliMcpOptions | dict[str, Any] | None = None
+    #: The most rows a table may return without paging (0 = no limit).  A
+    #: larger table from a command that does not page (``write_paged_table``)
+    #: is cut to this many rows and marked ``truncated``, so a terminal never
+    #: receives thousands of rows at once.
+    max_table_rows: int = DEFAULT_MAX_TABLE_ROWS
     configure: Callable[[CliBuilder], None] | None = None
 
 
@@ -171,7 +177,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     if opts.configure:
         opts.configure(builder)
 
-    executor = CliCommandExecutorService(registry)
+    executor = CliCommandExecutorService(registry, max_table_rows=opts.max_table_rows)
     shell_auth = lambda: shell_session_manager.access_mode  # noqa: E731
     router = create_cli_router(registry, executor, enable_shell=opts.enable_shell, shell_auth=shell_auth)
     version_router = create_cli_version_router(enable_shell=opts.enable_shell, shell_auth=shell_auth)

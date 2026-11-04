@@ -16,6 +16,7 @@ from qodalis_cli_server_abstractions import is_stream_capable
 from ..models import CliServerCommandDescriptor, CliServerCommandParameterDescriptorDto, CliServerResponse
 from ..services.cli_command_executor_service import ICliCommandExecutorService
 from ..services.cli_command_registry import ICliCommandRegistry
+from ..services.cli_output_limits import DEFAULT_MAX_TABLE_ROWS, apply_output_limits
 from ..security import get_auth_context, missing_processor_permissions
 
 logger = logging.getLogger(__name__)
@@ -109,17 +110,22 @@ def create_cli_router(
     *,
     enable_shell: bool = False,
     shell_auth: Callable[[], str | None] | None = None,
+    max_table_rows: int | None = None,
 ) -> APIRouter:
     """Create a FastAPI router for the v1 CLI API.
 
     Args:
         registry: The command registry to query for available processors.
         executor: The executor service used to run commands.
+        max_table_rows: Row cap for unpaged tables emitted by stream
+            processors (0 = no limit); defaults to the executor's.
 
     Returns:
         A configured ``APIRouter``.
     """
     router = APIRouter()
+    if max_table_rows is None:
+        max_table_rows = getattr(executor, "max_table_rows", DEFAULT_MAX_TABLE_ROWS)
 
     @router.get("/version")
     async def get_version() -> dict[str, str]:
@@ -215,7 +221,7 @@ def create_cli_router(
 
                     def emit_to_queue(output: dict) -> None:
                         if not cancellation_event.is_set():
-                            queue.put_nowait(sse_event("output", output))
+                            queue.put_nowait(sse_event("output", apply_output_limits(output, max_table_rows)))
 
                     task = asyncio.ensure_future(
                         processor.handle_stream_async(command, emit_to_queue, cancellation_event)
