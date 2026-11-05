@@ -109,6 +109,8 @@ class LogRingBuffer:
         level: str | None = None,
         search: str | None = None,
         service: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -118,8 +120,16 @@ class LogRingBuffer:
         ``WARN``, ``ERROR``; Python's names work too), ``search`` a literal
         case-insensitive text in the message or the source, ``service`` the
         service that wrote the entries (the in-memory buffer has none, so
-        any service matches nothing)."""
+        any service matches nothing); ``since``/``until`` keep the entries
+        with ``since <= timestamp < until``."""
         entries = self._filter(level=level, search=search, service=service)
+        if since is not None or until is not None:
+            entries = [
+                e for e in entries
+                if (stamp := _entry_time(e)) is not None
+                and (since is None or stamp >= since)
+                and (until is None or stamp < until)
+            ]
         total = len(entries)
         page = entries[offset: offset + limit]
 

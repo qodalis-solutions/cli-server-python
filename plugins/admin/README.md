@@ -62,7 +62,7 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli`). Exce
 | POST | `/plugins/{id}/toggle` | Enable or disable a plugin module |
 | GET | `/config` | Get server configuration sections |
 | PUT | `/config` | Update mutable runtime settings |
-| GET | `/logs` | Retrieve buffered log entries: `?level=` (one or comma-separated `DEBUG`, `INFO`, `WARN`, `ERROR`), `search=` (message or source), `service=`, `limit=`, `offset=` |
+| GET | `/logs` | Retrieve buffered log entries: `?level=` (one or comma-separated `DEBUG`, `INFO`, `WARN`, `ERROR`), `search=` (message or source), `service=`, `from=`/`to=` (ISO 8601, no offset = UTC), `limit=`, `offset=`; answers `entries`, `total`, `limit`, `offset`, `hasMore`, `store` (`memory`), `persistent` (`false`), `services` (`[]`) |
 | GET | `/logs/histogram` | Buffered log entries per level in equal time columns: `?from=&to=&buckets=` (default the last 24 h in 24 columns, `buckets` clamped to 1..200) with the filters of `/logs` |
 | GET | `/ws/clients` | List connected WebSocket clients |
 

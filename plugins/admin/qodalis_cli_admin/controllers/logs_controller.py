@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from ..services.log_ring_buffer import HISTOGRAM_LEVELS, LogRingBuffer, histogram_level
-from ..services.time_range import RangeError, parse_buckets, resolve_range
+from ..services.time_range import RangeError, parse_buckets, parse_time, resolve_range
 
 
 def _levels(level: str | None) -> list[str]:
@@ -39,13 +39,24 @@ def create_logs_router(
         level: str | None = Query(None),
         search: str | None = Query(None),
         service: str | None = Query(None),
+        from_: str | None = Query(None, alias="from"),
+        to: str | None = Query(None),
         limit: int = Query(100, le=1000),
         offset: int = Query(0, ge=0),
-    ) -> dict[str, Any]:
+    ) -> Any:
+        """Buffered entries filtered by level, search, service and the time
+        range ``[from, to)`` (ISO 8601, no offset = UTC)."""
+        try:
+            since = parse_time(from_, "from")
+            until = parse_time(to, "to")
+        except RangeError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
         items, total = log_buffer.query(
             level=level,
             search=search,
             service=service.strip() if service and service.strip() else None,
+            since=since,
+            until=until,
             limit=limit,
             offset=offset,
         )
@@ -54,6 +65,11 @@ def create_logs_router(
             "total": total,
             "limit": limit,
             "offset": offset,
+            "hasMore": offset + len(items) < total,
+            # The dashboard filters on the server when it names its store.
+            "store": "memory",
+            "persistent": False,
+            "services": [],
         }
 
     @router.get("/logs/histogram")
