@@ -192,6 +192,26 @@ async def test_audit_store_cap_and_filters():
     assert all(e.event == "login" and e.username == "u1" for e in logins)
 
 
+async def test_audit_store_actor_offset_and_prune():
+    store = InMemoryAuditStore()
+    await store.log(AuditEntry(timestamp=1, event="login", username="hacker"))
+    await store.log(AuditEntry(timestamp=2, event="login_failed", username="hacker"))
+    await store.log(AuditEntry(timestamp=3, event="user_updated", username="bob", actor="Root",
+                               target="group:admins", properties={"old": 1, "new": 2}))
+
+    page = await store.get_entries(AuditQueryOptions(offset=1, limit=1))
+    assert [e.event for e in page] == ["login_failed"]
+    by_actor = await store.get_entries(AuditQueryOptions(actor="root"))
+    assert [e.event for e in by_actor] == ["user_updated"]
+    assert by_actor[0].to_dict()["target"] == "group:admins"
+    assert by_actor[0].to_dict()["properties"] == {"old": 1, "new": 2}
+    # Optional fields are left out when unset
+    assert "target" not in page[0].to_dict() and "properties" not in page[0].to_dict()
+
+    assert await store.prune(3) == 2
+    assert [e.event for e in await store.get_entries()] == ["user_updated"]
+
+
 # ---------------------------------------------------------------------------
 # Auth service
 # ---------------------------------------------------------------------------

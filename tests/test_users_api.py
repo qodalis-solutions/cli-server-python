@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import re
 import time
@@ -828,6 +830,37 @@ class TestAudit:
 
     def test_bad_limit(self, api: Api, admin: str):
         assert_error(api.get("/audit?limit=x", admin), 400)
+        assert_error(api.get("/audit?limit=-1", admin), 400)
+        assert_error(api.get("/audit?offset=-1", admin), 400)
+
+    def test_actor_and_offset(self, api: Api, admin: str):
+        api.create_user(admin, "alice")
+        entries = api.get("/audit", admin).json()
+        by_root = api.get("/audit?actor=ROOT", admin).json()
+        assert by_root and all(e["actor"] == "root" for e in by_root)
+        assert api.get("/audit?actor=nobody", admin).json() == []
+        assert api.get("/audit?offset=1&limit=1", admin).json() == entries[1:2]
+
+    def test_without_a_limit_the_newest_page_and_never_more_than_the_maximum(self, api: Api, admin: str):
+        from qodalis_cli_users.controllers.audit_controller import DEFAULT_AUDIT_LIMIT
+        from qodalis_cli_users.models import AuditEntry
+
+        for i in range(DEFAULT_AUDIT_LIMIT + 5):
+            asyncio.run(api.plugin.audit_store.log(AuditEntry(event="note", username=f"u{i}", timestamp=i)))
+
+        assert len(api.get("/audit", admin).json()) == DEFAULT_AUDIT_LIMIT
+        assert len(api.get("/audit?limit=5000", admin).json()) > DEFAULT_AUDIT_LIMIT
+
+    def test_group_events_have_a_target(self, api: Api, admin: str):
+        api.post("/groups", admin, json={"name": "Editors"})
+        api.create_user(admin, "alice")
+        assert api.post("/groups/Editors/members/alice", admin).status_code == 204
+        created = api.get("/audit?event=group_created", admin).json()[0]
+        assert created["target"] == "group:Editors"
+        added = api.get("/audit?event=group_member_added", admin).json()
+        assert added and added[0]["target"] == "group:Editors" and added[0]["username"] == "alice"
+        login = api.get("/audit?event=user_created", admin).json()[0]
+        assert "target" not in login and "properties" not in login
 
 
 # =========================================================================

@@ -13,9 +13,20 @@ from ..services.module_registry import ModuleRegistry
 def create_plugins_router(
     module_registry: ModuleRegistry,
     auth_dependency: Any,
+    builder: Any = None,
 ) -> APIRouter:
-    """Create a router with ``GET /plugins`` and ``POST /plugins/{id}/toggle``."""
+    """Create a router with ``GET /plugins``, ``GET /plugins/installed`` and
+    ``POST /plugins/{id}/toggle``."""
     router = APIRouter()
+
+    @router.get("/plugins/installed")
+    async def list_installed_plugins(
+        _user: dict[str, Any] = Depends(auth_dependency),
+    ) -> list[dict[str, Any]]:
+        """The installed server plugin packages (core, users, admin, jobs,
+        storage providers, ...) with their versions, in the order added."""
+        plugins = getattr(builder, "installed_plugins", None) or []
+        return [p.to_dict() for p in plugins]
 
     @router.get("/plugins")
     async def list_plugins(

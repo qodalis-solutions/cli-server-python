@@ -271,7 +271,8 @@ class UsersService:
             group = await self.groups.create_group(name, description, perms)
         except ValueError as exc:
             raise conflict(str(exc)) from exc
-        await self.auth.audit("group_created", ctx.user.name if ctx else "", details=group.name, **_actor(ctx))
+        await self.auth.audit("group_created", ctx.user.name if ctx else "", details=group.name,
+                              target=f"group:{group.name}", **_actor(ctx))
         return group
 
     async def update_group(
@@ -294,7 +295,8 @@ class UsersService:
             )
         except KeyError as exc:
             raise not_found(f"group not found: {group.name}") from exc
-        await self.auth.audit("group_updated", ctx.user.name if ctx else "", details=updated.name, **_actor(ctx))
+        await self.auth.audit("group_updated", ctx.user.name if ctx else "", details=updated.name,
+                              target=f"group:{updated.name}", **_actor(ctx))
         return updated
 
     async def delete_group(self, ctx: AuthContext | None, group: Group) -> None:
@@ -308,7 +310,8 @@ class UsersService:
                 groups=[g for g in user.groups if g.lower() != group.name.lower()],
             )
         await self.groups.delete_group(group.name)
-        await self.auth.audit("group_deleted", ctx.user.name if ctx else "", details=group.name, **_actor(ctx))
+        await self.auth.audit("group_deleted", ctx.user.name if ctx else "", details=group.name,
+                              target=f"group:{group.name}", **_actor(ctx))
 
     async def add_member(self, ctx: AuthContext | None, group: Group, user: User) -> None:
         if ctx is not None:
@@ -318,7 +321,7 @@ class UsersService:
             return
         await self.users.update_user(user.id, groups=[*user.groups, group.name])
         await self.auth.audit("group_member_added", user.name, details=group.name,
-                              user_id=user.id, **_actor(ctx))
+                              user_id=user.id, target=f"group:{group.name}", **_actor(ctx))
 
     async def remove_member(self, ctx: AuthContext | None, group: Group, user: User) -> None:
         if ctx is not None:
@@ -332,4 +335,4 @@ class UsersService:
             groups=[g for g in user.groups if g.lower() != group.name.lower()],
         )
         await self.auth.audit("group_member_removed", user.name, details=group.name,
-                              user_id=user.id, **_actor(ctx))
+                              user_id=user.id, target=f"group:{group.name}", **_actor(ctx))

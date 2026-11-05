@@ -218,11 +218,11 @@ class CliAdminBuilder:
 
         status_router = create_status_router(
             start_time, deps.event_socket_manager, auth_dep, enabled_features,
-            registry=deps.registry,
+            registry=deps.registry, builder=deps.builder,
         )
         router.include_router(status_router)
 
-        plugins_router = create_plugins_router(module_registry, auth_dep)
+        plugins_router = create_plugins_router(module_registry, auth_dep, deps.builder)
         router.include_router(plugins_router)
 
         config_router = create_config_router(config, auth_dep)

@@ -16,6 +16,7 @@ from .jobs import (
     CliJobOptions,
     ICliJobStorageProvider,
     JobExecution,
+    JobExecutionQuery,
     JobState,
     JobLogEntry,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "CliJobOptions",
     "ICliJobStorageProvider",
     "JobExecution",
+    "JobExecutionQuery",
     "JobState",
     "JobLogEntry",
     "DataExplorerLanguage",
