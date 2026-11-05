@@ -289,6 +289,7 @@ CORS never combines `*` with credentials. With `allowed_origins` set, a WebSocke
 | GET | `/api/v1/qcli/version` | Server version |
 | GET | `/api/v1/qcli/capabilities` | OS, shell, streaming, `shellAuth` |
 | GET | `/api/v1/qcli/commands` | Registered processors with their parameters |
+| GET | `/api/v1/qcli/commands/stats` | Command usage since start: executions, failures, average duration (ms), last execution and failure per root command (REST, stream and MCP) |
 | POST | `/api/v1/qcli/execute` | Execute a command |
 | POST | `/api/v1/qcli/execute/stream` | Execute a command, output as Server-Sent Events |
 | GET/POST/DELETE | `/api/qcli/fs/*` | File system: `ls`, `cat`, `stat`, `download`, `upload`, `mkdir`, `rm` (when enabled) |
@@ -845,7 +846,7 @@ The image runs the demo server (all plugins, users plugin with `root` / `admin`)
 
 ## Versioning
 
-Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b18` today (PEP 440 for `1.0.0-beta.18`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
+Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b19` today (PEP 440 for `1.0.0-beta.19`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
 
 ## Development
 

@@ -6,7 +6,7 @@ import logging
 import re
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Awaitable
 
 
@@ -41,6 +41,42 @@ _LEVEL_MAP = {
 }
 
 
+#: The columns of ``GET /logs/histogram``.
+HISTOGRAM_LEVELS = ("DEBUG", "INFO", "WARN", "ERROR")
+
+_HISTOGRAM_LEVEL_MAP = {
+    "TRACE": "DEBUG",
+    "DEBUG": "DEBUG",
+    "INFO": "INFO",
+    "INFORMATION": "INFO",
+    "WARN": "WARN",
+    "WARNING": "WARN",
+    "ERROR": "ERROR",
+    "CRITICAL": "ERROR",
+    "FATAL": "ERROR",
+}
+
+
+def histogram_level(level: str | None) -> str | None:
+    """The histogram column of a level (``WARNING`` -> ``WARN``, ``CRITICAL``
+    -> ``ERROR``), ``None`` for an unknown level."""
+    return _HISTOGRAM_LEVEL_MAP.get((level or "").strip().upper())
+
+
+def iso_ms(value: datetime) -> str:
+    """``2026-11-05T21:00:00.000Z`` (UTC, milliseconds)."""
+    utc = value.astimezone(timezone.utc)
+    return utc.strftime("%Y-%m-%dT%H:%M:%S.") + f"{utc.microsecond // 1000:03d}Z"
+
+
+def _entry_time(entry: LogEntry) -> datetime | None:
+    try:
+        stamp = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return None
+    return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp
+
+
 def _normalize_level(level: str) -> str:
     """Normalize Python log level names to SPA-expected short forms."""
     return _LEVEL_MAP.get(level.upper(), level.upper())
@@ -72,24 +108,28 @@ class LogRingBuffer:
         *,
         level: str | None = None,
         search: str | None = None,
+        service: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> tuple[list[dict[str, Any]], int]:
-        """Return matching entries and the total count (before pagination)."""
-        entries = list(self._buffer)
+        """Return matching entries and the total count (before pagination).
 
-        if level:
-            level_upper = level.upper()
-            # Support filtering by SPA-form "WARN" matching Python's "WARNING"
-            match_levels = {level_upper}
-            if level_upper == "WARN":
-                match_levels.add("WARNING")
-            entries = [e for e in entries if e.level in match_levels]
-
-        if search:
-            search_lower = search.lower()
-            entries = [e for e in entries if search_lower in e.message.lower()]
-
+        ``level`` is one level or comma-separated levels (``DEBUG``, ``INFO``,
+        ``WARN``, ``ERROR``; Python's names work too), ``search`` a literal
+        case-insensitive text in the message or the source, ``service`` the
+        service that wrote the entries (the in-memory buffer has none, so
+        any service matches nothing); ``since``/``until`` keep the entries
+        with ``since <= timestamp < until``."""
+        entries = self._filter(level=level, search=search, service=service)
+        if since is not None or until is not None:
+            entries = [
+                e for e in entries
+                if (stamp := _entry_time(e)) is not None
+                and (since is None or stamp >= since)
+                and (until is None or stamp < until)
+            ]
         total = len(entries)
         page = entries[offset: offset + limit]
 
@@ -105,6 +145,80 @@ class LogRingBuffer:
             ],
             total,
         )
+
+    def histogram(
+        self,
+        since: datetime,
+        until: datetime,
+        buckets: int,
+        *,
+        levels: list[str] | None = None,
+        search: str | None = None,
+        service: str | None = None,
+    ) -> dict[str, Any]:
+        """Entries in ``[since, until)`` counted per level in ``buckets``
+        equal time columns (``GET /logs/histogram``)."""
+        since_ms = since.timestamp() * 1000
+        bucket_ms = (until.timestamp() * 1000 - since_ms) / buckets
+        columns: list[dict[str, Any]] = [
+            {
+                "start": iso_ms(since + timedelta(milliseconds=i * bucket_ms)),
+                **{name: 0 for name in HISTOGRAM_LEVELS},
+            }
+            for i in range(buckets)
+        ]
+        totals = {name: 0 for name in HISTOGRAM_LEVELS}
+        wanted = set(levels) if levels else None
+        for entry in self._filter(search=search, service=service):
+            name = histogram_level(entry.level)
+            if name is None or (wanted is not None and name not in wanted):
+                continue
+            stamp = _entry_time(entry)
+            if stamp is None or not since <= stamp < until:
+                continue
+            index = min(max(int((stamp.timestamp() * 1000 - since_ms) // bucket_ms), 0), buckets - 1)
+            columns[index][name] += 1
+            totals[name] += 1
+        return {
+            "from": iso_ms(since),
+            "to": iso_ms(until),
+            "bucketMs": int(bucket_ms) if float(bucket_ms).is_integer() else bucket_ms,
+            "buckets": columns,
+            "totals": totals,
+            "store": "memory",
+        }
+
+    def _filter(
+        self,
+        *,
+        level: str | None = None,
+        search: str | None = None,
+        service: str | None = None,
+    ) -> list[LogEntry]:
+        entries = list(self._buffer)
+        if service:
+            return []
+
+        if level:
+            match_levels: set[str] = set()
+            for name in level.split(","):
+                name = name.strip().upper()
+                if not name:
+                    continue
+                match_levels.add(name)
+                # Support filtering by SPA-form "WARN" matching Python's "WARNING"
+                if name == "WARN":
+                    match_levels.add("WARNING")
+            if match_levels:
+                entries = [e for e in entries if e.level in match_levels]
+
+        if search:
+            search_lower = search.lower()
+            entries = [
+                e for e in entries
+                if search_lower in e.message.lower() or search_lower in (e.logger_name or "").lower()
+            ]
+        return entries
 
     def install_handler(self, logger_name: str = "") -> None:
         """Install a :class:`logging.Handler` that feeds into this buffer."""
