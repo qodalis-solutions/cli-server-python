@@ -57,6 +57,7 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli`). Exce
 | GET | `/auth/me` | Get current authenticated user info |
 | GET | `/status` | Server status, uptime, connected clients, enabled features |
 | GET | `/plugins` | List registered plugin modules |
+| GET | `/plugins/installed` | List the installed server plugin packages (`id`, `name`, `version`, `description`) |
 | POST | `/plugins/{id}/toggle` | Enable or disable a plugin module |
 | GET | `/config` | Get server configuration sections |
 | PUT | `/config` | Update mutable runtime settings |
@@ -131,6 +132,21 @@ window.location.href = `/qcli/admin/#token=${encodeURIComponent(accessToken)}`;
 
 When the token expires, the next API call answers 401 and the dashboard shows the sign-in screen; after signing in
 again, the host repeats the handoff.
+
+## Installed plugins
+
+The dashboard's Plugins page lists the server plugins the host installed: the core server, and each plugin package
+mounted with `result.mount_plugin(...)` (users, admin, jobs) or added through the builder (`add_module`,
+`set_file_storage_provider`, `add_filesystem`, `add_data_explorer_provider`), with the distribution's version and
+summary. A plugin of your own lists itself:
+
+```python
+builder.add_installed_plugin("acme-cli-billing")        # a distribution name
+builder.add_installed_plugin(BillingModule())           # or an object of the package
+```
+
+The status reports the `audit` feature when the users plugin is installed (the dashboard's Audit page), and `jobs`
+when the jobs plugin is.
 
 ## Dashboard
 

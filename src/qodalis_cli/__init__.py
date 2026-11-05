@@ -27,6 +27,7 @@ from .models import (
     CliServerTablePage,
     CliServerCommandDescriptor,
     CliServerCommandParameterDescriptorDto,
+    CliInstalledPlugin,
 )
 from .services import (
     ICliCommandRegistry,
@@ -121,6 +122,7 @@ __all__ = [
     "create_cli_version_router",
     "create_filesystem_router",
     "CliBuilder",
+    "CliInstalledPlugin",
     "FileSystemOptions",
     "FileSystemPathValidator",
     "CliEchoCommandProcessor",
