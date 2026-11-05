@@ -357,6 +357,27 @@ class TestLogHistogram:
             logs = (await client.get(f"{BASE}/logs?level=WARN,ERROR", headers=h)).json()
             assert logs["total"] == 5
 
+            # GET /logs answers like the .NET server, so the dashboard filters on the server
+            logs = (await client.get(f"{BASE}/logs?limit=3", headers=h)).json()
+            assert set(logs) == {"entries", "total", "limit", "offset", "hasMore", "store", "persistent", "services"}
+            assert logs["total"] == 10 and len(logs["entries"]) == 3 and logs["hasMore"] is True
+            assert logs["store"] == "memory" and logs["persistent"] is False and logs["services"] == []
+            last = (await client.get(f"{BASE}/logs?limit=3&offset=8", headers=h)).json()
+            assert len(last["entries"]) == 2 and last["hasMore"] is False and last["offset"] == 8
+
+            async def total(query: str) -> int:
+                res = await client.get(f"{BASE}/logs?{query}", headers=h)
+                assert res.status_code == 200, res.text
+                return res.json()["total"]
+
+            assert await total(f"from={SINCE}&to={UNTIL}") == 7
+            # No offset = UTC; from inclusive, to exclusive
+            assert await total("from=2026-11-04T01:00:00&to=2026-11-04T02:00:00Z") == 2
+            assert await total("to=2026-11-04T03:00:00%2B02:00") == 3  # 01:00Z: entries at -1h, 0h, 0.5h
+            assert await total("from=2026-11-04T01:00:00Z&level=error") == 2
+            for query in ("from=nope", "to=2026-02-30"):
+                assert_error(await client.get(f"{BASE}/logs?{query}", headers=h))
+
 
 # =========================================================================
 # 3. Status history

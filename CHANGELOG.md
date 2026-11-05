@@ -16,7 +16,8 @@ Read-only endpoints for the admin dashboard's charts, the same JSON on the .NET,
 - **Log histogram** (admin plugin): `GET /api/v1/qcli/logs/histogram?from=&to=&buckets=&level=&search=&service=` counts
   the buffered log entries per level (`DEBUG`, `INFO`, `WARN`, `ERROR`) and time column. `GET /api/v1/qcli/logs` now
   takes several levels (comma-separated), searches the source too and takes `service` (the in-memory buffer has no
-  services, so a service matches nothing).
+  services, so a service matches nothing) and `from`/`to`; it answers `hasMore`, `store: "memory"`, `persistent: false`
+  and `services: []` like the .NET server, so the dashboard filters on the server.
 - **Status history** (admin plugin): `GET /api/v1/qcli/status/history?minutes=` (default 60, 1..1440). The plugin
   samples memory, CPU (process CPU time over wall time, % of one core), WebSocket clients and shell sessions every 15
   seconds and keeps 24 hours in memory; the sampler is an asyncio task started with the app's lifespan and cancelled on
