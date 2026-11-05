@@ -6,6 +6,7 @@ from .auth.auth_middleware import create_auth_dependency
 from .auth.auth_controller import create_auth_router
 from .dashboard_resolver import resolve_dashboard_dir
 from .services.admin_config import AdminConfig
+from .services.admin_branding import is_branding_icon, validate_admin_branding
 from .services.admin_theme import (
     ADMIN_THEME_MODES,
     ADMIN_THEME_TOKENS,
@@ -30,7 +31,9 @@ __all__ = [
     "admin_theme_json",
     "create_auth_dependency",
     "create_auth_router",
+    "is_branding_icon",
     "is_theme_color",
     "resolve_dashboard_dir",
+    "validate_admin_branding",
     "validate_admin_theme",
 ]
