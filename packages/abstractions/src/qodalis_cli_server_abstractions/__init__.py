@@ -9,6 +9,7 @@ from .cli_command_processor import ICliCommandProcessor, CliCommandProcessor
 from .cli_paging import CliPageRequest, CliPaging, DEFAULT_TAKE, MAX_TAKE
 from .cli_module import ICliModule, CliModule
 from .cli_processor_filter import ICliProcessorFilter
+from .audit import AuditEntry, AuditMetadata, AuditQueryOptions, IAuditStore
 from .jobs import (
     ICliJob,
     ICliJobExecutionContext,
@@ -55,6 +56,10 @@ __all__ = [
     "ICliModule",
     "CliModule",
     "ICliProcessorFilter",
+    "AuditEntry",
+    "AuditMetadata",
+    "AuditQueryOptions",
+    "IAuditStore",
     "ICliJob",
     "ICliJobExecutionContext",
     "ICliJobLogger",
