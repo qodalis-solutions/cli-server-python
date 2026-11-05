@@ -113,6 +113,10 @@ class CliServerResult:
             result.mount_plugin(jobs_plugin)
             result.mount_plugin(admin_plugin)
         """
+        # Listed among the installed plugins (admin dashboard), once, in the
+        # order mounted; a plugin object of the host's own code is not listed.
+        self.builder.add_installed_plugin(plugin)
+
         prefix = getattr(plugin, "prefix", None)
         router = getattr(plugin, "router", None)
         if prefix and router:

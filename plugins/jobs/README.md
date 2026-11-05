@@ -54,17 +54,41 @@ app.include_router(jobs_plugin.router, prefix=jobs_plugin.prefix)
 await jobs_plugin.scheduler.start()
 ```
 
+### Inside a job
+
+The `ICliJobExecutionContext` gives a run:
+
+- `logger`: the run's log lines (`info`, `warning`, ...), kept with the execution.
+- `properties`: the run's own values, saved with the execution (whatever its outcome) and returned by the API, e.g. `context.properties["items"] = 32`. Values must serialize to JSON.
+- `discard()`: leaves a completed run out of the history, for a frequent job whose run found nothing to do. Failed runs are always kept; the job's last run is still updated.
+
+```python
+class SyncOrdersJob(ICliJob):
+    async def execute_async(self, context, cancellation_event):
+        synced = await sync_orders()
+        if synced == 0:
+            context.discard()
+            return
+        context.properties["synced"] = synced
+```
+
+To run a job from your own code (e.g. when something happened), use the plugin's scheduler (`ICliJobScheduler`):
+`await jobs_plugin.scheduler.trigger("sync-orders")`; `scheduler.jobs` lists the registrations with their status.
+Python has no service container, so there is no per-run service scope (the .NET `context.Services`).
+
 ## Configuration Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `id` | `str \| None` | Name (`name-2`, ... for duplicates) | Stable id in the API, the history and the saved state; an explicit duplicate raises |
 | `name` | `str \| None` | Class name | Job display name |
 | `description` | `str \| None` | Name | Human-readable description |
 | `group` | `str \| None` | `None` | Logical grouping |
 | `schedule` | `str \| None` | `None` | Cron expression (5-field) |
-| `interval` | `str \| None` | `None` | Fixed interval (`30s`, `5m`, `1h`, `1d`) |
-| `enabled` | `bool` | `True` | Whether the job starts active |
-| `max_retries` | `int` | `0` | Retry count on failure |
+| `interval` | `str \| None` | `None` | Fixed interval (`30s`, `5m`, `1h`, `1d`); across restarts and pauses the next run is the last run plus the interval (right away when that has passed) |
+| `run_on_start` | `bool` | `False` | Run once right after the scheduler starts (active jobs only) |
+| `enabled` | `bool` | `True` | Whether the job starts active. `False` keeps it stopped whatever state was saved; otherwise a saved pause or stop (made from the API) is kept across restarts |
+| `max_retries` | `int` | `1` | Retry count on failure |
 | `timeout` | `str \| None` | `None` | Max execution duration (same format as interval) |
 | `overlap_policy` | `str` | `skip` | `skip`, `queue`, or `cancel` |
 
@@ -84,6 +108,11 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli/jobs`).
 | PUT | `/{id}` | Update job options |
 | GET | `/{id}/history` | Paginated execution history |
 | GET | `/{id}/history/{exec_id}` | Execution detail with logs |
+| GET | `/executions` | Executions across jobs, newest first: `?job=a,b&group=&status=&since=&limit=&offset=` |
+
+`job` may be repeated or comma separated; `group` selects the jobs of that group (case-insensitive, intersected with
+`job`); `since` is an ISO 8601 time; `limit` is clamped to 1..100. Executions carry `properties`, the job's own
+values. Keep job ids stable (`id`): saved pauses and history are found again by id after a restart.
 
 ## MCP tools
 
@@ -101,6 +130,12 @@ plugin = (
     .build()
 )
 ```
+
+Besides saving and reading executions and states, a store may implement `query_executions(query)` (executions
+across jobs; the default merges `get_executions` per job and raises `NotImplementedError` for every job, where the
+scheduler merges the registered jobs instead), `delete_execution(id)` (for `discard()`; the default keeps the run)
+and `prune(before)` (delete executions older than `before`; the default keeps everything). Call `prune` on a
+schedule, for example from a job, to keep the history bounded.
 
 ## License
 

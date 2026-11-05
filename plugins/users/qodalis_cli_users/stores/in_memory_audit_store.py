@@ -41,9 +41,23 @@ class InMemoryAuditStore(IAuditStore):
             if options.username:
                 un = options.username.lower()
                 result = [e for e in result if e.username.lower() == un]
+            if options.actor:
+                actor = options.actor.lower()
+                result = [e for e in result if (e.actor or "").lower() == actor]
+            if options.offset is not None and options.offset > 0:
+                result = result[options.offset:]
             if options.limit is not None and options.limit > 0:
                 result = result[: options.limit]
         return result
+
+    async def prune(self, before: int) -> int:
+        removed = 0
+        for entries in (self._entries, self._failed):
+            kept = [item for item in entries if item[1].timestamp >= before]
+            removed += len(entries) - len(kept)
+            entries.clear()
+            entries.extend(kept)
+        return removed
 
     async def clear(self) -> None:
         self._entries.clear()

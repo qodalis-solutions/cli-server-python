@@ -130,7 +130,7 @@ All routes are mounted under `/api/v1/qcli`; collections accept paths with and w
 | `PUT /groups/{name}` | `groups:update` | `{ description?, permissions? }` |
 | `DELETE /groups/{name}` | `groups:delete` | Delete (204) |
 | `POST` / `DELETE /groups/{name}/members/{idOrName}` | `groups:update` | Add / remove member (204) |
-| `GET /audit?limit=&event=&username=` | `audit:read` | Audit entries, newest first |
+| `GET /audit?event=&username=&actor=&limit=&offset=` | `audit:read` | Audit entries, newest first |
 | `DELETE /audit` | `audit:clear` | Clear the audit log (204) |
 | `GET /tokens` | authenticated | Own API tokens (views) |
 | `GET /tokens?all=true` | `tokens:read` | Every user's API tokens (`all` must be `true`/`false`, else 400) |
@@ -187,6 +187,19 @@ Every revoked session is broadcast as:
 ```
 
 Reasons: `revoked`, `user_deleted`, `user_disabled`, `password_changed`. A `@qodalis/cli-users` client in server mode logs itself out when its own session is kicked.
+
+## Audit log
+
+Every entry has the `event`, the user it is about (`username`), who did it (`actor`), `details` and `metadata`. Two
+optional fields make it fit an application's own changes:
+
+- `target`: what the event is about when it is not a user, e.g. `group:admins` (the plugin's group events), a role or a job.
+- `properties`: the application's own values, e.g. the old and new value of a setting.
+
+An application records its own changes in the same log through `IAuditStore.log`, so the dashboard's Audit page and
+`GET /audit` show them all. Filter by `event`, `username` (the subject) and `actor`, and page with `limit` and
+`offset` (without a `limit` the newest 100, at most 1000 per request). The default store keeps the latest 1000 entries in memory; bound a store of your own with
+`IAuditStore.prune(before)` (Unix time in ms; the default keeps everything).
 
 ## Custom storage
 

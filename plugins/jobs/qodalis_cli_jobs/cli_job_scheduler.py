@@ -8,8 +8,10 @@ import json
 import logging
 import uuid
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from types import MappingProxyType
+from typing import Any, Callable, Awaitable, Protocol, runtime_checkable
 
 from croniter import croniter
 
@@ -18,18 +20,24 @@ from qodalis_cli_server_abstractions.jobs import (
     ICliJob,
     ICliJobStorageProvider,
     JobExecution,
+    JobExecutionQuery,
+    JobLogEntry,
     JobState,
 )
+from qodalis_cli_server_abstractions.jobs.job_execution_query import as_utc
 
 from .cli_job_execution_context import CliJobExecutionContext
 from .interval_parser import parse_interval
 
 logger = logging.getLogger(__name__)
 
+# Characters a job id may not have: it is part of the jobs API's URLs
+_UNSAFE_ID_CHARS = frozenset("/\\?#")
+
 
 @dataclass
-class _JobRegistration:
-    """Internal runtime state for a registered job."""
+class JobRegistration:
+    """Runtime state of a registered job (``CliJobScheduler.jobs``)."""
 
     id: str
     job: ICliJob
@@ -45,11 +53,53 @@ class _JobRegistration:
     queue: deque[int] = field(default_factory=deque)  # queued retry_attempt values
 
 
+#: Former name of :class:`JobRegistration`.
+_JobRegistration = JobRegistration
+
 BroadcastFn = Callable[[str], Awaitable[None]]
 
 
+@runtime_checkable
+class ICliJobScheduler(Protocol):
+    """The scheduler that runs the jobs registered with the jobs plugin in this
+    process: their registrations and the actions on them.  Use it from the
+    host's own code (e.g. run a job when something happened):
+    ``plugin.scheduler.trigger("digest")``."""
+
+    @property
+    def jobs(self) -> Mapping[str, JobRegistration]:
+        """The registered jobs keyed by job id."""
+        ...
+
+    async def trigger(self, job_id: str) -> None:
+        """Runs the job now; raises :class:`InvalidOperationError` when it is
+        running and may not overlap, :class:`KeyError` for an unknown job."""
+        ...
+
+    async def pause(self, job_id: str) -> None:
+        """Pauses the job's schedule."""
+        ...
+
+    async def resume(self, job_id: str) -> None:
+        """Resumes a paused job's schedule."""
+        ...
+
+    async def stop_job(self, job_id: str) -> None:
+        """Stops the job: cancels a running execution and disables its schedule."""
+        ...
+
+    async def cancel_current(self, job_id: str) -> None:
+        """Cancels the job's running execution."""
+        ...
+
+    async def update_options(self, job_id: str, **changes: Any) -> None:
+        """Changes the job's options and restarts its schedule."""
+        ...
+
+
 class CliJobScheduler:
-    """Background job scheduler using asyncio tasks."""
+    """Background job scheduler using asyncio tasks (implements
+    :class:`ICliJobScheduler`)."""
 
     def __init__(
         self,
@@ -58,13 +108,18 @@ class CliJobScheduler:
     ) -> None:
         self._storage = storage
         self._broadcast_fn = broadcast_fn
-        self._registrations: dict[str, _JobRegistration] = {}
+        self._registrations: dict[str, JobRegistration] = {}
         self._running = False
 
     @property
-    def registrations(self) -> dict[str, _JobRegistration]:
+    def registrations(self) -> dict[str, JobRegistration]:
         """Return the map of job ID to registration state."""
         return self._registrations
+
+    @property
+    def jobs(self) -> Mapping[str, JobRegistration]:
+        """The registered jobs keyed by job id (read-only view)."""
+        return MappingProxyType(self._registrations)
 
     @property
     def storage(self) -> ICliJobStorageProvider:
@@ -72,13 +127,37 @@ class CliJobScheduler:
         return self._storage
 
     def register(self, job: ICliJob, options: CliJobOptions) -> str:
-        """Register a job. Returns the job id."""
-        job_id = str(uuid.uuid4())
+        """Register a job. Returns the job id: ``options.id``, else the name
+        (``name-2``, ``name-3``, ... for further jobs of the same name), stable
+        across restarts so saved state and history find the job again.
+
+        Raises:
+            ValueError: ``options.id`` is empty or has ``/``, ``\\``, ``?`` or
+                ``#`` (it is part of the jobs API's URLs; a default id replaces
+                them with ``-``).
+            InvalidOperationError: a job with ``options.id`` is registered.
+        """
         if not options.name:
             options.name = type(job).__name__
         if not options.description:
             options.description = options.name
-        reg = _JobRegistration(
+        if options.id is not None:
+            if not options.id.strip() or any(c in options.id for c in _UNSAFE_ID_CHARS):
+                raise ValueError(
+                    f"Job id '{options.id}' must be non-empty and may not contain "
+                    "'/', '\\', '?' or '#' (it is part of the jobs API's URLs)"
+                )
+            if options.id in self._registrations:
+                raise InvalidOperationError(f"A job with id '{options.id}' is already registered")
+            job_id = options.id
+        else:
+            base_id = "".join("-" if c in _UNSAFE_ID_CHARS else c for c in options.name)
+            job_id = base_id
+            n = 2
+            while job_id in self._registrations:
+                job_id = f"{base_id}-{n}"
+                n += 1
+        reg = JobRegistration(
             id=job_id,
             job=job,
             options=options,
@@ -94,13 +173,23 @@ class CliJobScheduler:
 
         for reg in self._registrations.values():
             # Apply persisted state if available
+            # Restore the last run, and a pause or stop made at run time; a job
+            # the code disables (enabled=False) stays stopped whatever was saved.
             state = persisted.get(reg.id)
             if state:
-                reg.status = state.status
                 reg.last_run_at = state.last_run_at
+                if reg.options.enabled:
+                    reg.status = state.status
 
             if reg.status == "active":
-                self._schedule_next(reg)
+                # An interval job runs on start through its timer (due now),
+                # so the two never overlap.
+                run_now = bool(
+                    reg.options.run_on_start and not reg.options.schedule and reg.options.interval
+                )
+                self._schedule_next(reg, run_now=run_now)
+                if reg.options.run_on_start and not run_now:
+                    asyncio.create_task(self._execute_job(reg, retry_attempt=0))
 
     async def stop(self) -> None:
         """Cancel all running executions, stop timers, persist states."""
@@ -233,8 +322,31 @@ class CliJobScheduler:
             self._cancel_timer(reg)
             self._schedule_next(reg)
 
-    def _schedule_next(self, reg: _JobRegistration) -> None:
-        """Compute next run time and create timer task."""
+    async def query_executions(
+        self, query: JobExecutionQuery
+    ) -> tuple[list[JobExecution], int]:
+        """Executions of several jobs (or of every job), newest first.  Uses
+        the storage's own query; a storage that cannot list every job gets the
+        registered jobs' ids merged per job."""
+        try:
+            return await self._storage.query_executions(query)
+        except NotImplementedError:
+            if query.job_ids is not None:
+                raise
+
+        async def list_job(job_id: str, limit: int, status: str | None):
+            return await self._storage.get_executions(job_id, limit=limit, offset=0, status=status)
+
+        return await query.merge(list(self._registrations), list_job)
+
+    def _schedule_next(
+        self, reg: JobRegistration, *, run_now: bool = False, after_fire: bool = False
+    ) -> None:
+        """Compute next run time and create timer task.
+
+        An interval job keeps its rhythm across restarts and pauses: it is due
+        one interval after its last run (right away when that has passed, or
+        with ``run_now``); right after a firing, one interval from now."""
         if not self._running:
             return
 
@@ -249,8 +361,15 @@ class CliJobScheduler:
             reg.next_run_at = next_dt
             delay = max((next_dt - now).total_seconds(), 0.1)
         elif reg.options.interval:
-            delay = parse_interval(reg.options.interval)
-            reg.next_run_at = now + datetime.timedelta(seconds=delay)
+            interval = datetime.timedelta(seconds=parse_interval(reg.options.interval))
+            if reg.last_run_at is not None and not after_fire:
+                due = as_utc(reg.last_run_at) + interval
+            else:
+                due = now + interval
+            if due < now or run_now:
+                due = now
+            reg.next_run_at = due
+            delay = (due - now).total_seconds()
         else:
             # No schedule configured — job can only be triggered manually
             reg.next_run_at = None
@@ -258,7 +377,7 @@ class CliJobScheduler:
 
         reg.timer_task = asyncio.create_task(self._timer_fire(reg, delay))
 
-    async def _timer_fire(self, reg: _JobRegistration, delay: float) -> None:
+    async def _timer_fire(self, reg: JobRegistration, delay: float) -> None:
         """Wait for the delay, then execute the job and reschedule."""
         try:
             await asyncio.sleep(delay)
@@ -284,9 +403,9 @@ class CliJobScheduler:
 
         # Reschedule
         if reg.status == "active":
-            self._schedule_next(reg)
+            self._schedule_next(reg, after_fire=True)
 
-    async def _execute_job(self, reg: _JobRegistration, retry_attempt: int) -> None:
+    async def _execute_job(self, reg: JobRegistration, retry_attempt: int) -> None:
         exec_id = str(uuid.uuid4())
         cancel_event = asyncio.Event()
         now = datetime.datetime.now(datetime.UTC)
@@ -369,13 +488,21 @@ class CliJobScheduler:
         execution.completed_at = end_time
         execution.duration = round((end_time - execution.started_at).total_seconds() * 1000)
         execution.logs = list(ctx.log_entries)
-        await self._storage.save_execution(execution)
+        execution.properties = dict(ctx.properties)
+        # A completed run the job discarded is left out of the history (a
+        # store that cannot delete keeps it); failed runs are always kept.
+        await self._save_finished(execution, ctx.discarded)
 
         reg.last_run_at = execution.started_at
         reg.last_run_status = execution.status
         reg.last_run_duration = execution.duration
         reg.current_execution_id = None
         reg.current_cancellation = None
+        # The last run survives a restart (interval rhythm, see _schedule_next)
+        try:
+            await self._persist_state(reg)
+        except Exception:
+            logger.exception("Saving the state of job %s failed", reg.id)
 
         if execution.status == "completed":
             await self._broadcast({
@@ -419,19 +546,47 @@ class CliJobScheduler:
             queued_attempt = reg.queue.popleft()
             asyncio.create_task(self._execute_job(reg, queued_attempt))
 
-    def _get_registration(self, job_id: str) -> _JobRegistration:
+    async def _save_finished(self, execution: JobExecution, discard: bool) -> None:
+        """Save the finished run, or delete a discarded one (a store that
+        cannot delete keeps it; failed runs are always kept). When the store
+        refuses the run's properties (a value that does not serialize), the run
+        is saved without them, so it never stays "running"."""
+        try:
+            discarded = (
+                discard
+                and execution.status == "completed"
+                and await self._storage.delete_execution(execution.id)
+            )
+            if not discarded:
+                await self._storage.save_execution(execution)
+        except Exception as exc:
+            if not execution.properties:
+                raise
+            logger.exception(
+                "Saving execution %s of job %s failed; saving it without its properties",
+                execution.id,
+                execution.job_id,
+            )
+            execution.properties = {}
+            execution.logs.append(JobLogEntry(
+                level="error",
+                message=f"The run's properties could not be saved: {exc}",
+            ))
+            await self._storage.save_execution(execution)
+
+    def _get_registration(self, job_id: str) -> JobRegistration:
         reg = self._registrations.get(job_id)
         if reg is None:
             raise KeyError(f"Job not found: {job_id}")
         return reg
 
-    def _cancel_timer(self, reg: _JobRegistration) -> None:
+    def _cancel_timer(self, reg: JobRegistration) -> None:
         if reg.timer_task is not None and not reg.timer_task.done():
             reg.timer_task.cancel()
         reg.timer_task = None
         reg.next_run_at = None
 
-    async def _persist_state(self, reg: _JobRegistration) -> None:
+    async def _persist_state(self, reg: JobRegistration) -> None:
         await self._storage.save_job_state(
             reg.id,
             JobState(
