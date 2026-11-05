@@ -26,6 +26,7 @@ jobs:
           pip install ./plugins/filesystem-s3
           pip install ./plugins/weather
           pip install ./plugins/jobs
+          pip install ./plugins/audit
           pip install ./plugins/users
           pip install ./plugins/admin
           pip install ./plugins/aws
@@ -127,6 +128,19 @@ jobs:
         with:
           password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-jobs/
+          skip-existing: true
+          verbose: true
+          attestations: false
+
+      # Before the users plugin, which depends on it.
+      - name: Build audit plugin
+        run: python -m build plugins/audit/ --outdir dist-plugin-audit/
+
+      - name: Publish audit plugin to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+          packages-dir: dist-plugin-audit/
           skip-existing: true
           verbose: true
           attestations: false

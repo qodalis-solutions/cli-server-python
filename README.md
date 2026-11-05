@@ -27,7 +27,8 @@ A FastAPI server that runs commands, files, data queries and shells for the Qoda
 - **WebSockets** for server events, live logs and an opt-in PTY shell with access control and process cleanup
 - **File system API** with in-memory, OS, JSON, SQLite and S3 storage providers
 - **Data explorer** providers for SQLite, PostgreSQL, MySQL, SQL Server, MongoDB, Redis and Elasticsearch
-- **Users plugin**: sign-in, groups and permissions, sessions, audit log, API tokens; protects every route and socket
+- **Users plugin**: sign-in, groups and permissions, sessions, API tokens; protects every route and socket
+- **Audit plugin**: the audit log and its API, added by the users plugin or used on its own
 - **MCP endpoint** exposing commands, files, data and jobs as tools for AI clients
 - **Jobs**, **admin dashboard**, **AWS** and **weather** (example) plugins
 
@@ -811,7 +812,8 @@ Each plugin is a separate package under [`plugins/`](plugins) with its own READM
 
 | Package | Import | Description |
 |---|---|---|
-| [`qodalis-cli-server-plugin-users`](plugins/users/README.md) | `qodalis_cli_users` | Sign-in, users, groups and permissions, sessions, audit log, API tokens; protects the whole server |
+| [`qodalis-cli-server-plugin-users`](plugins/users/README.md) | `qodalis_cli_users` | Sign-in, users, groups and permissions, sessions, API tokens; protects the whole server; mounts the audit plugin |
+| [`qodalis-cli-server-plugin-audit`](plugins/audit/README.md) | `qodalis_cli_audit` | Audit log and its API (`/api/v1/qcli/audit`), in memory or a store of your own |
 | [`qodalis-cli-server-plugin-admin`](plugins/admin/README.md) | `qodalis_cli_admin` | Admin dashboard at `/qcli/admin` and its API |
 | [`qodalis-cli-server-plugin-jobs`](plugins/jobs/README.md) | `qodalis_cli_jobs` | Scheduled background jobs with history and logs |
 | [`qodalis-cli-server-plugin-filesystem`](plugins/filesystem/README.md) | `qodalis_cli_filesystem` | `IFileStorageProvider` with in-memory and OS providers (installed with the server) |
@@ -843,7 +845,7 @@ The image runs the demo server (all plugins, users plugin with `root` / `admin`)
 
 ## Versioning
 
-Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b15` today (PEP 440 for `1.0.0-beta.15`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
+Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b16` today (PEP 440 for `1.0.0-beta.16`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
 
 ## Development
 
@@ -851,7 +853,7 @@ Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abst
 python -m venv .venv && source .venv/bin/activate
 pip install -e packages/abstractions/ -e plugins/filesystem/ -e plugins/filesystem-json/ \
     -e plugins/filesystem-sqlite/ -e plugins/filesystem-s3/ -e plugins/weather/ \
-    -e plugins/jobs/ -e plugins/users/ -e plugins/admin/
+    -e plugins/jobs/ -e plugins/audit/ -e plugins/users/ -e plugins/admin/
 pip install -e ".[test]"
 pytest                                   # the suite CI runs (tests/)
 ```

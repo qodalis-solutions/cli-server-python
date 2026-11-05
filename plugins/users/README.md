@@ -1,6 +1,6 @@
 # qodalis-cli-server-plugin-users
 
-User management plugin for [Qodalis CLI Server (Python)](https://github.com/qodalis-solutions/cli-server-python). Adds FastAPI endpoints for authentication, users, groups with permissions, sessions and an audit log, backed by swappable storage interfaces with in-memory defaults. It is the server side of the `@qodalis/cli-users` plugin's *server mode* and implements the same contract as the node and .NET servers.
+User management plugin for [Qodalis CLI Server (Python)](https://github.com/qodalis-solutions/cli-server-python). Adds FastAPI endpoints for authentication, users, groups with permissions, sessions and API tokens, records its events in the [audit plugin](../audit/README.md)'s log (which it mounts), backed by swappable storage interfaces with in-memory defaults. It is the server side of the `@qodalis/cli-users` plugin's *server mode* and implements the same contract as the node and .NET servers.
 
 ## Install
 
@@ -19,7 +19,8 @@ result = create_cli_server(...)
 
 users_plugin = CliUsersBuilder().build()
 # Mounts the routes at /api/v1/qcli, protects every route and socket of the
-# server and delivers user events only to that user's event sockets.
+# server, delivers user events only to that user's event sockets and mounts
+# the audit plugin (/api/v1/qcli/audit).
 result.mount_plugin(users_plugin)
 
 original_lifespan = result.app.router.lifespan_context
@@ -130,8 +131,8 @@ All routes are mounted under `/api/v1/qcli`; collections accept paths with and w
 | `PUT /groups/{name}` | `groups:update` | `{ description?, permissions? }` |
 | `DELETE /groups/{name}` | `groups:delete` | Delete (204) |
 | `POST` / `DELETE /groups/{name}/members/{idOrName}` | `groups:update` | Add / remove member (204) |
-| `GET /audit?event=&username=&actor=&limit=&offset=` | `audit:read` | Audit entries, newest first |
-| `DELETE /audit` | `audit:clear` | Clear the audit log (204) |
+| `GET /audit?event=&username=&actor=&limit=&offset=` | `audit:read` | Audit entries, newest first (served by the [audit plugin](../audit/README.md)) |
+| `DELETE /audit` | `audit:clear` | Clear the audit log (204; audit plugin) |
 | `GET /tokens` | authenticated | Own API tokens (views) |
 | `GET /tokens?all=true` | `tokens:read` | Every user's API tokens (`all` must be `true`/`false`, else 400) |
 | `POST /tokens` | authenticated, **session only** | `{ name, expiresInDays?, permissions? }` → `201 { token, apiToken }` |
@@ -190,6 +191,16 @@ Reasons: `revoked`, `user_deleted`, `user_disabled`, `password_changed`. A `@qod
 
 ## Audit log
 
+The audit log is the [audit plugin](../audit/README.md)'s (`qodalis-cli-server-plugin-audit`, a dependency of this
+plugin): mounting the users plugin mounts it, so a host that only mounts the users plugin keeps its audit log at
+`/api/v1/qcli/audit`. When the host mounts an audit plugin of its own (before or after), the users plugin records in it
+instead. `set_audit_store(store)` does the same as `CliAuditBuilder().set_store(store)`; a store set on either side is
+kept. `users_plugin.audit_plugin` is the audit plugin and `users_plugin.audit_store` its store. The contract
+(`AuditEntry`, `AuditMetadata`, `AuditQueryOptions`, `IAuditStore`) is in `qodalis_cli_server_abstractions.audit`;
+`qodalis_cli_users` still re-exports `AuditEntry`, `AuditQueryOptions`, `IAuditStore` and `InMemoryAuditStore`.
+Server protection checks `audit:read` / `audit:clear` on the audit routes; without it (`set_protect_server(False)`) the
+users plugin guards them itself.
+
 Every entry has the `event`, the user it is about (`username`), who did it (`actor`), `details` and `metadata`. Two
 optional fields make it fit an application's own changes:
 
@@ -203,7 +214,7 @@ An application records its own changes in the same log through `IAuditStore.log`
 
 ## Custom storage
 
-Implement any of `IUserStore`, `ISessionStore`, `ICredentialStore`, `IAuditStore`, `IGroupStore` or `IApiTokenStore` (see `qodalis_cli_users.stores.interfaces`) and pass the instance to the builder:
+Implement any of `IUserStore`, `ISessionStore`, `ICredentialStore`, `IAuditStore`, `IGroupStore` or `IApiTokenStore` (see `qodalis_cli_users.stores.interfaces`; `IAuditStore` is `qodalis_cli_server_abstractions.audit.IAuditStore`) and pass the instance to the builder:
 
 ```python
 users_plugin = CliUsersBuilder().set_user_store(PostgresUserStore(pool)).build()

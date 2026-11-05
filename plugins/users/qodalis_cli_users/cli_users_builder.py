@@ -8,8 +8,8 @@ Usage::
         .set_session_timeout(30 * 60 * 1000)
         .build()
     )
-    # Protects every server route/socket and scopes user events to the
-    # user's own event sockets.
+    # Protects every server route/socket, scopes user events to the user's
+    # own event sockets and mounts the audit plugin (its events' log).
     result.mount_plugin(users_plugin)
 
     # in the app lifespan / startup hook (running event loop):
@@ -25,14 +25,16 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
-from .controllers.audit_controller import create_audit_router
+from qodalis_cli_audit import CliAuditBuilder, CliAuditPlugin
+
 from .controllers.groups_controller import create_groups_router
 from .controllers.sessions_controller import create_sessions_router
 from .controllers.tokens_controller import create_tokens_router
 from .controllers.users_controller import create_users_router
 from .middleware.auth_middleware import create_auth_dependencies
+from .errors import UsersApiError
 from .models import ExternalAuthAdapter
 from .server_protection import ServerProtectionMiddleware, _normalize_base
 from .shell_access import UsersShellAccess
@@ -50,7 +52,6 @@ from .services.auth_service import (
 )
 from .services.users_service import UsersService
 from .stores.in_memory_api_token_store import InMemoryApiTokenStore
-from .stores.in_memory_audit_store import InMemoryAuditStore
 from .stores.in_memory_credential_store import InMemoryCredentialStore
 from .stores.in_memory_group_store import InMemoryGroupStore
 from .stores.in_memory_session_store import InMemorySessionStore
@@ -112,6 +113,9 @@ class CliUsersPlugin:
     _session_sockets: list = field(default_factory=list, repr=False)
     _session_check_interval: Optional[float] = field(default=None, repr=False)
     _external_check_task: Optional[asyncio.Task] = field(default=None, repr=False)
+    #: The audit plugin the users plugin records its events in, mounted with
+    #: it (or joining the audit plugin the host mounted, see :meth:`on_mount`).
+    audit_plugin: Optional[CliAuditPlugin] = None
     _seeded: bool = field(default=False, repr=False)
     _seed_lock: Optional[asyncio.Lock] = field(default=None, repr=False)
 
@@ -200,6 +204,30 @@ class CliUsersPlugin:
         set_shell_provider = getattr(server, "set_shell_access_provider", None)
         if callable(set_shell_provider):
             set_shell_provider(UsersShellAccess(self.auth_service))
+        self._mount_audit(server)
+
+    def _mount_audit(self, server: Any) -> None:
+        """Mount the audit plugin with the users plugin, so a host that only
+        mounts the users plugin keeps its audit log.  When the host mounted an
+        audit plugin of its own, this one joins it: one log, in the store set
+        on either side (the default in-memory store otherwise).  Without server
+        protection the users plugin still guards the audit API (``audit:read``
+        / ``audit:clear``)."""
+        audit = self.audit_plugin
+        mount = getattr(server, "mount_plugin", None)
+        if audit is None or not callable(mount):
+            return
+        if not self.protect_server and audit.authorize is None:
+            audit.authorize = self.authorize_audit
+        mount(audit)
+
+    async def authorize_audit(self, request: Request, permission: str) -> Any:
+        """The users plugin's guard of the audit API (a session or token with
+        ``permission``), used when it does not protect the whole server."""
+        ctx = await self.require_auth(request)
+        if not ctx.can(permission):
+            raise UsersApiError(403, f"missing permission: {permission}")
+        return ctx
 
     @property
     def external_socket_check_interval(self) -> float:
@@ -324,6 +352,8 @@ class CliUsersBuilder:
         return self
 
     def set_audit_store(self, store: IAuditStore) -> CliUsersBuilder:
+        """Keep the audit log in ``store``: the same as setting the store of
+        the audit plugin (``CliAuditBuilder().set_store(store)``)."""
         self._audit_store = store
         return self
 
@@ -438,11 +468,15 @@ class CliUsersBuilder:
     def build(self, broadcast_fn: BroadcastFn | None = None) -> CliUsersPlugin:
         """Build the plugin.  ``broadcast_fn`` receives JSON-encoded events
         (e.g. ``session-kicked``); it may be sync or async."""
+        audit_builder = CliAuditBuilder()
+        if self._audit_store is not None:
+            audit_builder.set_store(self._audit_store)
+        audit_plugin = audit_builder.build()
         auth_service = AuthService(
             self._user_store or InMemoryUserStore(),
             self._session_store or InMemorySessionStore(),
             self._credential_store or InMemoryCredentialStore(),
-            self._audit_store or InMemoryAuditStore(),
+            audit_plugin.store,
             self._group_store or InMemoryGroupStore(),
             options=AuthServiceOptions(
                 session_timeout_ms=self._session_timeout_ms,
@@ -479,7 +513,16 @@ class CliUsersBuilder:
             default_admin_password=self._default_admin_password,
             cleanup_interval_ms=self._cleanup_interval_ms,
             protect_server=self._protect_server,
+            audit_plugin=audit_plugin,
         )
+
+        # The users plugin records its events in the audit plugin's store,
+        # also after it joined the host's audit plugin (another store).
+        def follow_audit_store(store: IAuditStore) -> None:
+            auth_service.audit_store = store
+            plugin.audit_store = store
+
+        audit_plugin.on_store_changed(follow_audit_store)
 
         # Requests made before startup() (e.g. apps without a lifespan) still
         # see the seeded built-ins.
@@ -499,6 +542,5 @@ class CliUsersBuilder:
         router.include_router(create_groups_router(
             auth_service, users_service, get_auth, require_permission,
         ))
-        router.include_router(create_audit_router(auth_service, require_permission))
         router.include_router(create_tokens_router(auth_service, get_auth))
         return plugin
