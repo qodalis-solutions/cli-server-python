@@ -117,6 +117,12 @@ class CliServerResult:
         # order mounted; a plugin object of the host's own code is not listed.
         self.builder.add_installed_plugin(plugin)
 
+        # A plugin may decline to be mounted again, e.g. the audit plugin when
+        # the server already serves an audit log (``before_mount`` -> False).
+        before_mount = getattr(plugin, "before_mount", None)
+        if callable(before_mount) and before_mount(self) is False:
+            return
+
         prefix = getattr(plugin, "prefix", None)
         router = getattr(plugin, "router", None)
         if prefix and router:
