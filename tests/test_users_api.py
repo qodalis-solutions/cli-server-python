@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import re
 import time
@@ -838,6 +840,16 @@ class TestAudit:
         assert by_root and all(e["actor"] == "root" for e in by_root)
         assert api.get("/audit?actor=nobody", admin).json() == []
         assert api.get("/audit?offset=1&limit=1", admin).json() == entries[1:2]
+
+    def test_without_a_limit_the_newest_page_and_never_more_than_the_maximum(self, api: Api, admin: str):
+        from qodalis_cli_users.controllers.audit_controller import DEFAULT_AUDIT_LIMIT
+        from qodalis_cli_users.models import AuditEntry
+
+        for i in range(DEFAULT_AUDIT_LIMIT + 5):
+            asyncio.run(api.plugin.audit_store.log(AuditEntry(event="note", username=f"u{i}", timestamp=i)))
+
+        assert len(api.get("/audit", admin).json()) == DEFAULT_AUDIT_LIMIT
+        assert len(api.get("/audit?limit=5000", admin).json()) > DEFAULT_AUDIT_LIMIT
 
     def test_group_events_have_a_target(self, api: Api, admin: str):
         api.post("/groups", admin, json={"name": "Editors"})

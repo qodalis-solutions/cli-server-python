@@ -21,6 +21,7 @@ from qodalis_cli_server_abstractions.jobs import (
     ICliJobStorageProvider,
     JobExecution,
     JobExecutionQuery,
+    JobLogEntry,
     JobState,
 )
 from qodalis_cli_server_abstractions.jobs.job_execution_query import as_utc
@@ -29,6 +30,9 @@ from .cli_job_execution_context import CliJobExecutionContext
 from .interval_parser import parse_interval
 
 logger = logging.getLogger(__name__)
+
+# Characters a job id may not have: it is part of the jobs API's URLs
+_UNSAFE_ID_CHARS = frozenset("/\\?#")
 
 
 @dataclass
@@ -128,7 +132,9 @@ class CliJobScheduler:
         across restarts so saved state and history find the job again.
 
         Raises:
-            ValueError: ``options.id`` is empty.
+            ValueError: ``options.id`` is empty or has ``/``, ``\\``, ``?`` or
+                ``#`` (it is part of the jobs API's URLs; a default id replaces
+                them with ``-``).
             InvalidOperationError: a job with ``options.id`` is registered.
         """
         if not options.name:
@@ -136,16 +142,20 @@ class CliJobScheduler:
         if not options.description:
             options.description = options.name
         if options.id is not None:
-            if not options.id.strip():
-                raise ValueError("A job id may not be empty")
+            if not options.id.strip() or any(c in options.id for c in _UNSAFE_ID_CHARS):
+                raise ValueError(
+                    f"Job id '{options.id}' must be non-empty and may not contain "
+                    "'/', '\\', '?' or '#' (it is part of the jobs API's URLs)"
+                )
             if options.id in self._registrations:
                 raise InvalidOperationError(f"A job with id '{options.id}' is already registered")
             job_id = options.id
         else:
-            job_id = options.name
+            base_id = "".join("-" if c in _UNSAFE_ID_CHARS else c for c in options.name)
+            job_id = base_id
             n = 2
             while job_id in self._registrations:
-                job_id = f"{options.name}-{n}"
+                job_id = f"{base_id}-{n}"
                 n += 1
         reg = JobRegistration(
             id=job_id,
@@ -163,10 +173,13 @@ class CliJobScheduler:
 
         for reg in self._registrations.values():
             # Apply persisted state if available
+            # Restore the last run, and a pause or stop made at run time; a job
+            # the code disables (enabled=False) stays stopped whatever was saved.
             state = persisted.get(reg.id)
             if state:
-                reg.status = state.status
                 reg.last_run_at = state.last_run_at
+                if reg.options.enabled:
+                    reg.status = state.status
 
             if reg.status == "active":
                 # An interval job runs on start through its timer (due now),
@@ -478,13 +491,7 @@ class CliJobScheduler:
         execution.properties = dict(ctx.properties)
         # A completed run the job discarded is left out of the history (a
         # store that cannot delete keeps it); failed runs are always kept.
-        discarded = (
-            ctx.discarded
-            and execution.status == "completed"
-            and await self._storage.delete_execution(exec_id)
-        )
-        if not discarded:
-            await self._storage.save_execution(execution)
+        await self._save_finished(execution, ctx.discarded)
 
         reg.last_run_at = execution.started_at
         reg.last_run_status = execution.status
@@ -492,7 +499,10 @@ class CliJobScheduler:
         reg.current_execution_id = None
         reg.current_cancellation = None
         # The last run survives a restart (interval rhythm, see _schedule_next)
-        await self._persist_state(reg)
+        try:
+            await self._persist_state(reg)
+        except Exception:
+            logger.exception("Saving the state of job %s failed", reg.id)
 
         if execution.status == "completed":
             await self._broadcast({
@@ -535,6 +545,34 @@ class CliJobScheduler:
         if reg.queue:
             queued_attempt = reg.queue.popleft()
             asyncio.create_task(self._execute_job(reg, queued_attempt))
+
+    async def _save_finished(self, execution: JobExecution, discard: bool) -> None:
+        """Save the finished run, or delete a discarded one (a store that
+        cannot delete keeps it; failed runs are always kept). When the store
+        refuses the run's properties (a value that does not serialize), the run
+        is saved without them, so it never stays "running"."""
+        try:
+            discarded = (
+                discard
+                and execution.status == "completed"
+                and await self._storage.delete_execution(execution.id)
+            )
+            if not discarded:
+                await self._storage.save_execution(execution)
+        except Exception as exc:
+            if not execution.properties:
+                raise
+            logger.exception(
+                "Saving execution %s of job %s failed; saving it without its properties",
+                execution.id,
+                execution.job_id,
+            )
+            execution.properties = {}
+            execution.logs.append(JobLogEntry(
+                level="error",
+                message=f"The run's properties could not be saved: {exc}",
+            ))
+            await self._storage.save_execution(execution)
 
     def _get_registration(self, job_id: str) -> JobRegistration:
         reg = self._registrations.get(job_id)

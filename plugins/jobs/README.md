@@ -87,7 +87,7 @@ Python has no service container, so there is no per-run service scope (the .NET 
 | `schedule` | `str \| None` | `None` | Cron expression (5-field) |
 | `interval` | `str \| None` | `None` | Fixed interval (`30s`, `5m`, `1h`, `1d`); across restarts and pauses the next run is the last run plus the interval (right away when that has passed) |
 | `run_on_start` | `bool` | `False` | Run once right after the scheduler starts (active jobs only) |
-| `enabled` | `bool` | `True` | Whether the job starts active |
+| `enabled` | `bool` | `True` | Whether the job starts active. `False` keeps it stopped whatever state was saved; otherwise a saved pause or stop (made from the API) is kept across restarts |
 | `max_retries` | `int` | `1` | Retry count on failure |
 | `timeout` | `str \| None` | `None` | Max execution duration (same format as interval) |
 | `overlap_policy` | `str` | `skip` | `skip`, `queue`, or `cancel` |
