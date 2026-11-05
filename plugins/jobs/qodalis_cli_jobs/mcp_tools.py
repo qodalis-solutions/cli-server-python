@@ -83,6 +83,7 @@ class JobsMcpToolProvider:
                     "duration": e.duration,
                     "error": e.error,
                     "retryAttempt": e.retry_attempt,
+                    "properties": e.properties,
                 }
                 for e in items
             ]
