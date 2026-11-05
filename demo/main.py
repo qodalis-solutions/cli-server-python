@@ -273,6 +273,7 @@ def main() -> None:
     # Users plugin: protects every route and socket of this server (login,
     # version discovery and health stay public).  Seeded and started in the
     # app lifespan below.  The demo keeps the well-known 'admin' password.
+    # It mounts the audit plugin too (the audit log, /api/v1/qcli/audit).
     users_plugin = CliUsersBuilder().set_default_admin_password("admin").build()
     result.mount_plugin(users_plugin)
 
@@ -329,6 +330,7 @@ def main() -> None:
     logger.info("Qodalis CLI Demo Server (Python) running on http://%s:%d", host, port)
     logger.info("  API: http://%s:%d/api/qcli", host, port)
     logger.info("  Users API: http://%s:%d/api/v1/qcli/users", host, port)
+    logger.info("  Audit API: http://%s:%d/api/v1/qcli/audit", host, port)
     logger.info("  Admin API: http://%s:%d/api/v1/qcli/admin", host, port)
     if admin_plugin.dashboard_app:
         logger.info("  Admin Dashboard: http://%s:%d/qcli/admin", host, port)

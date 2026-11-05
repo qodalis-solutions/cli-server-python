@@ -748,6 +748,10 @@ def _users_app(builder: CliUsersBuilder) -> tuple[FastAPI, Any]:
     plugin = builder.build()
     app = FastAPI()
     app.include_router(plugin.router, prefix=plugin.prefix)
+    # The audit API (audit plugin), guarded by the users plugin as when
+    # mounted without server protection.
+    plugin.audit_plugin.authorize = plugin.authorize_audit
+    app.include_router(plugin.audit_plugin.router, prefix=plugin.audit_plugin.prefix)
     return app, plugin
 
 
