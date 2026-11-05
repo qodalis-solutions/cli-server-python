@@ -6,9 +6,12 @@ PEP 440 for `1.0.0-beta.18`).
 
 ## 1.0.0b18
 
-No changes in this server: every package moves to the version of the .NET server's release, which adds a Seq logs
-plugin (`Qodalis.Cli.Plugin.Logs.Seq`) and new filters on `GET /api/v1/qcli/logs` (`service`, `from`, `to`, several
-levels). This server's logs API keeps its current filters.
+Every package moves to the version of the .NET server's release, which adds a Seq logs plugin
+(`Qodalis.Cli.Plugin.Logs.Seq`) and new filters on `GET /api/v1/qcli/logs` (`service`, `from`, `to`, several levels).
+This server's logs API keeps its current filters.
+
+- The admin plugin ships dashboard 1.0.0-beta.14. Its Logs page shows this server's logs oldest first, so older pages
+  load on top and live entries arrive at the bottom.
 
 ## 1.0.0b17
 
