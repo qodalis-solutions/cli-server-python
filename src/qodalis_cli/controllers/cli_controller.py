@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import platform
+import time
 from typing import Any, Callable
 
 from fastapi import APIRouter, Request
@@ -162,6 +163,14 @@ def create_cli_router(
     async def get_commands() -> list[dict[str, Any]]:
         return [_map_to_descriptor(p) for p in registry.processors]
 
+    @router.get("/commands/stats")
+    async def get_command_stats() -> dict[str, Any]:
+        """Executions per root command since the server started."""
+        usage = getattr(executor, "usage", None)
+        if usage is None:
+            return {"since": None, "commands": []}
+        return usage.snapshot()
+
     @router.post("/execute")
     async def execute_command(request: ExecuteRequest, http_request: Request) -> JSONResponse:
         denied = _permission_denied(registry, http_request, request.command, request.chain_commands)
@@ -201,6 +210,10 @@ def create_cli_router(
             def sse_event(event_type: str, data: dict) -> str:
                 return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
+            started = time.perf_counter()
+            # Counted here unless the executor runs (and counts) the command:
+            # None = not counted here, else whether it failed.
+            usage_failed: bool | None = True
             try:
                 processor = registry.find_processor(
                     command.command,
@@ -217,6 +230,8 @@ def create_cli_router(
                     return
 
                 if is_stream_capable(processor):
+                    # A client that goes away counts as an execution, not a failure.
+                    usage_failed = False
                     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
                     def emit_to_queue(output: dict) -> None:
@@ -239,12 +254,15 @@ def create_cli_router(
                         try:
                             exit_code = task.result()
                         except Exception as exc:
+                            usage_failed = True
                             yield sse_event("error", {"message": f"Error executing command: {exc}"})
                             return
+                        usage_failed = exit_code not in (0, None)
                     else:
                         logger.debug("Stream cancelled for command: %s", command.command)
                         return
                 else:
+                    usage_failed = None
                     response = await executor.execute_async(command, cancellation_event)
                     for output in response.outputs:
                         yield sse_event("output", output.model_dump(by_alias=True, exclude_none=True))
@@ -254,7 +272,13 @@ def create_cli_router(
             except asyncio.CancelledError:
                 logger.debug("Stream cancelled for command: %s", command.command)
             except Exception as exc:
+                if usage_failed is not None:
+                    usage_failed = True
                 yield sse_event("error", {"message": f"Error executing command: {exc}"})
+            finally:
+                record = getattr(executor, "record_usage", None)
+                if usage_failed is not None and callable(record):
+                    record(command.command, (time.perf_counter() - started) * 1000, usage_failed)
 
         return StreamingResponse(
             event_generator(),

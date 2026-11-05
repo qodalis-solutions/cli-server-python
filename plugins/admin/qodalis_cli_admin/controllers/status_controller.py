@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-import os
 import platform
-import sys
 import time
 from datetime import datetime, timezone
 from typing import Any
 
-import psutil
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
+
+from ..services.status_history import StatusHistory, memory_usage_mb
+
+#: ``GET /status/history``: default and longest window in minutes.
+DEFAULT_HISTORY_MINUTES = 60
+MAX_HISTORY_MINUTES = 1440
 
 
 def create_status_router(
@@ -20,8 +24,9 @@ def create_status_router(
     enabled_features: list[str] | None = None,
     registry: Any = None,
     builder: Any = None,
+    status_history: StatusHistory | None = None,
 ) -> APIRouter:
-    """Create a router that exposes ``GET /status``."""
+    """Create a router that exposes ``GET /status`` and ``GET /status/history``."""
     router = APIRouter()
 
     @router.get("/status")
@@ -29,10 +34,6 @@ def create_status_router(
         _user: dict[str, Any] = Depends(auth_dependency),
     ) -> dict[str, Any]:
         uptime_seconds = time.time() - start_time
-
-        proc = psutil.Process(os.getpid())
-        mem_info = proc.memory_info()
-        memory_usage_mb = mem_info.rss / (1024 * 1024)
 
         started_at = datetime.fromtimestamp(
             start_time, tz=timezone.utc
@@ -42,7 +43,7 @@ def create_status_router(
 
         return {
             "uptimeSeconds": uptime_seconds,
-            "memoryUsageMb": round(memory_usage_mb, 2),
+            "memoryUsageMb": memory_usage_mb(),
             "startedAt": started_at,
             "platform": "python",
             "platformVersion": platform.python_version(),
@@ -52,6 +53,29 @@ def create_status_router(
             "registeredCommands": registered_commands,
             "registeredJobs": 0,
             "enabledFeatures": _features(enabled_features, builder),
+        }
+
+    @router.get("/status/history")
+    async def get_status_history(
+        _user: dict[str, Any] = Depends(auth_dependency),
+        minutes: str | None = Query(None),
+    ) -> Any:
+        """The status samples (every 15 s, kept 24 h) of the last ``minutes``
+        (default 60, clamped to 1..1440), oldest first."""
+        window = DEFAULT_HISTORY_MINUTES
+        if minutes is not None and minutes.strip():
+            try:
+                window = int(minutes.strip())
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"'minutes' must be an integer, got '{minutes}'"},
+                )
+        window = min(max(window, 1), MAX_HISTORY_MINUTES)
+        history = status_history or StatusHistory(event_socket_manager)
+        return {
+            "intervalSeconds": history.interval,
+            "samples": history.history(window),
         }
 
     return router
