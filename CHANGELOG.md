@@ -6,6 +6,8 @@ PEP 440 for `1.0.0-beta.19`).
 
 ## 1.0.0b19
 
+- The admin plugin embeds dashboard 1.0.0-beta.15: charts on the Overview, Jobs, Logs, Audit and Commands pages, filters kept in the URL, sortable tables and a Ctrl+K command palette, using the endpoints below.
+
 Read-only endpoints for the admin dashboard's charts, the same JSON on the .NET, Node and Python servers. Times are ISO
 8601 UTC (`2026-11-05T21:00:00.000Z`), durations milliseconds; bad times or numbers answer `400 { "error": "..." }`.
 
