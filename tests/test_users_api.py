@@ -112,7 +112,16 @@ def _make_api(**builder_opts: Any) -> Api:
     plugin = builder.build(broadcast_fn=lambda msg: events.append(json.loads(msg)))
     app = FastAPI()
     app.include_router(plugin.router, prefix=plugin.prefix)
+    _include_audit(app, plugin)
     return Api(plugin, TestClient(app), events)
+
+
+def _include_audit(app: FastAPI, plugin: CliUsersPlugin) -> None:
+    """The audit API (audit plugin), guarded by the users plugin as when it is
+    mounted without server protection."""
+    audit = plugin.audit_plugin
+    audit.authorize = plugin.authorize_audit
+    app.include_router(audit.router, prefix=audit.prefix)
 
 
 @pytest.fixture()
@@ -842,7 +851,7 @@ class TestAudit:
         assert api.get("/audit?offset=1&limit=1", admin).json() == entries[1:2]
 
     def test_without_a_limit_the_newest_page_and_never_more_than_the_maximum(self, api: Api, admin: str):
-        from qodalis_cli_users.controllers.audit_controller import DEFAULT_AUDIT_LIMIT
+        from qodalis_cli_audit import DEFAULT_AUDIT_LIMIT
         from qodalis_cli_users.models import AuditEntry
 
         for i in range(DEFAULT_AUDIT_LIMIT + 5):

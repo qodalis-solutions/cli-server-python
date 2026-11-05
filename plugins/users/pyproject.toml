@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-users"
-version = "1.0.0b15"
-description = "User management plugin for Qodalis CLI servers — authentication, sessions, groups, and audit log"
+version = "1.0.0b17"
+description = "User management plugin for Qodalis CLI servers — authentication, sessions, groups and API tokens, recorded in the audit plugin's log"
 readme = { text = "", content-type = "text/plain" }
 license = "MIT"
 requires-python = ">=3.10"
@@ -24,6 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+    "qodalis-cli-server-plugin-audit>=1.0.0b17",
     "fastapi>=0.100.0",
 ]
 

@@ -32,6 +32,7 @@ CORE = "qodalis-cli-server"
 USERS = "qodalis-cli-server-plugin-users"
 ADMIN = "qodalis-cli-server-plugin-admin"
 JOBS = "qodalis-cli-server-plugin-jobs"
+AUDIT = "qodalis-cli-server-plugin-audit"
 
 
 class _HostPlugin:
@@ -89,7 +90,7 @@ class TestCliBuilderInstalledPlugins:
         result.mount_plugin(_HostPlugin())
         result.mount_plugin(jobs)
 
-        assert _ids(result.builder) == [CORE, ADMIN, USERS, JOBS]
+        assert _ids(result.builder) == [CORE, ADMIN, USERS, AUDIT, JOBS]
         plugin = result.builder.installed_plugins[2]
         assert plugin.name == "Users"
         assert plugin.version
@@ -165,14 +166,18 @@ class TestAdminInstalledPlugins:
         del client.headers["Authorization"]
         assert (await client.get("/api/v1/qcli/plugins/installed")).status_code == 401
 
-    async def test_status_reports_audit_when_the_users_plugin_is_installed(
+    async def test_status_reports_audit_when_the_audit_plugin_is_installed(
         self, client: AsyncClient, builder: CliBuilder,
     ) -> None:
         res = await client.get("/api/v1/qcli/status")
         assert res.json()["enabledFeatures"] == ["filesystem"]
 
-        builder.add_installed_plugin(JOBS)
+        # The users plugin alone no longer reports it: the audit plugin serves the log.
         builder.add_installed_plugin(USERS)
+        builder.add_installed_plugin(JOBS)
+        res = await client.get("/api/v1/qcli/status")
+        assert res.json()["enabledFeatures"] == ["filesystem", "jobs"]
 
+        builder.add_installed_plugin(AUDIT)
         res = await client.get("/api/v1/qcli/status")
         assert res.json()["enabledFeatures"] == ["filesystem", "jobs", "audit"]

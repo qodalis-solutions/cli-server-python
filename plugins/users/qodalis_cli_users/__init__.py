@@ -1,5 +1,7 @@
 """Qodalis CLI users plugin — user management, authentication, permissions,
-sessions, groups and audit."""
+sessions, groups and API tokens.  Its events are recorded in the audit plugin
+(``qodalis_cli_audit``), which it mounts; ``AuditEntry``, ``AuditQueryOptions``,
+``IAuditStore`` and ``InMemoryAuditStore`` are re-exported from there."""
 
 from __future__ import annotations
 
