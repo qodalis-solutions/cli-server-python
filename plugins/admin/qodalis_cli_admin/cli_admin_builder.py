@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from dataclasses import dataclass, field
@@ -20,7 +21,8 @@ from .controllers.config_controller import create_config_router
 from .controllers.logs_controller import create_logs_router
 from .controllers.ws_clients_controller import create_ws_clients_router
 from .services.admin_config import AdminConfig
-from .services.admin_theme import admin_theme_json
+from .services.admin_branding import validate_admin_branding
+from .services.admin_theme import validate_admin_theme
 from .services.log_ring_buffer import LogRingBuffer
 from .services.module_registry import ModuleRegistry
 from .dashboard_resolver import resolve_dashboard_dir
@@ -78,7 +80,8 @@ class CliAdminBuilder:
         self._dashboard_path: str | None = None
         self._trust_proxy = False
         self._users_plugin: Any = None
-        self._theme_json: bytes = admin_theme_json(None)
+        self._theme: dict[str, Any] = validate_admin_theme(None)
+        self._branding: dict[str, Any] | None = None
         self._sign_in_url: str | None = None
 
     def set_credentials(self, username: str, password: str) -> CliAdminBuilder:
@@ -125,8 +128,26 @@ class CliAdminBuilder:
                 "dark": {"primary": "#4f9be0", "background": "#0d1823"},
             })
         """
-        self._theme_json = admin_theme_json(theme)
+        self._theme = validate_admin_theme(theme)
         return self
+
+    def set_branding(self, branding: Mapping[str, Any]) -> CliAdminBuilder:
+        """Ship the dashboard under your own name and icon, and name its terminal.
+
+        ``{"name": "RateBell", "icon_url": "/favicon.svg", "cli_name": "RateBell CLI"}``:
+        the name and icon of the browser tab, sidebar and sign-in page, and the
+        terminal's name in its welcome banner. The icon is an absolute http(s)
+        URL, a root-relative path or a base64 ``data:image`` URL. Unset values
+        keep the Qodalis defaults (Qodalis Cli Admin, the Qodalis Solutions
+        logo, Web CLI); a bad value raises :class:`ValueError` here.
+        """
+        self._branding = validate_admin_branding(branding)
+        return self
+
+    def _theme_json(self) -> bytes:
+        """The ``theme.json`` body: the color scheme, plus ``branding`` when set."""
+        doc = {**self._theme, "branding": self._branding} if self._branding else self._theme
+        return json.dumps(doc, separators=(",", ":")).encode()
 
     def set_sign_in_url(self, url: str | None) -> CliAdminBuilder:
         """Where the host application signs users in, shown by the dashboard
@@ -218,7 +239,7 @@ class CliAdminBuilder:
 
         if dashboard_dir:
             dashboard_app = SPAStaticFiles(
-                directory=dashboard_dir, html=True, theme_json=self._theme_json,
+                directory=dashboard_dir, html=True, theme_json=self._theme_json(),
             )
 
         return CliAdminPlugin(

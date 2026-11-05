@@ -202,6 +202,23 @@ The defaults match the Qodalis CLI panel: its grays, indigo accent with the viol
 | `error` | `--qcli-error` | Errors and destructive actions | `#f85149` | `#cf222e` |
 | `info` | `--qcli-info` | Informational states | `#58a6ff` | `#0969da` |
 
+## Name and icon
+
+By default the dashboard is "Qodalis Cli Admin" with the Qodalis Solutions logo. An application that ships it
+under its own name sets `set_branding()`:
+
+```python
+CliAdminBuilder().set_branding({
+    "name": "RateBell",          # browser tab, sidebar, sign-in page
+    "icon_url": "/favicon.svg",  # http(s) URL, root-relative path or base64 data:image URL
+    "cli_name": "RateBell CLI",  # the terminal's welcome banner
+})
+```
+
+Anything left unset keeps the Qodalis default. The terminal's copyright line, docs link and `version` stay Qodalis
+CLI's. The values are served with the color scheme at `/qcli/admin/theme.json`; `set_branding()` raises
+`ValueError` on an invalid value.
+
 ## Dependencies
 
 - `PyJWT>=2.0.0`
