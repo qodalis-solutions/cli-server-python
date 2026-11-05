@@ -49,6 +49,12 @@ class InMemoryAuditStore(IAuditStore):
             if options.actor:
                 actor = options.actor.lower()
                 result = [e for e in result if (e.actor or "").lower() == actor]
+            start = getattr(options, "from_", None)
+            if start is not None:
+                result = [e for e in result if e.timestamp >= start]
+            end = getattr(options, "to", None)
+            if end is not None:
+                result = [e for e in result if e.timestamp < end]
             if options.offset is not None and options.offset > 0:
                 result = result[options.offset:]
             if options.limit is not None and options.limit >= 0:

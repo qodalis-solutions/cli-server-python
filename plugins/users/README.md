@@ -85,7 +85,7 @@ When mounted on a CLI server, every route and socket requires a users session ex
 
 | Surface | Permission |
 |---|---|
-| `GET /commands` | authenticated |
+| `GET /commands`, `/commands/stats` | authenticated |
 | `POST /execute`, `/execute/stream` | `commands:execute` + the processor's `required_permissions` |
 | `POST /api/qcli/mcp` (MCP endpoint) | `commands:execute`; each tool also needs its own permissions |
 | fs `ls`, `cat`, `stat`, `download` | `files:read` |
@@ -131,7 +131,7 @@ All routes are mounted under `/api/v1/qcli`; collections accept paths with and w
 | `PUT /groups/{name}` | `groups:update` | `{ description?, permissions? }` |
 | `DELETE /groups/{name}` | `groups:delete` | Delete (204) |
 | `POST` / `DELETE /groups/{name}/members/{idOrName}` | `groups:update` | Add / remove member (204) |
-| `GET /audit?event=&username=&actor=&limit=&offset=` | `audit:read` | Audit entries, newest first (served by the [audit plugin](../audit/README.md)) |
+| `GET /audit?event=&username=&actor=&from=&to=&limit=&offset=` | `audit:read` | Audit entries, newest first (served by the [audit plugin](../audit/README.md)) |
 | `DELETE /audit` | `audit:clear` | Clear the audit log (204; audit plugin) |
 | `GET /tokens` | authenticated | Own API tokens (views) |
 | `GET /tokens?all=true` | `tokens:read` | Every user's API tokens (`all` must be `true`/`false`, else 400) |

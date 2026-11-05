@@ -1,8 +1,33 @@
 # Change Log
 
 Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodalis-cli-server-abstractions`,
-`qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b18` is
-PEP 440 for `1.0.0-beta.18`).
+`qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
+PEP 440 for `1.0.0-beta.19`).
+
+## 1.0.0b19
+
+Read-only endpoints for the admin dashboard's charts, the same JSON on the .NET, Node and Python servers. Times are ISO
+8601 UTC (`2026-11-05T21:00:00.000Z`), durations milliseconds; bad times or numbers answer `400 { "error": "..." }`.
+
+- **Jobs** (jobs plugin): `GET /api/v1/qcli/jobs/stats?since=&until=&buckets=&job=&group=` counts every run started in
+  the range (default the last 24 hours; `buckets` 1..200, default 24) per time column by outcome, with totals and per-job
+  `successRate`, `avgDuration`, `p95Duration`, `maxDuration`, `lastFailureAt` and the 12 newest runs. It pages through
+  the storage's execution query, so it works with every storage provider.
+- **Log histogram** (admin plugin): `GET /api/v1/qcli/logs/histogram?from=&to=&buckets=&level=&search=&service=` counts
+  the buffered log entries per level (`DEBUG`, `INFO`, `WARN`, `ERROR`) and time column. `GET /api/v1/qcli/logs` now
+  takes several levels (comma-separated), searches the source too and takes `service` (the in-memory buffer has no
+  services, so a service matches nothing).
+- **Status history** (admin plugin): `GET /api/v1/qcli/status/history?minutes=` (default 60, 1..1440). The plugin
+  samples memory, CPU (process CPU time over wall time, % of one core), WebSocket clients and shell sessions every 15
+  seconds and keeps 24 hours in memory; the sampler is an asyncio task started with the app's lifespan and cancelled on
+  shutdown.
+- **Command usage** (server): `GET /api/v1/qcli/commands/stats` lists executions, failures (exit code != 0 or an
+  exception), average duration and the last execution and failure per root command since the server started, counted
+  for `/execute`, `/execute/stream` and the MCP tools (`known: false` for unknown commands). The executor's `usage`
+  (`CliCommandUsageTracker`) holds the counters.
+- **Audit** (audit plugin): `GET /api/v1/qcli/audit` takes `from` and `to` (ISO 8601 or epoch milliseconds,
+  `from <= timestamp < to`). `AuditQueryOptions` gains `from_` and `to` (Unix time in ms); `InMemoryAuditStore` filters
+  by them. A store of your own should filter by them too.
 
 ## 1.0.0b18
 

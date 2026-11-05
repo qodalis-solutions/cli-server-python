@@ -17,6 +17,13 @@ from qodalis_cli_server_abstractions.jobs import (
 
 from .cli_job_scheduler import CliJobScheduler, InvalidOperationError
 from .interval_parser import parse_interval
+from .job_stats import (
+    StatsRequestError,
+    collect_runs,
+    compute_stats,
+    parse_buckets,
+    resolve_range,
+)
 
 
 class UpdateJobRequest(BaseModel):
@@ -90,6 +97,20 @@ def create_cli_jobs_router(
     """Create a FastAPI router with CRUD and control endpoints for jobs."""
     router = APIRouter()
 
+    def _resolve_job_ids(job: list[str] | None, group: str | None) -> list[str] | None:
+        """The jobs named in ``job`` (repeated or comma-separated) and/or in
+        ``group`` (case-insensitive); ``None`` for every job, ``[]`` for none."""
+        job_ids: list[str] | None = None
+        if job is not None:
+            job_ids = [j.strip() for value in job for j in value.split(",") if j.strip()]
+        if group is not None and group.strip():
+            in_group = [
+                reg.id for reg in scheduler.registrations.values()
+                if (reg.options.group or "").lower() == group.lower()
+            ]
+            job_ids = [j for j in job_ids if j in in_group] if job_ids else in_group
+        return job_ids if job_ids or group is not None else None
+
     @router.get("")
     async def list_jobs() -> list[dict[str, Any]]:
         return [_job_dto(reg) for reg in scheduler.registrations.values()]
@@ -106,18 +127,9 @@ def create_cli_jobs_router(
         """Executions across jobs, newest first: every job, the jobs named in
         ``job`` (repeat it or separate ids with commas), or the jobs of a
         ``group``; optionally only those started ``since`` a time (ISO 8601)."""
-        job_ids: list[str] | None = None
-        if job is not None:
-            job_ids = [j.strip() for value in job for j in value.split(",") if j.strip()]
-        if group is not None and group.strip():
-            in_group = [
-                reg.id for reg in scheduler.registrations.values()
-                if (reg.options.group or "").lower() == group.lower()
-            ]
-            job_ids = [j for j in job_ids if j in in_group] if job_ids else in_group
-
+        job_ids = _resolve_job_ids(job, group)
         query = JobExecutionQuery(
-            job_ids=job_ids if job_ids or group is not None else None,
+            job_ids=job_ids,
             status=status or None,
             since=since,
             limit=min(max(limit, 1), 100),
@@ -134,6 +146,31 @@ def create_cli_jobs_router(
             "limit": query.limit,
             "offset": query.offset,
         }
+
+    @router.get("/stats")
+    async def get_stats(
+        job: list[str] | None = Query(None),
+        group: str | None = Query(None),
+        since: str | None = Query(None),
+        until: str | None = Query(None),
+        buckets: str | None = Query(None),
+    ) -> Any:
+        """Run statistics for the dashboard's charts: runs started in
+        ``[since, until)`` (default: the last 24 hours) per time column by
+        outcome, totals and per-job figures.  ``job``/``group`` filter as in
+        ``GET /executions``.  Declared before ``/{job_id}``."""
+        try:
+            start, end = resolve_range(since, until)
+            count = parse_buckets(buckets)
+        except StatsRequestError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
+        job_ids = _resolve_job_ids(job, group)
+        # A group (or job list) without jobs gives empty stats, not every job
+        runs = [] if job_ids is not None and not job_ids else await collect_runs(
+            scheduler.query_executions, job_ids, start, end,
+        )
+        names = {reg.id: reg.options.name for reg in scheduler.registrations.values()}
+        return compute_stats(runs, start, end, count, names)
 
     @router.get("/{job_id}")
     async def get_job(job_id: str) -> Any:
