@@ -56,13 +56,20 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli`). Exce
 | POST | `/auth/login` | Authenticate and receive a JWT token (501 in external mode) |
 | GET | `/auth/me` | Get current authenticated user info |
 | GET | `/status` | Server status, uptime, connected clients, enabled features |
+| GET | `/status/history?minutes=` | Status samples (every 15 s, kept 24 h in memory), oldest first: `memoryMb`, `cpuPercent`, `activeWsConnections`, `activeShellSessions`; `minutes` defaults to 60, clamped to 1..1440 |
 | GET | `/plugins` | List registered plugin modules |
 | GET | `/plugins/installed` | List the installed server plugin packages (`id`, `name`, `version`, `description`) |
 | POST | `/plugins/{id}/toggle` | Enable or disable a plugin module |
 | GET | `/config` | Get server configuration sections |
 | PUT | `/config` | Update mutable runtime settings |
-| GET | `/logs` | Retrieve buffered log entries |
+| GET | `/logs` | Retrieve buffered log entries: `?level=` (one or comma-separated `DEBUG`, `INFO`, `WARN`, `ERROR`), `search=` (message or source), `service=`, `from=`/`to=` (ISO 8601, no offset = UTC), `limit=`, `offset=`; answers `entries`, `total`, `limit`, `offset`, `hasMore`, `store` (`memory`), `persistent` (`false`), `services` (`[]`) |
+| GET | `/logs/histogram` | Buffered log entries per level in equal time columns: `?from=&to=&buckets=` (default the last 24 h in 24 columns, `buckets` clamped to 1..200) with the filters of `/logs` |
 | GET | `/ws/clients` | List connected WebSocket clients |
+
+The status sampler runs with the app's lifespan once the plugin is mounted (`result.mount_plugin(admin)`), first
+sample at start, and is cancelled on shutdown. `cpuPercent` is the process CPU time over the last interval as a
+percentage of one core (`null` for the first sample). Bad `from`/`to`/`buckets`/`level`/`minutes` values answer
+`400 { "error": "..." }`.
 
 With the users plugin (`set_users_plugin(...)`), the dashboard signs in through it (sessions, lockout, audit) and
 needs the `admin:access` permission; the static `QCLI_ADMIN_USERNAME`/`QCLI_ADMIN_PASSWORD` are only used without it.

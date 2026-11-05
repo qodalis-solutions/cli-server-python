@@ -109,10 +109,14 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli/jobs`).
 | GET | `/{id}/history` | Paginated execution history |
 | GET | `/{id}/history/{exec_id}` | Execution detail with logs |
 | GET | `/executions` | Executions across jobs, newest first: `?job=a,b&group=&status=&since=&limit=&offset=` |
+| GET | `/stats` | Run statistics for charts: `?since=&until=&buckets=&job=&group=` (default the last 24 h in 24 columns) |
 
 `job` may be repeated or comma separated; `group` selects the jobs of that group (case-insensitive, intersected with
 `job`); `since` is an ISO 8601 time; `limit` is clamped to 1..100. Executions carry `properties`, the job's own
-values. Keep job ids stable (`id`): saved pauses and history are found again by id after a restart.
+values. `GET /stats` counts every run started in `[since, until)` (it pages through the storage's execution query, so
+any storage works) per time column by outcome (`succeeded`, `failed`, `cancelled`, `running`), with totals and per-job
+figures (`successRate`, `avgDuration`, `p95Duration`, `maxDuration`, `lastFailureAt`, the 12 newest runs); `buckets` is
+clamped to 1..200 and a bad time answers `400 { "error": "..." }`. Keep job ids stable (`id`): saved pauses and history are found again by id after a restart.
 
 ## MCP tools
 

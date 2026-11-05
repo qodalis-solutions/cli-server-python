@@ -88,3 +88,7 @@ class AuditQueryOptions:
     actor: str | None = None
     #: Entries to skip, for paging (newest first).
     offset: int | None = None
+    #: Only entries recorded at or after this time (Unix time in ms).
+    from_: int | None = None
+    #: Only entries recorded before this time (Unix time in ms).
+    to: int | None = None

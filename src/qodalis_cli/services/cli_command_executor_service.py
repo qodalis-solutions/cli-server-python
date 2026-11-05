@@ -3,12 +3,14 @@ from __future__ import annotations
 import abc
 import asyncio
 import logging
+import time
 from typing import Sequence
 
 from ..abstractions import CliProcessCommand, ICliCommandProcessor, ICliProcessorFilter
 from ..models.cli_server_output import CliServerTextOutput
 from ..models.cli_server_response import CliServerResponse
 from .cli_command_registry import ICliCommandRegistry
+from .cli_command_usage import CliCommandUsageTracker
 from .cli_output_limits import DEFAULT_MAX_TABLE_ROWS, apply_response_limits
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,22 @@ class CliCommandExecutorService(ICliCommandExecutorService):
         self._registry = registry
         self._filters: list[ICliProcessorFilter] = list(filters or [])
         self.max_table_rows = max_table_rows
+        #: Executions per root command since start (``GET /commands/stats``).
+        self.usage = CliCommandUsageTracker()
+
+    def record_usage(self, command: str, duration_ms: float, failed: bool) -> None:
+        """Count one execution of the root command ``command`` (named as the
+        registry resolves it; unknown commands under their own name)."""
+        name = (command or "").strip()
+        if not name:
+            return
+        processor = self._registry.find_processor(name, None)
+        self.usage.record(
+            processor.command if processor is not None else name.split()[0],
+            known=processor is not None,
+            duration_ms=duration_ms,
+            failed=failed,
+        )
 
     def add_filter(self, filter_: ICliProcessorFilter) -> None:
         """Register an additional processor filter at runtime.
@@ -74,6 +92,20 @@ class CliCommandExecutorService(ICliCommandExecutorService):
         return any(not f.is_allowed(processor) for f in self._filters)
 
     async def execute_async(
+        self,
+        command: CliProcessCommand,
+        cancellation_event: asyncio.Event | None = None,
+    ) -> CliServerResponse:
+        started = time.perf_counter()
+        failed = True
+        try:
+            response = await self._execute(command, cancellation_event)
+            failed = response.exit_code != 0
+            return response
+        finally:
+            self.record_usage(command.command, (time.perf_counter() - started) * 1000, failed)
+
+    async def _execute(
         self,
         command: CliProcessCommand,
         cancellation_event: asyncio.Event | None = None,

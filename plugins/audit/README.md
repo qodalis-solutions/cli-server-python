@@ -56,10 +56,10 @@ values (`properties`). With the users plugin, `users_plugin.audit_store` is the 
 
 | Endpoint | Permission | Description |
 |---|---|---|
-| `GET /api/v1/qcli/audit?event=&username=&actor=&limit=&offset=` | `audit:read` | Entries newest first; filters are exact and case-insensitive; 100 entries without a `limit`, at most 1000 (`DEFAULT_AUDIT_LIMIT`, `MAX_AUDIT_LIMIT`) |
+| `GET /api/v1/qcli/audit?event=&username=&actor=&from=&to=&limit=&offset=` | `audit:read` | Entries newest first; filters are exact and case-insensitive; `from` (inclusive) and `to` (exclusive) are ISO 8601 times (no offset = UTC) or epoch milliseconds; 100 entries without a `limit`, at most 1000 (`DEFAULT_AUDIT_LIMIT`, `MAX_AUDIT_LIMIT`) |
 | `DELETE /api/v1/qcli/audit` | `audit:clear` | Clears the log, then records `audit_cleared` with who did it (204) |
 
-A `limit` or `offset` that is not an integer >= 0 answers `400 { "error": "..." }`. The permissions apply with the users
+A `from` or `to` that is not a time, or a `limit` or `offset` that is not an integer >= 0, answers `400 { "error": "..." }`. The permissions apply with the users
 plugin: its server protection checks them (route policy), and without server protection (`set_protect_server(False)`)
 the users plugin still guards the audit API. On a server without an auth plugin the API is open, like the jobs API.
 

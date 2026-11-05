@@ -25,6 +25,7 @@ from .services.admin_branding import validate_admin_branding
 from .services.admin_theme import validate_admin_theme
 from .services.log_ring_buffer import LogRingBuffer
 from .services.module_registry import ModuleRegistry
+from .services.status_history import StatusHistory
 from .dashboard_resolver import resolve_dashboard_dir
 
 
@@ -60,6 +61,9 @@ class CliAdminPlugin:
     log_buffer: LogRingBuffer
     dashboard_app: Any  # ASGI app (SPA fallback) or None
     module_registry: ModuleRegistry | None = None
+    #: Status samples of ``GET /status/history``; sampling runs with the
+    #: app's lifespan once the plugin is mounted.
+    status_history: StatusHistory | None = None
     #: Holds the server options read by ``GET /auth/mode`` (see on_mount).
     _server: dict = field(default_factory=dict, repr=False)
 
@@ -68,6 +72,12 @@ class CliAdminPlugin:
         follows the server's ``options.external_authentication``."""
         if self._server.get("options") is None:
             self._server["options"] = getattr(server, "options", None)
+        app = getattr(server, "app", None)
+        router = getattr(app, "router", None)
+        if self.status_history is not None and router is not None and not self._server.get("sampling"):
+            # Sample while the app runs; cancelled on shutdown.
+            router.lifespan_context = self.status_history.wrap_lifespan(router.lifespan_context)
+            self._server["sampling"] = True
 
 
 class CliAdminBuilder:
@@ -216,9 +226,11 @@ class CliAdminBuilder:
                     enabled_features.append("jobs")
                     break
 
+        status_history = StatusHistory(deps.event_socket_manager)
         status_router = create_status_router(
             start_time, deps.event_socket_manager, auth_dep, enabled_features,
             registry=deps.registry, builder=deps.builder,
+            status_history=status_history,
         )
         router.include_router(status_router)
 
@@ -250,5 +262,6 @@ class CliAdminBuilder:
             log_buffer=log_buffer,
             dashboard_app=dashboard_app,
             module_registry=module_registry,
+            status_history=status_history,
             _server=server,
         )
