@@ -1,8 +1,14 @@
 # Change Log
 
 Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodalis-cli-server-abstractions`,
-`qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b17` is
-PEP 440 for `1.0.0-beta.17`).
+`qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b18` is
+PEP 440 for `1.0.0-beta.18`).
+
+## 1.0.0b18
+
+No changes in this server: every package moves to the version of the .NET server's release, which adds a Seq logs
+plugin (`Qodalis.Cli.Plugin.Logs.Seq`) and new filters on `GET /api/v1/qcli/logs` (`service`, `from`, `to`, several
+levels). This server's logs API keeps its current filters.
 
 ## 1.0.0b17
 
