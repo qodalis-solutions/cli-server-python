@@ -1,8 +1,42 @@
 # Change Log
 
 Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodalis-cli-server-abstractions`,
-`qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b15` is
-PEP 440 for `1.0.0-beta.15`).
+`qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b17` is
+PEP 440 for `1.0.0-beta.17`).
+
+## 1.0.0b17
+
+### Audit plugin
+
+- The audit log is a plugin of its own, **qodalis-cli-server-plugin-audit** (`qodalis_cli_audit`,
+  `result.mount_plugin(CliAuditBuilder().build())`): the entries, the in-memory store and `GET/DELETE
+  /api/v1/qcli/audit`, listed on the dashboard's Plugins page and shown as its Audit page. The users plugin depends on
+  it and mounts it, so existing hosts keep their audit log; a host can use it without the users plugin. A server serves
+  one audit log: mounting the audit plugin again, or a second one, adds no routes (the new `before_mount(server)` hook
+  of `mount_plugin`). See [its README](plugins/audit/README.md).
+- The contract moves to **qodalis-cli-server-abstractions** (`qodalis_cli_server_abstractions.audit`: `AuditEntry`,
+  `AuditMetadata`, `AuditQueryOptions`, `IAuditStore`), so a store of your own needs only the abstractions.
+  `InMemoryAuditStore` is in `qodalis_cli_audit`. `qodalis_cli_users` (and its `models`, `stores` and
+  `stores.in_memory_audit_store` modules) still re-exports `AuditEntry`, `AuditQueryOptions`, `IAuditStore` and
+  `InMemoryAuditStore`, so existing imports keep working. **Breaking**: `qodalis_cli_users.controllers` no longer has
+  `create_audit_router` (use `qodalis_cli_audit.create_audit_router`), and the users plugin's `router` no longer serves
+  `/audit`: mount the users plugin with `result.mount_plugin(...)` (which mounts the audit plugin), or include
+  `users_plugin.audit_plugin.router` yourself.
+- `CliAuditBuilder().set_store(store)` keeps the log elsewhere; the users plugin's `set_audit_store(store)` still works
+  and does the same. A store set on either side is kept, whichever plugin is mounted first; of two set stores the one
+  mounted last. `users_plugin.audit_plugin` is the audit plugin, `users_plugin.audit_store` its store.
+- The server protection's route policy protects the audit API itself (`audit:read` for `GET`, `audit:clear` for
+  `DELETE`); without server protection the users plugin still guards it. Clearing records `audit_cleared` with the
+  caller (`userId`, `actorId`, `remoteAddress`). A `limit` or `offset` that is not an integer >= 0 answers `400
+  {error}`; `limit=0` returns no entries (it returned up to the whole log).
+- The admin status reports the `audit` feature when the audit plugin is installed.
+- There is no database audit store in this server (the .NET server's Audit.EfCore has no Python counterpart):
+  implement `IAuditStore` for one.
+
+### Admin
+
+- The admin plugin ships dashboard 1.0.0-beta.13: the Terminal page is shown on every server again (it was hidden
+  without an OS shell).
 
 ## 1.0.0b15
 
