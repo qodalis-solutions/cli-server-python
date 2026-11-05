@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel, ConfigDict
 
+# The audit contract lives in the abstractions package (re-exported here for
+# code written against earlier versions of the users plugin).
+from qodalis_cli_server_abstractions.audit import AuditEntry, AuditQueryOptions
+
 
 def now_ms() -> int:
     """Current time in epoch milliseconds."""
@@ -180,60 +184,6 @@ class ApiToken:
         if self.permissions is not None:
             result["permissions"] = list(self.permissions)
         return result
-
-
-@dataclass
-class AuditEntry:
-    id: str = field(default_factory=_new_id)
-    timestamp: int = field(default_factory=now_ms)
-    event: str = ""
-    username: str = ""
-    details: str | None = None
-    actor: str | None = None
-    metadata: dict[str, Any] | None = None
-    user_id: str | None = None
-    actor_id: str | None = None
-    #: What the event is about when it is not a user: a group
-    #: (``group:admins``), a job, or a host's own object such as a role.
-    target: str | None = None
-    #: The host's own values for this entry (e.g. the old and new value of a
-    #: setting), returned by the audit API.  Values must serialize to JSON.
-    properties: dict[str, Any] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            "id": self.id,
-            "timestamp": self.timestamp,
-            "event": self.event,
-            "username": self.username,
-        }
-        if self.user_id is not None:
-            result["userId"] = self.user_id
-        if self.actor_id is not None:
-            result["actorId"] = self.actor_id
-        if self.details is not None:
-            result["details"] = self.details
-        if self.actor is not None:
-            result["actor"] = self.actor
-        if self.target is not None:
-            result["target"] = self.target
-        if self.properties is not None:
-            result["properties"] = self.properties
-        if self.metadata is not None:
-            result["metadata"] = self.metadata
-        return result
-
-
-@dataclass
-class AuditQueryOptions:
-    limit: int | None = None
-    event: str | None = None
-    #: The user the events are about (exact, case-insensitive).
-    username: str | None = None
-    #: The user who performed the actions (exact, case-insensitive).
-    actor: str | None = None
-    #: Entries to skip, for paging (newest first).
-    offset: int | None = None
 
 
 @dataclass

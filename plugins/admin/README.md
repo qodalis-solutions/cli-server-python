@@ -145,7 +145,8 @@ builder.add_installed_plugin("acme-cli-billing")        # a distribution name
 builder.add_installed_plugin(BillingModule())           # or an object of the package
 ```
 
-The status reports the `audit` feature when the users plugin is installed (the dashboard's Audit page), and `jobs`
+The status reports the `audit` feature when the audit plugin is installed (the dashboard's Audit page; the users plugin
+mounts it), and `jobs`
 when the jobs plugin is.
 
 ## Dashboard

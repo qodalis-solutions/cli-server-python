@@ -1,17 +1,21 @@
 """Abstract store interfaces for the users plugin.
 
-Implement these to persist users, sessions, credentials, groups and the audit
-log in your own storage.  All business rules (permissions, cascades,
-protections) live in the plugin; stores are plain persistence.
+Implement these to persist users, sessions, credentials, groups and API
+tokens in your own storage.  All business rules (permissions, cascades,
+protections) live in the plugin; stores are plain persistence.  The audit
+log's ``IAuditStore`` is in ``qodalis_cli_server_abstractions.audit`` (the
+audit plugin keeps the log), re-exported here.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+
+# The audit store contract lives in the abstractions package (re-exported).
+from qodalis_cli_server_abstractions.audit import IAuditStore
+
 from ..models import (
     ApiToken,
-    AuditEntry,
-    AuditQueryOptions,
     Credentials,
     Group,
     Session,
@@ -144,28 +148,6 @@ class ICredentialStore(ABC):
     @abstractmethod
     async def delete_credentials(self, user_id: str) -> None:
         ...
-
-
-class IAuditStore(ABC):
-    """Persistence interface for audit log entries."""
-
-    @abstractmethod
-    async def log(self, entry: AuditEntry) -> None:
-        ...
-
-    @abstractmethod
-    async def get_entries(self, options: AuditQueryOptions | None = None) -> list[AuditEntry]:
-        """Entries newest-first, filtered by ``options``."""
-
-    @abstractmethod
-    async def clear(self) -> None:
-        ...
-
-    async def prune(self, before: int) -> int:
-        """Deletes the entries recorded before ``before`` (Unix time in ms);
-        returns how many.  Run it on a schedule to keep the log bounded.  The
-        default keeps everything and returns 0."""
-        return 0
 
 
 class IGroupStore(ABC):

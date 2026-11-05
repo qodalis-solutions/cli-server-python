@@ -58,17 +58,19 @@ def create_status_router(
 
 
 JOBS_DISTRIBUTION = "qodalis-cli-server-plugin-jobs"
-USERS_DISTRIBUTION = "qodalis-cli-server-plugin-users"
+#: The audit plugin (the admin plugin does not depend on it).
+AUDIT_DISTRIBUTION = "qodalis-cli-server-plugin-audit"
 
 
 def _features(enabled_features: list[str] | None, builder: Any) -> list[str]:
     """The enabled features (filesystem, jobs, audit, in that order): ``jobs``
-    when the jobs plugin is mounted, ``audit`` when the users plugin (which
-    keeps the audit log, ``GET /api/v1/qcli/audit``) is."""
+    when the jobs plugin is mounted, ``audit`` when the audit plugin (which
+    serves the audit log, ``GET /api/v1/qcli/audit``; the users plugin mounts
+    it) is."""
     features = list(enabled_features or [])
     installed = {p.id for p in (getattr(builder, "installed_plugins", None) or [])}
     if "jobs" not in features and JOBS_DISTRIBUTION in installed:
         features.append("jobs")
-    if "audit" not in features and USERS_DISTRIBUTION in installed:
+    if "audit" not in features and AUDIT_DISTRIBUTION in installed:
         features.append("audit")
     return features
