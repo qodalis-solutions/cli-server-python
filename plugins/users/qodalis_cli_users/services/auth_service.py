@@ -418,6 +418,8 @@ class AuthService:
         metadata: dict[str, Any] | None = None,
         user_id: str | None = None,
         actor_id: str | None = None,
+        target: str | None = None,
+        properties: dict[str, Any] | None = None,
     ) -> None:
         try:
             await self.audit_store.log(AuditEntry(
@@ -428,6 +430,8 @@ class AuthService:
                 metadata=metadata,
                 user_id=user_id,
                 actor_id=actor_id,
+                target=sanitize(target, 256),
+                properties=properties,
             ))
         except Exception:
             logger.exception("Failed to write audit entry %s", event)

@@ -161,6 +161,12 @@ class IAuditStore(ABC):
     async def clear(self) -> None:
         ...
 
+    async def prune(self, before: int) -> int:
+        """Deletes the entries recorded before ``before`` (Unix time in ms);
+        returns how many.  Run it on a schedule to keep the log bounded.  The
+        default keeps everything and returns 0."""
+        return 0
+
 
 class IGroupStore(ABC):
     """Persistence interface for user groups.  Lookups are case-insensitive."""

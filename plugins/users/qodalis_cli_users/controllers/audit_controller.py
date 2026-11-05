@@ -23,11 +23,20 @@ def create_audit_router(
     async def list_entries(
         event: str | None = None,
         username: str | None = None,
+        actor: str | None = None,
         limit: int | None = Query(default=None, ge=0),
+        offset: int | None = Query(default=None, ge=0),
         ctx: AuthContext = Depends(require_permission(AUDIT_READ)),
     ):
+        """Audit entries, newest first (``?event=&username=&actor=&limit=&offset=``)."""
         entries = await audit_store.get_entries(
-            AuditQueryOptions(event=event or None, username=username or None, limit=limit or None),
+            AuditQueryOptions(
+                event=event or None,
+                username=username or None,
+                actor=actor or None,
+                limit=limit or None,
+                offset=offset or None,
+            ),
         )
         return [e.to_dict() for e in entries]
 
