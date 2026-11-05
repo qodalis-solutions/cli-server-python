@@ -18,3 +18,14 @@ class CliJobOptions:
     retry_strategy: str = "exponential"  # 'fixed' | 'linear' | 'exponential'
     timeout: str | None = None  # e.g. "5m"
     overlap_policy: str = "skip"  # 'skip' | 'queue' | 'cancel'
+    #: The job's id in the jobs API, its history and its saved state (pause,
+    #: last run), e.g. ``fetch-rates:bnr``.  Keep it stable so a restart finds
+    #: the job's history and state again.  Default: the name, with ``-2``,
+    #: ``-3``, ... for further jobs of the same name, in registration order.
+    id: str | None = None
+    #: Runs the job once right after the scheduler starts, whatever its
+    #: schedule (also for jobs that only run on demand).  Not for paused or
+    #: stopped jobs.  An interval job keeps its rhythm across restarts: the
+    #: next run is the last run plus the interval (right away when that has
+    #: passed).
+    run_on_start: bool = False

@@ -2,7 +2,13 @@
 
 from .cli_job_execution_context import CliJobExecutionContext
 from .cli_job_logger import CliJobLogger
-from .cli_job_scheduler import CliJobScheduler, InvalidOperationError, BroadcastFn
+from .cli_job_scheduler import (
+    BroadcastFn,
+    CliJobScheduler,
+    ICliJobScheduler,
+    InvalidOperationError,
+    JobRegistration,
+)
 from .cli_jobs_builder import CliJobsBuilder, CliJobsPlugin
 from .cli_jobs_controller import create_cli_jobs_router
 from .in_memory_job_storage_provider import InMemoryJobStorageProvider
@@ -15,8 +21,10 @@ __all__ = [
     "CliJobScheduler",
     "CliJobsBuilder",
     "CliJobsPlugin",
+    "ICliJobScheduler",
     "InMemoryJobStorageProvider",
     "InvalidOperationError",
+    "JobRegistration",
     "create_cli_jobs_router",
     "parse_interval",
 ]

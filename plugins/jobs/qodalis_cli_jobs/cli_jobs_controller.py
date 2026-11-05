@@ -9,7 +9,11 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from qodalis_cli_server_abstractions.jobs import ICliJobStorageProvider
+from qodalis_cli_server_abstractions.jobs import (
+    ICliJobStorageProvider,
+    JobExecution,
+    JobExecutionQuery,
+)
 
 from .cli_job_scheduler import CliJobScheduler, InvalidOperationError
 from .interval_parser import parse_interval
@@ -62,6 +66,23 @@ def _job_dto(reg: Any) -> dict[str, Any]:
     }
 
 
+def _execution_item(e: JobExecution) -> dict[str, Any]:
+    """An execution as listed by the history and the cross-job listing."""
+    return {
+        "id": e.id,
+        "jobId": e.job_id,
+        "jobName": e.job_name,
+        "status": e.status,
+        "startedAt": _serialize_dt(e.started_at),
+        "completedAt": _serialize_dt(e.completed_at),
+        "duration": e.duration,
+        "error": e.error,
+        "retryAttempt": e.retry_attempt,
+        "logCount": len(e.logs),
+        "properties": e.properties,
+    }
+
+
 def create_cli_jobs_router(
     scheduler: CliJobScheduler,
     storage: ICliJobStorageProvider,
@@ -72,6 +93,47 @@ def create_cli_jobs_router(
     @router.get("")
     async def list_jobs() -> list[dict[str, Any]]:
         return [_job_dto(reg) for reg in scheduler.registrations.values()]
+
+    @router.get("/executions")
+    async def list_executions(
+        job: list[str] | None = Query(None),
+        group: str | None = Query(None),
+        status: str | None = Query(None),
+        since: datetime.datetime | None = Query(None),
+        limit: int = Query(20),
+        offset: int = Query(0),
+    ) -> Any:
+        """Executions across jobs, newest first: every job, the jobs named in
+        ``job`` (repeat it or separate ids with commas), or the jobs of a
+        ``group``; optionally only those started ``since`` a time (ISO 8601)."""
+        job_ids: list[str] | None = None
+        if job is not None:
+            job_ids = [j.strip() for value in job for j in value.split(",") if j.strip()]
+        if group is not None and group.strip():
+            in_group = [
+                reg.id for reg in scheduler.registrations.values()
+                if (reg.options.group or "").lower() == group.lower()
+            ]
+            job_ids = [j for j in job_ids if j in in_group] if job_ids else in_group
+
+        query = JobExecutionQuery(
+            job_ids=job_ids if job_ids or group is not None else None,
+            status=status or None,
+            since=since,
+            limit=min(max(limit, 1), 100),
+            offset=max(offset, 0),
+        )
+        # A group (or job list) without jobs lists nothing, not every job
+        if query.job_ids is not None and not query.job_ids:
+            items, total = [], 0
+        else:
+            items, total = await scheduler.query_executions(query)
+        return {
+            "items": [_execution_item(e) for e in items],
+            "total": total,
+            "limit": query.limit,
+            "offset": query.offset,
+        }
 
     @router.get("/{job_id}")
     async def get_job(job_id: str) -> Any:
@@ -201,21 +263,7 @@ def create_cli_jobs_router(
             job_id, limit=limit, offset=offset, status=status
         )
         return {
-            "items": [
-                {
-                    "id": e.id,
-                    "jobId": e.job_id,
-                    "jobName": e.job_name,
-                    "status": e.status,
-                    "startedAt": _serialize_dt(e.started_at),
-                    "completedAt": _serialize_dt(e.completed_at),
-                    "duration": e.duration,
-                    "error": e.error,
-                    "retryAttempt": e.retry_attempt,
-                    "logCount": len(e.logs),
-                }
-                for e in items
-            ],
+            "items": [_execution_item(e) for e in items],
             "total": total,
             "limit": limit,
             "offset": offset,
@@ -239,6 +287,7 @@ def create_cli_jobs_router(
             "duration": execution.duration,
             "error": execution.error,
             "retryAttempt": execution.retry_attempt,
+            "properties": execution.properties,
             "logs": [
                 {
                     "timestamp": _serialize_dt(log.timestamp),
