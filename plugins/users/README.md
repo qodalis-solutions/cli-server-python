@@ -198,7 +198,7 @@ optional fields make it fit an application's own changes:
 
 An application records its own changes in the same log through `IAuditStore.log`, so the dashboard's Audit page and
 `GET /audit` show them all. Filter by `event`, `username` (the subject) and `actor`, and page with `limit` and
-`offset`. The default store keeps the latest 1000 entries in memory; bound a store of your own with
+`offset` (without a `limit` the newest 100, at most 1000 per request). The default store keeps the latest 1000 entries in memory; bound a store of your own with
 `IAuditStore.prune(before)` (Unix time in ms; the default keeps everything).
 
 ## Custom storage

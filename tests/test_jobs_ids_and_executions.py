@@ -130,6 +130,32 @@ class TestJobIds:
 
         assert scheduler.jobs["nightly"].status == "paused"
 
+    def test_ids_are_url_safe(self, scheduler: CliJobScheduler) -> None:
+        scheduler.register(CountingJob(), CliJobOptions(name="reports/daily"))
+
+        assert list(scheduler.jobs) == ["reports-daily"]
+        with pytest.raises(ValueError):
+            scheduler.register(CountingJob(), CliJobOptions(id="a/b"))
+
+    async def test_a_job_the_code_disables_stays_stopped_whatever_was_saved(
+        self, scheduler: CliJobScheduler, storage: InMemoryJobStorageProvider,
+    ) -> None:
+        last_run = now() - datetime.timedelta(hours=2)
+        await storage.save_job_state("nightly", JobState(status="active", last_run_at=last_run))
+        await storage.save_job_state("weekly", JobState(status="stopped"))
+        nightly = CountingJob()
+        scheduler.register(nightly, CliJobOptions(name="nightly", interval="1h", enabled=False))
+        scheduler.register(CountingJob(), CliJobOptions(name="weekly", interval="1h"))
+
+        await scheduler.start()
+        await asyncio.sleep(0.1)
+
+        assert scheduler.jobs["nightly"].status == "stopped"
+        assert scheduler.jobs["nightly"].last_run_at == last_run
+        assert nightly.calls == 0
+        # A stop made at run time is kept
+        assert scheduler.jobs["weekly"].status == "stopped"
+
     def test_scheduler_is_an_ICliJobScheduler_with_read_only_jobs(self, scheduler: CliJobScheduler) -> None:
         scheduler.register(CountingJob(), CliJobOptions(name="a"))
         assert isinstance(scheduler, ICliJobScheduler)
@@ -215,6 +241,29 @@ class TestRunContext:
         assert total == 1
         assert items[0].status == "completed"
         assert items[0].properties == {"calls": 1}
+
+    async def test_a_run_whose_properties_cannot_be_saved_is_saved_without_them(self) -> None:
+        class RefusingStore(InMemoryJobStorageProvider):
+            async def save_execution(self, execution: JobExecution) -> None:
+                if execution.properties:
+                    raise TypeError("not serializable")
+                await super().save_execution(execution)
+
+        storage = RefusingStore()
+        scheduler = CliJobScheduler(storage)
+        job_id = scheduler.register(CountingJob(), CliJobOptions(name="props"))
+        await scheduler.start()
+        try:
+            await scheduler.trigger(job_id)
+            await asyncio.sleep(0.1)
+
+            items, _ = await storage.get_executions(job_id)
+            assert items[0].status == "completed"
+            assert items[0].properties == {}
+            assert any(e.level == "error" and "properties" in e.message for e in items[0].logs)
+            assert scheduler.jobs[job_id].current_execution_id is None
+        finally:
+            await scheduler.stop()
 
     async def test_discard_leaves_a_completed_run_out_but_keeps_failures(
         self, scheduler: CliJobScheduler, storage: InMemoryJobStorageProvider,
