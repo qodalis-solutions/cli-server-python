@@ -15,7 +15,12 @@ from qodalis_cli_server_abstractions.jobs import (
     JobExecutionQuery,
 )
 
-from .cli_job_scheduler import CliJobScheduler, InvalidOperationError
+from .cli_job_scheduler import (
+    CliJobScheduler,
+    ExecutionNotFoundError,
+    InvalidOperationError,
+    NotSupportedError,
+)
 from .interval_parser import parse_interval
 from .job_stats import (
     StatsRequestError,
@@ -335,4 +340,50 @@ def create_cli_jobs_router(
             ],
         }
 
+    @router.delete("/{job_id}/history/{exec_id}")
+    async def delete_execution(job_id: str, exec_id: str) -> Any:
+        """Deletes one finished run of the job and its logs."""
+        try:
+            await scheduler.delete_execution(job_id, exec_id)
+            return {"message": "Run deleted"}
+        except KeyError:
+            return _job_not_found()
+        except ExecutionNotFoundError:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Execution not found", "code": "EXECUTION_NOT_FOUND"},
+            )
+        except InvalidOperationError as exc:
+            return JSONResponse(
+                status_code=409,
+                content={"error": str(exc), "code": "EXECUTION_RUNNING"},
+            )
+        except NotSupportedError as exc:
+            return _not_supported(exc)
+
+    @router.delete("/{job_id}/history")
+    async def delete_executions(job_id: str, status: str | None = Query(None)) -> Any:
+        """Deletes every finished run of the job, or only those with ``status``."""
+        try:
+            deleted = await scheduler.delete_executions(job_id, status=status or None)
+            return {"deleted": deleted}
+        except KeyError:
+            return _job_not_found()
+        except NotSupportedError as exc:
+            return _not_supported(exc)
+
     return router
+
+
+def _job_not_found() -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={"error": "Job not found", "code": "JOB_NOT_FOUND"},
+    )
+
+
+def _not_supported(exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=501,
+        content={"error": str(exc), "code": "NOT_SUPPORTED"},
+    )

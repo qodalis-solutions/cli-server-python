@@ -60,9 +60,11 @@ class ICliJobStorageProvider(abc.ABC):
         return 0
 
     async def delete_execution(self, execution_id: str) -> bool:
-        """Deletes an execution (a run the job discarded, see
-        ``ICliJobExecutionContext.discard``); returns whether it was deleted.
-        The default keeps every execution and returns ``False``."""
+        """Deletes an execution and its logs (a run the job discarded, see
+        ``ICliJobExecutionContext.discard``, or a run deleted through
+        ``DELETE /api/v1/qcli/jobs/{id}/history``); returns whether it was
+        deleted.  The default keeps every execution and returns ``False``; the
+        scheduler answers "not supported" for deletions while a store keeps it."""
         return False
 
     @abc.abstractmethod
