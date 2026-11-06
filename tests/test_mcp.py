@@ -664,6 +664,30 @@ class TestJobsTools:
             assert history["structuredContent"]["items"] == []
             assert c.call("jobs_cancel", {"id": job_id})["result"]["isError"] is True
 
+    def test_jobs_delete_runs_tool(self):
+        import asyncio
+
+        from qodalis_cli_server_abstractions.jobs import JobExecution
+
+        result, *_, jobs = _server(jobs=True)
+        storage = jobs.scheduler.storage
+        job_id = next(iter(jobs.scheduler.registrations))
+        for exec_id, status in [("a", "completed"), ("b", "failed"), ("c", "failed"), ("r", "running")]:
+            asyncio.run(storage.save_execution(
+                JobExecution(id=exec_id, job_id=job_id, job_name="noop", status=status)))
+        with TestClient(result.app) as client:
+            c = Client(client)
+            tools = c.tools()
+            assert tools["jobs_delete_runs"]["annotations"] == {"destructiveHint": True}
+            one = c.call("jobs_delete_runs", {"id": job_id, "execution": "a"})["result"]
+            assert one["isError"] is False and one["structuredContent"]["deleted"] == 1
+            running = c.call("jobs_delete_runs", {"id": job_id, "execution": "r"})["result"]
+            assert running["isError"] is True
+            failed = c.call("jobs_delete_runs", {"id": job_id, "status": "failed"})["result"]
+            assert failed["structuredContent"] == {"jobId": job_id, "deleted": 2}
+            assert c.call("jobs_delete_runs", {"id": "missing"})["result"]["isError"] is True
+            assert c.call("jobs_delete_runs", {"id": job_id, "execution": "a"})["result"]["isError"] is True
+
     def test_no_jobs_tools_without_plugin(self, open_srv):
         c, _, _ = open_srv
         assert not any(n.startswith("jobs_") for n in c.tools())

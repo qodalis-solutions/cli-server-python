@@ -96,6 +96,19 @@ class ICliJobScheduler(Protocol):
         """Changes the job's options and restarts its schedule."""
         ...
 
+    async def delete_execution(self, job_id: str, execution_id: str) -> None:
+        """Deletes one finished run of the job and its logs; raises
+        :class:`KeyError` for an unknown job, :class:`ExecutionNotFoundError`
+        for a run that is missing or belongs to another job,
+        :class:`InvalidOperationError` for a running run and
+        :class:`NotSupportedError` when the storage cannot delete runs."""
+        ...
+
+    async def delete_executions(self, job_id: str, status: str | None = None) -> int:
+        """Deletes every finished run of the job (only those with ``status``
+        when given) and returns how many; running runs are kept."""
+        ...
+
 
 class CliJobScheduler:
     """Background job scheduler using asyncio tasks (implements
@@ -338,6 +351,61 @@ class CliJobScheduler:
             return await self._storage.get_executions(job_id, limit=limit, offset=0, status=status)
 
         return await query.merge(list(self._registrations), list_job)
+
+    async def delete_execution(self, job_id: str, execution_id: str) -> None:
+        """Deletes one finished run of the job and its logs.
+
+        Raises:
+            KeyError: the job is not registered.
+            ExecutionNotFoundError: the run is missing or belongs to another job.
+            InvalidOperationError: the run is still running.
+            NotSupportedError: the storage cannot delete runs.
+        """
+        self._get_registration(job_id)
+        self._ensure_storage_deletes()
+        execution = await self._storage.get_execution(execution_id)
+        if execution is None or execution.job_id != job_id:
+            raise ExecutionNotFoundError(f"Execution not found: {execution_id}")
+        if self._is_running(execution):
+            raise InvalidOperationError("The execution is still running")
+        if not await self._storage.delete_execution(execution_id):
+            raise ExecutionNotFoundError(f"Execution not found: {execution_id}")
+
+    async def delete_executions(self, job_id: str, status: str | None = None) -> int:
+        """Deletes every finished run of the job, or only those with ``status``
+        (matched like the history's status filter); returns how many.  Running
+        runs are kept.  Raises :class:`KeyError` for an unknown job and
+        :class:`NotSupportedError` when the storage cannot delete runs."""
+        self._get_registration(job_id)
+        self._ensure_storage_deletes()
+        page_size = 100
+        to_delete: list[str] = []
+        offset = 0
+        while True:
+            items, total = await self._storage.get_executions(
+                job_id, limit=page_size, offset=offset, status=status or None
+            )
+            to_delete.extend(e.id for e in items if not self._is_running(e))
+            offset += len(items)
+            if not items or offset >= total:
+                break
+        deleted = 0
+        for execution_id in to_delete:
+            if await self._storage.delete_execution(execution_id):
+                deleted += 1
+        return deleted
+
+    def _is_running(self, execution: JobExecution) -> bool:
+        reg = self._registrations.get(execution.job_id)
+        return execution.status == "running" or (
+            reg is not None and reg.current_execution_id == execution.id
+        )
+
+    def _ensure_storage_deletes(self) -> None:
+        """Raises :class:`NotSupportedError` when the storage keeps the base
+        ``delete_execution`` (which deletes nothing)."""
+        if type(self._storage).delete_execution is ICliJobStorageProvider.delete_execution:
+            raise NotSupportedError("The job storage cannot delete executions")
 
     def _schedule_next(
         self, reg: JobRegistration, *, run_now: bool = False, after_fire: bool = False
@@ -606,3 +674,11 @@ class CliJobScheduler:
 
 class InvalidOperationError(Exception):
     """Raised when a job control operation is not valid in the current state."""
+
+
+class ExecutionNotFoundError(LookupError):
+    """Raised when an execution is missing or belongs to another job."""
+
+
+class NotSupportedError(Exception):
+    """Raised when the job storage cannot perform an operation (e.g. delete runs)."""
