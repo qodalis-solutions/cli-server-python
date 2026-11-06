@@ -16,17 +16,24 @@ set stores the one mounted last is kept.
 
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import APIRouter, Request
 
-from qodalis_cli_server_abstractions.audit import IAuditStore
+from qodalis_cli_server_abstractions.audit import AuditEntry, IAuditStore
+from qodalis_cli_server_abstractions.events import CliEventAudience, ICliEventBus
 
 from .cli_audit_controller import create_audit_router
 from .in_memory_audit_store import InMemoryAuditStore
 
 PREFIX = "/api/v1/qcli/audit"
+
+#: Permission of the ``audit:recorded`` event's audience.
+_AUDIT_READ = "audit:read"
 
 #: Attribute of the server result holding the audit plugin that serves it.
 _SERVER_ATTR = "_qcli_audit_plugin"
@@ -47,7 +54,8 @@ class CliAuditPlugin:
     """The built audit plugin: mount it with ``CliServerResult.mount_plugin``.
 
     ``store`` is the log; record a host's own changes with
-    ``await plugin.store.log(AuditEntry(...))``.
+    ``await plugin.log(AuditEntry(...))`` (stores the entry and publishes
+    ``audit:recorded``).
     """
 
     prefix: str
@@ -59,6 +67,9 @@ class CliAuditPlugin:
     #: with the users plugin's server protection).  The users plugin sets it
     #: when it does not protect the whole server.
     authorize: Optional[Authorizer] = None
+    #: The server's event bus (set when mounted): ``audit:recorded`` after
+    #: each entry recorded through :meth:`log` (or by the users plugin).
+    event_bus: Optional[ICliEventBus] = None
     router: APIRouter = field(init=False, repr=False)
     _listeners: list = field(default_factory=list, repr=False)
 
@@ -74,6 +85,28 @@ class CliAuditPlugin:
         for listener in list(self._listeners):
             listener(store)
 
+    async def log(self, entry: AuditEntry) -> None:
+        """Record ``entry`` in the store and publish ``audit:recorded``."""
+        await self.store.log(entry)
+        await self.publish_recorded(entry)
+
+    async def publish_recorded(self, entry: AuditEntry) -> None:
+        """Publish ``audit:recorded`` (audience ``audit:read``) for an entry
+        already stored: its fields as the audit API returns them, the entry's
+        time as the event's ``timestamp``.  Never raises."""
+        if self.event_bus is None:
+            return
+        data = entry.to_dict()
+        recorded_at = data.pop("timestamp", None)
+        if isinstance(recorded_at, (int, float)):
+            data["timestamp"] = datetime.fromtimestamp(recorded_at / 1000, tz=timezone.utc)
+        try:
+            await self.event_bus.publish(
+                "audit:recorded", data, CliEventAudience(permission=_AUDIT_READ),
+            )
+        except Exception:  # pragma: no cover - the bus isolates its handlers
+            logging.getLogger(__name__).exception("Failed to publish audit:recorded")
+
     def on_store_changed(self, listener: StoreListener) -> None:
         """Call ``listener(store)`` whenever the store is replaced (e.g. the
         users plugin records its events in the store of the audit plugin it
@@ -83,7 +116,10 @@ class CliAuditPlugin:
     def before_mount(self, server: Any) -> bool:
         """Hook of ``CliServerResult.mount_plugin``: ``False`` when the server
         already has an audit plugin (this one or another), which then serves
-        both; the routes are added once."""
+        both; the routes are added once.  Either way the plugin publishes on
+        the server's event bus."""
+        if self.event_bus is None:
+            self.event_bus = getattr(server, "event_bus", None)
         serving = get_audit_plugin(server)
         if serving is None:
             setattr(server, _SERVER_ATTR, self)

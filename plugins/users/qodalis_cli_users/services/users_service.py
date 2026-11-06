@@ -11,7 +11,7 @@ from typing import Any
 
 from ..errors import bad_request, conflict, not_found
 from ..models import Group, User
-from ..permissions import ADMIN_GROUP, USERS_GROUP
+from ..permissions import ADMIN_GROUP, GROUPS_READ, USERS_GROUP, USERS_READ
 from ..validation import (
     DESCRIPTION_MAX,
     NAME_MAX,
@@ -37,6 +37,10 @@ def _actor(ctx: AuthContext | None) -> dict[str, Any]:
     if ctx is None:
         return {}
     return {"actor": ctx.user.name, "actor_id": ctx.user.id}
+
+
+def _actor_name(ctx: AuthContext | None) -> str | None:
+    return ctx.user.name if ctx is not None else None
 
 
 class UsersService:
@@ -75,6 +79,18 @@ class UsersService:
                 raise conflict(f"user already exists: {name}")
             if email is not None and email.lower() in taken:
                 raise conflict(f"email already in use: {email}")
+
+    async def _user_event(self, event_type: str, user: User, ctx: AuthContext | None) -> None:
+        """``user:created``/``updated``/``deleted`` (audience ``users:read``)."""
+        await self.auth.publish(event_type, {
+            "userId": user.id, "username": user.name, "actor": _actor_name(ctx),
+        }, permission=USERS_READ)
+
+    async def _group_event(self, event_type: str, group: str, ctx: AuthContext | None) -> None:
+        """``group:created``/``updated``/``deleted`` (audience ``groups:read``)."""
+        await self.auth.publish(event_type, {
+            "group": group, "actor": _actor_name(ctx),
+        }, permission=GROUPS_READ)
 
     @staticmethod
     def _is_built_in(group: Group) -> bool:
@@ -130,6 +146,7 @@ class UsersService:
         if password is not None:
             await self.auth.set_password(user.id, password)
         await self.auth.audit("user_created", user.name, user_id=user.id, **_actor(ctx))
+        await self._user_event("user:created", user, ctx)
         return user
 
     async def update_user(
@@ -196,6 +213,7 @@ class UsersService:
                 await self.auth.revoke_user_sessions(user.id, "user_disabled", **actor)
             else:
                 await self.auth.audit("user_enabled", user.name, user_id=user.id, **actor)
+        await self._user_event("user:updated", user, ctx)
         return user
 
     async def delete_user(self, ctx: AuthContext | None, target: User) -> None:
@@ -214,6 +232,7 @@ class UsersService:
         await self.auth.api_token_store.delete_user_tokens(target.id)
         self.auth.notify_change()
         await self.auth.audit("user_deleted", target.name, user_id=target.id, **actor)
+        await self._user_event("user:deleted", target, ctx)
 
     async def change_password(
         self, ctx: AuthContext, target: User, password: str, *, temporary: bool | None = None,
@@ -244,6 +263,7 @@ class UsersService:
             await self.users.update_user(target.id, must_change_password=temporary is not False)
             await self.auth.audit("password_changed", target.name, user_id=target.id, **actor)
             await self.auth.revoke_user_sessions(target.id, "password_changed", **actor)
+        await self._user_event("user:updated", target, ctx)
 
     # ------------------------------------------------------------------
     # Groups
@@ -273,6 +293,7 @@ class UsersService:
             raise conflict(str(exc)) from exc
         await self.auth.audit("group_created", ctx.user.name if ctx else "", details=group.name,
                               target=f"group:{group.name}", **_actor(ctx))
+        await self._group_event("group:created", group.name, ctx)
         return group
 
     async def update_group(
@@ -297,6 +318,7 @@ class UsersService:
             raise not_found(f"group not found: {group.name}") from exc
         await self.auth.audit("group_updated", ctx.user.name if ctx else "", details=updated.name,
                               target=f"group:{updated.name}", **_actor(ctx))
+        await self._group_event("group:updated", updated.name, ctx)
         return updated
 
     async def delete_group(self, ctx: AuthContext | None, group: Group) -> None:
@@ -312,6 +334,9 @@ class UsersService:
         await self.groups.delete_group(group.name)
         await self.auth.audit("group_deleted", ctx.user.name if ctx else "", details=group.name,
                               target=f"group:{group.name}", **_actor(ctx))
+        await self._group_event("group:deleted", group.name, ctx)
+        for user in members:
+            await self._user_event("user:updated", user, ctx)
 
     async def add_member(self, ctx: AuthContext | None, group: Group, user: User) -> None:
         if ctx is not None:
@@ -322,6 +347,7 @@ class UsersService:
         await self.users.update_user(user.id, groups=[*user.groups, group.name])
         await self.auth.audit("group_member_added", user.name, details=group.name,
                               user_id=user.id, target=f"group:{group.name}", **_actor(ctx))
+        await self._user_event("user:updated", user, ctx)
 
     async def remove_member(self, ctx: AuthContext | None, group: Group, user: User) -> None:
         if ctx is not None:
@@ -336,3 +362,4 @@ class UsersService:
         )
         await self.auth.audit("group_member_removed", user.name, details=group.name,
                               user_id=user.id, target=f"group:{group.name}", **_actor(ctx))
+        await self._user_event("user:updated", user, ctx)

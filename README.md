@@ -301,6 +301,66 @@ CORS never combines `*` with credentials. With `allowed_origins` set, a WebSocke
 
 Every WebSocket is also served without the version (`/ws/qcli/events`, ...). Plugins add their own routes, e.g. the users plugin's `/api/v1/qcli/sessions`, `/users`, `/groups` and `/tokens`.
 
+## Server Events
+
+`create_cli_server` creates one event bus, `result.event_bus` (`CliEventBus`, protocol `ICliEventBus` in
+`qodalis_cli_server_abstractions.events`). Changes made through the REST API, the MCP tools or the plugins are published
+on it; the events WebSocket (`/ws/v1/qcli/events`) is one subscriber, and host code can be another:
+
+```python
+from qodalis_cli import CliEventAudience
+
+# React to events in code (every event, whatever its audience)
+unsubscribe = result.event_bus.subscribe("job:*", lambda event: print(event.type, event.data))
+
+# Publish your own (to the sockets with that permission)
+await result.event_bus.publish("order:shipped", {"orderId": "o-1"}, CliEventAudience(permission="orders:read"))
+```
+
+Patterns: `*` matches every event, `ns:*` every type starting with `ns:`, anything else one exact type. Handlers run in
+subscription order and may be sync or async; `publish` returns when they all ran. A handler that raises is logged and
+never fails the action that published.
+
+**Wire format.** One flat camelCase JSON object per message: `type` (`namespace:name`), `timestamp` (ISO 8601 UTC, added
+by the bus unless the publisher set one) and the publisher's fields:
+
+```json
+{ "type": "job:completed", "timestamp": "2026-11-06T10:15:00.000Z", "jobId": "cleanup", "executionId": "…", "duration": 1520 }
+```
+
+**Audience.** Every event has one (`CliEventAudience`), never sent: everyone (default), `permission` (sockets whose
+user has it), `user_id` (that user's sockets) or both (the user **or** anyone with the permission). On a server without
+authentication every socket receives every event; whether the server requires authentication is read on every event
+(`event_socket_manager.set_authentication_required(check)`, installed by the users plugin). Publishing never waits on a
+client: each socket has its own queue and sender, so its events keep their order and a slow client delays no request
+(at most 1000 events wait per socket). `connected`, `disconnect` and the users plugin's `session-kicked`,
+`session-ended` and `access-changed` are unchanged; `event_socket_manager.broadcast_message(text)` still sends to every
+socket.
+
+| Event | Fields | Audience | Published by |
+|---|---|---|---|
+| `job:started`, `job:cancelled`, `job:timed_out` | `jobId`, `executionId` | `jobs:read` | jobs scheduler |
+| `job:completed` | `jobId`, `executionId`, `duration` | `jobs:read` | jobs scheduler |
+| `job:failed` | `jobId`, `executionId`, `error` | `jobs:read` | jobs scheduler |
+| `job:retrying` | `jobId`, `executionId`, `attempt`, `maxRetries`, `delayMs` | `jobs:read` | jobs scheduler |
+| `job:paused`, `job:resumed`, `job:stopped` | `jobId`, `status` (`paused`, `active`, `stopped`) | `jobs:read` | jobs scheduler |
+| `job:triggered`, `job:updated` | `jobId` | `jobs:read` | jobs scheduler (`trigger`, `update_options`) |
+| `job:runs-deleted` | `jobId`, `executionId` (one run) or `count` | `jobs:read` | jobs scheduler (`delete_execution(s)`) |
+| `user:created`, `user:updated`, `user:deleted` | `userId`, `username`, `actor` | `users:read` | users plugin |
+| `group:created`, `group:updated`, `group:deleted` | `group`, `actor` | `groups:read` | users plugin |
+| `token:created`, `token:revoked` | `tokenId`, `name`, `userId`, `actor` | `tokens:read` or the owner | users plugin |
+| `session:opened`, `session:closed` | `userId`, `username`, `sessionId`, `actor` | `sessions:read` | users plugin |
+| `fs:changed` | `action` (`upload`, `mkdir`, `delete`, `write`, `move`, `copy`), `path`, `newPath` | `files:read` | file storage (API and MCP `fs_*`) |
+| `command:executed` | `command` (processor name only), `success`, `durationMs`, `userId` | `audit:read` | REST execute and stream, MCP |
+| `audit:recorded` | the audit entry as `GET /audit` returns it | `audit:read` | audit plugin |
+
+`actor` is the user who made the change, when known. `user:updated` covers profile, password, enabled/disabled and group
+membership changes; `session:closed` covers sign-out, kicks and expiry. The jobs events are published by the scheduler,
+which the REST API, the MCP tools and host code all go through, so each action is published once. `fs:changed` comes
+from the server's file storage provider, wrapped by `create_cli_server` (`EventPublishingFileStorageProvider`); the
+filesystem API and the MCP `fs_*` tools share it, and `path`/`newPath` are the paths as the API takes and lists them. `command:executed` names the root processor and is not published for
+unknown commands.
+
 ## MCP Endpoint
 
 The server can expose **the whole system** to AI clients such as Claude Code as [MCP](https://modelcontextprotocol.io) tools: CLI commands, the filesystem API, the data explorer, background jobs and tools contributed by plugins — each with the same permissions as a CLI user. It works with or without the users plugin (which only supplies identities and API tokens).
@@ -346,7 +406,7 @@ Tools are collected from **tool providers** on every request, so registrations, 
 | | `fs_write {path, content}`, `fs_mkdir {path}`, `fs_delete {path, recursive?=false}` | `files:write` |
 | data explorer (when a provider is registered) | `data_sources`, `data_schema {source}`, `data_query {source, query, parameters?}` | `data:query` |
 | jobs (jobs plugin mounted) | `jobs_list`, `jobs_get {id}`, `jobs_history {id, limit?=20}` | `jobs:read` |
-| | `jobs_trigger`, `jobs_pause`, `jobs_resume`, `jobs_stop`, `jobs_cancel` `{id}` | `jobs:manage` |
+| | `jobs_trigger` (answers `Job queued` when the run waits for a slot), `jobs_pause`, `jobs_resume`, `jobs_stop`, `jobs_cancel` (every running run) `{id}` | `jobs:manage` |
 | | `jobs_delete_runs {id, execution?, status?}`: one run, or every finished run (optionally of a status) | `jobs:manage` |
 
 Read-only tools carry the MCP annotation `readOnlyHint`, `fs_delete` / `jobs_stop` / `jobs_cancel` / `jobs_delete_runs` carry `destructiveHint`. Feature tools reuse the same services as the HTTP routes (file storage provider and its path whitelist, data-explorer executor and its limits, job scheduler); their errors come back as `isError: true` results. The interactive shell is never a tool.
@@ -817,7 +877,7 @@ Each plugin is a separate package under [`plugins/`](plugins) with its own READM
 | [`qodalis-cli-server-plugin-users`](plugins/users/README.md) | `qodalis_cli_users` | Sign-in, users, groups and permissions, sessions, API tokens; protects the whole server; mounts the audit plugin |
 | [`qodalis-cli-server-plugin-audit`](plugins/audit/README.md) | `qodalis_cli_audit` | Audit log and its API (`/api/v1/qcli/audit`), in memory or a store of your own |
 | [`qodalis-cli-server-plugin-admin`](plugins/admin/README.md) | `qodalis_cli_admin` | Admin dashboard at `/qcli/admin` and its API |
-| [`qodalis-cli-server-plugin-jobs`](plugins/jobs/README.md) | `qodalis_cli_jobs` | Scheduled background jobs with history and logs |
+| [`qodalis-cli-server-plugin-jobs`](plugins/jobs/README.md) | `qodalis_cli_jobs` | Scheduled background jobs with history and logs; per-job `max_concurrent_runs` and overlap policy (skip, queue, cancel), retries holding their slot ([Concurrency](plugins/jobs/README.md#concurrency)) |
 | [`qodalis-cli-server-plugin-filesystem`](plugins/filesystem/README.md) | `qodalis_cli_filesystem` | `IFileStorageProvider` with in-memory and OS providers (installed with the server) |
 | [`...-filesystem-json`](plugins/filesystem-json/README.md), [`-sqlite`](plugins/filesystem-sqlite/README.md), [`-s3`](plugins/filesystem-s3/README.md) | `qodalis_cli_filesystem_json`, `_sqlite`, `_s3` | Persistent file storage |
 | [`qodalis-cli-server-plugin-data-explorer`](plugins/data-explorer/README.md) | `qodalis_cli_data_explorer` | Data explorer routes and executor |
@@ -847,7 +907,7 @@ The image runs the demo server (all plugins, users plugin with `root` / `admin`)
 
 ## Versioning
 
-Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b22` today (PEP 440 for `1.0.0-beta.22`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
+Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b23` today (PEP 440 for `1.0.0-beta.23`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
 
 ## Development
 

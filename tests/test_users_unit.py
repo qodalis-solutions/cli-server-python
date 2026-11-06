@@ -284,15 +284,18 @@ async def test_revoke_broadcasts_with_async_and_sync_fns():
     await service.seed("pw12")
     result = await service.login("root", "pw12")
     await service.revoke_user_sessions(result.user.id, "test")
-    assert json.loads(received[0]) == {
+    # Without an event bus the session:* events go to broadcast_fn as well.
+    kicked = [json.loads(m) for m in received if json.loads(m)["type"] == "session-kicked"]
+    assert kicked == [{
         "type": "session-kicked",
         "data": {"sessionId": result.session.id, "userId": result.user.id, "reason": "test"},
-    }
+    }]
 
     service.broadcast_fn = lambda msg: received.append(msg)
     result = await service.login("root", "pw12")
     await service.revoke_user_sessions(result.user.id, "again")
-    assert json.loads(received[1])["data"]["reason"] == "again"
+    kicked = [json.loads(m) for m in received if json.loads(m)["type"] == "session-kicked"]
+    assert kicked[1]["data"]["reason"] == "again"
 
 
 async def test_broadcast_failure_does_not_break_revoke():

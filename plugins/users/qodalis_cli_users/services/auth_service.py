@@ -13,7 +13,10 @@ import string
 import uuid
 from collections import OrderedDict, deque
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional, Union
+
+from qodalis_cli_server_abstractions.events import CliEventAudience, ICliEventBus
 
 from .._http import forwarded_client_ip
 from ..external_request import ExternalRequestSnapshot
@@ -27,7 +30,14 @@ from ..models import (
     User,
     now_ms,
 )
-from ..permissions import ADMIN_GROUP, USERS_GROUP, has_permission, merge_permissions, permission_matches
+from ..permissions import (
+    ADMIN_GROUP,
+    SESSIONS_READ,
+    USERS_GROUP,
+    has_permission,
+    merge_permissions,
+    permission_matches,
+)
 from ..stores.interfaces import (
     IApiTokenStore,
     IAuditStore,
@@ -74,6 +84,11 @@ UserEventSender = Callable[[str, str], Awaitable[None]]
 
 #: Audit events that never change who may do what (no listener notification).
 _NON_CHANGING_EVENTS = frozenset({"login", "login_failed", "shell_opened", "shell_closed"})
+
+
+def _utc_now() -> str:
+    """ISO 8601 UTC with milliseconds (events sent without a bus)."""
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def hash_token(token: str) -> str:
@@ -207,6 +222,13 @@ class AuthService:
         self.api_token_store = api_token_store
         self.options = options or AuthServiceOptions()
         self.broadcast_fn = broadcast_fn
+        #: The server's event bus (set when mounted): ``user:*``, ``group:*``,
+        #: ``token:*`` and ``session:*`` events.  Without one they go to
+        #: ``broadcast_fn``.
+        self.event_bus: ICliEventBus | None = None
+        #: Called with each audit entry once stored (the audit plugin's
+        #: ``publish_recorded``: ``audit:recorded``).
+        self.audit_recorded: Callable[[AuditEntry], Awaitable[None]] | None = None
         #: Set when mounted on a CLI server: user-scoped event delivery.
         self.user_event_sender: UserEventSender | None = None
         self.auth_adapter = auth_adapter
@@ -421,20 +443,27 @@ class AuthService:
         target: str | None = None,
         properties: dict[str, Any] | None = None,
     ) -> None:
+        entry = AuditEntry(
+            event=event,
+            username=sanitize(username, 256) or "",
+            details=sanitize(details, 1024),
+            actor=sanitize(actor, 256),
+            metadata=metadata,
+            user_id=user_id,
+            actor_id=actor_id,
+            target=sanitize(target, 256),
+            properties=properties,
+        )
         try:
-            await self.audit_store.log(AuditEntry(
-                event=event,
-                username=sanitize(username, 256) or "",
-                details=sanitize(details, 1024),
-                actor=sanitize(actor, 256),
-                metadata=metadata,
-                user_id=user_id,
-                actor_id=actor_id,
-                target=sanitize(target, 256),
-                properties=properties,
-            ))
+            await self.audit_store.log(entry)
         except Exception:
             logger.exception("Failed to write audit entry %s", event)
+        else:
+            if self.audit_recorded is not None:
+                try:
+                    await self.audit_recorded(entry)
+                except Exception:
+                    logger.exception("Failed to publish audit entry %s", event)
 
         if event not in _NON_CHANGING_EVENTS:
             self.notify_change()
@@ -471,6 +500,37 @@ class AuthService:
         except Exception:
             logger.exception("Failed to broadcast %s", message.get("type"))
 
+    async def publish(
+        self,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        permission: str | None = None,
+        user_id: str | None = None,
+    ) -> None:
+        """Publish a server event on the event bus (audience: ``permission``
+        and/or ``user_id``); without a bus, as flat JSON to ``broadcast_fn``.
+        Never raises."""
+        fields = {k: v for k, v in data.items() if v is not None}
+        if self.event_bus is None:
+            await self.broadcast({"type": event_type, "timestamp": _utc_now(), **fields})
+            return
+        try:
+            await self.event_bus.publish(
+                event_type, fields, CliEventAudience(permission=permission, user_id=user_id),
+            )
+        except Exception:
+            logger.exception("Failed to publish %s", event_type)
+
+    async def publish_session_closed(self, session: Session, *, actor: str | None = None) -> None:
+        """``session:closed`` (sign-out, revoke, kick or expiry)."""
+        await self.publish("session:closed", {
+            "userId": session.user_id,
+            "username": session.user_name or None,
+            "sessionId": session.id,
+            "actor": actor,
+        }, permission=SESSIONS_READ)
+
     async def notify_user(self, user_id: str, message: dict[str, Any]) -> None:
         """Deliver a user-scoped event only to that user's event sockets
         (falls back to ``broadcast_fn`` when not mounted on a CLI server)."""
@@ -504,6 +564,7 @@ class AuthService:
         """Delete a session, notify the user's sockets and audit it."""
         await self.session_store.delete_session_by_id(session.id)
         self._drop_tickets(session.id)
+        await self.publish_session_closed(session, actor=actor)
         await self.notify_user(session.user_id, {
             "type": "session-kicked",
             "data": {"sessionId": session.id, "userId": session.user_id, "reason": reason},
@@ -535,10 +596,15 @@ class AuthService:
         return count
 
     async def cleanup_sessions(self) -> None:
+        before = await self.session_store.get_active_sessions()
         await self.session_store.cleanup(self.session_timeout_ms)
         for session in await self.session_store.get_active_sessions():
             if self.is_expired(session):
                 await self.session_store.delete_session_by_id(session.id)
+        remaining = {s.id for s in await self.session_store.get_active_sessions()}
+        for session in before:
+            if session.id not in remaining:
+                await self.publish_session_closed(session)
         self.notify_change()
         now = now_ms()
         for key, ticket in list(self._tickets.items()):
@@ -587,6 +653,7 @@ class AuthService:
     async def _context_for_session(self, session: Session) -> AuthContext:
         if self.is_expired(session):
             await self.session_store.delete_session_by_id(session.id)
+            await self.publish_session_closed(session)
             raise unauthorized("session expired")
         user = await self.user_store.get_user(session.user_id)
         if not user or user.id != session.user_id or user.disabled:
@@ -868,6 +935,9 @@ class AuthService:
             "login", user.name, user_id=user.id, actor=user.name, actor_id=user.id,
             metadata={**audit_meta, "sessionId": session.id},
         )
+        await self.publish("session:opened", {
+            "userId": user.id, "username": user.name, "sessionId": session.id, "actor": user.name,
+        }, permission=SESSIONS_READ)
         return LoginResult(
             token=token,
             session=session,
@@ -901,6 +971,7 @@ class AuthService:
             name = user.name if user else session.user_name
             await self.audit("logout", name, user_id=session.user_id, actor=name,
                              actor_id=session.user_id, metadata={"sessionId": session.id})
+            await self.publish_session_closed(session, actor=name)
 
     # ------------------------------------------------------------------
     # Seeding

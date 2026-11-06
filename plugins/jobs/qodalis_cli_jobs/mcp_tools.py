@@ -109,12 +109,13 @@ class JobsMcpToolProvider:
                 if job_id is None:
                     return McpToolResult.error(JOB_NOT_FOUND)
                 try:
-                    await getattr(scheduler, method)(job_id)
+                    result = await getattr(scheduler, method)(job_id)
                 except KeyError:
                     return McpToolResult.error(JOB_NOT_FOUND)
                 except InvalidOperationError as exc:
                     return McpToolResult.error(str(exc))
-                return McpToolResult(text=done)
+                # A trigger while every slot is taken (queue policy) waits.
+                return McpToolResult(text="Job queued" if result == "queued" else done)
 
             return call
 
@@ -160,7 +161,7 @@ class JobsMcpToolProvider:
             McpTool("jobs_resume", "Resume a paused job", id_only, action("resume", "Job resumed"), [JOBS_MANAGE]),
             McpTool("jobs_stop", "Stop a job (cancels a running execution)", id_only,
                     action("stop_job", "Job stopped"), [JOBS_MANAGE], dict(DESTRUCTIVE)),
-            McpTool("jobs_cancel", "Cancel the running execution of a job", id_only,
+            McpTool("jobs_cancel", "Cancel the running runs of a job (and a queued one)", id_only,
                     action("cancel_current", "Execution cancelled"), [JOBS_MANAGE], dict(DESTRUCTIVE)),
             McpTool(
                 "jobs_delete_runs",

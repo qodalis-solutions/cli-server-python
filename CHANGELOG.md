@@ -4,6 +4,47 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## 1.0.0b23
+
+- The admin plugin embeds dashboard 1.0.0-beta.18: pages update live from the server events (jobs, job detail, files, audit, overview, events), a run's full error in a details dialog, max concurrent runs in the job editor, and no session token in WebSocket URLs when the ticket request fails.
+
+- **Server events**, the same design on the .NET, Node and Python servers:
+  - `create_cli_server` creates an event bus, `CliServerResult.event_bus` (`CliEventBus`; `ICliEventBus`, `CliEvent`,
+    `CliEventAudience` and `cli_event_pattern_matches` in `qodalis_cli_server_abstractions.events`).
+    `publish(type, data=None, audience=None)` and `subscribe(pattern, handler)` (`*`, `ns:*` or a type; returns the
+    unsubscribe function). Handler errors are logged and never fail the publisher.
+  - Every event is one flat camelCase JSON object on `/ws/v1/qcli/events` (`type`, `timestamp` in ISO 8601 UTC, the
+    fields) and has an audience: everyone, a permission, a user, or the user or the permission. Sockets get only the
+    events of their audience; on a server without authentication every socket gets every event. Each socket has its own
+    send queue, so publishing (and the request that published) never waits on a slow client.
+    `broadcast_message` keeps working.
+  - New events: `job:triggered`, `job:updated`, `job:runs-deleted`; `user:*`, `group:*`, `token:*`, `session:*`
+    (users plugin); `fs:changed` (filesystem API and MCP `fs_*` tools); `command:executed` (REST execute, stream and MCP;
+    the processor name only); `audit:recorded` (audit plugin). `job:paused`, `job:resumed` and `job:stopped` carry
+    `status`. See the README, *Server Events*.
+  - Jobs events have the audience `jobs:read`. The jobs and users plugins publish on the server's bus once mounted;
+    their `build(broadcast_fn=...)` keeps working without a bus and takes `event_bus=`.
+  - `CliAuditPlugin.log(entry)` stores an entry and publishes `audit:recorded`.
+- **Jobs: max concurrent runs, and no job started twice** (jobs plugin), the same design on every server:
+  - New option `max_concurrent_runs` (`CliJobOptions`, default 1; `PUT /jobs/{id}` `maxConcurrentRuns`, an integer
+    >= 1, else 400 `INVALID_VALUE`). A run holds its slot from start to end, retries and retry delays included. When every slot is
+    taken, `overlap_policy` decides: `skip` drops the due run (a trigger answers 409), `queue` keeps one run waiting
+    (coalesced; a trigger answers `{"message": "Job queued", "queued": true}`), `cancel` cancels the oldest run and
+    starts the new one once that run has ended (queued meanwhile; further due runs merge into it).
+  - Job info adds `maxConcurrentRuns`, `runningExecutionIds` (oldest first) and `queued`; `currentExecutionId` is the
+    newest running run. `cancel` cancels every running run and drops a queued one.
+  - Fixes: run on start skips a job that ran recently (interval not yet passed, no missed cron occurrence); a retry
+    delay no longer frees the job; `queue` no longer builds a backlog and `cancel` no longer runs two "current"
+    executions; due runs at the same moment can no longer both start; a cron timer that fires early no longer runs the
+    occurrence twice; runs left `running` by a previous process are finished as `cancelled` (`Interrupted: the server
+    stopped during the run`) when the scheduler starts.
+  - A run of a job with a timeout that is cancelled by hand (cancel, stop, overlap `cancel`) is recorded as
+    `cancelled` with `job:cancelled`, also when the job ignores its cancellation until the timeout; only a real timeout
+    is `timed_out`.
+  - `JobRegistration` has `runs`, `queued` and `running_execution_ids`; `current_execution_id` and
+    `current_cancellation` are read-only properties now, and the `queue` field is gone. `trigger()` returns `"started"`
+    or `"queued"`.
+
 ## 1.0.0b22
 
 - The admin plugin embeds dashboard 1.0.0-beta.17: logs jump to newest, pause, copy an entry and collapsed exceptions; jobs run again and delete runs from the recent runs table.

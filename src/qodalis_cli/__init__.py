@@ -36,9 +36,16 @@ from .services import (
     CliResponseBuilder,
     ICliCommandExecutorService,
     CliCommandExecutorService,
+    CliEventBus,
     CliEventSocketManager,
     CliShellSessionManager,
     apply_output_limits,
+)
+from qodalis_cli_server_abstractions.events import (
+    CliEvent,
+    CliEventAudience,
+    ICliEventBus,
+    cli_event_pattern_matches,
 )
 from .controllers import create_cli_router, create_cli_version_router, create_filesystem_router
 from .extensions import CliBuilder
@@ -115,6 +122,11 @@ __all__ = [
     "CliResponseBuilder",
     "ICliCommandExecutorService",
     "CliCommandExecutorService",
+    "CliEvent",
+    "CliEventAudience",
+    "CliEventBus",
+    "ICliEventBus",
+    "cli_event_pattern_matches",
     "CliEventSocketManager",
     "CliShellSessionManager",
     "apply_output_limits",
