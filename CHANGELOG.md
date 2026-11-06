@@ -35,6 +35,9 @@ PEP 440 for `1.0.0-beta.19`).
     executions; due runs at the same moment can no longer both start; a cron timer that fires early no longer runs the
     occurrence twice; runs left `running` by a previous process are finished as `cancelled` (`Interrupted: the server
     stopped during the run`) when the scheduler starts.
+  - A run of a job with a timeout that is cancelled by hand (cancel, stop, overlap `cancel`) is recorded as
+    `cancelled` with `job:cancelled`, also when the job ignores its cancellation until the timeout; only a real timeout
+    is `timed_out`.
   - `JobRegistration` has `runs`, `queued` and `running_execution_ids`; `current_execution_id` and
     `current_cancellation` are read-only properties now, and the `queue` field is gone. `trigger()` returns `"started"`
     or `"queued"`.

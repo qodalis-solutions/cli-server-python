@@ -740,15 +740,26 @@ class CliJobScheduler:
                 execution.status = "completed"
 
         except asyncio.TimeoutError:
-            cancel_event.set()
-            execution.status = "timed_out"
-            execution.error = f"Timed out after {reg.options.timeout}"
-            await self._broadcast({
-                "type": "job:timed_out",
-                "jobId": reg.id,
-                "executionId": exec_id,
-                "timeout": reg.options.timeout,
-            })
+            if cancel_event.is_set():
+                # Cancelled by hand (cancel, stop, overlap cancel) before the
+                # timeout ran out: a job that ignores its cancellation is
+                # still a cancelled run, not a timed-out one.
+                execution.status = "cancelled"
+                await self._broadcast({
+                    "type": "job:cancelled",
+                    "jobId": reg.id,
+                    "executionId": exec_id,
+                })
+            else:
+                cancel_event.set()
+                execution.status = "timed_out"
+                execution.error = f"Timed out after {reg.options.timeout}"
+                await self._broadcast({
+                    "type": "job:timed_out",
+                    "jobId": reg.id,
+                    "executionId": exec_id,
+                    "timeout": reg.options.timeout,
+                })
         except asyncio.CancelledError:
             execution.status = "cancelled"
             await self._broadcast({

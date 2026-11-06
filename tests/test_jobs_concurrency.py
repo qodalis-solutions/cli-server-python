@@ -440,3 +440,62 @@ class TestApi:
 
 async def _open(job: GateJob) -> None:
     job.open()
+
+
+# =========================================================================
+# Manual cancel of a job with a timeout
+# =========================================================================
+
+
+class StubbornJob(ICliJob):
+    """Ignores its cancellation: only the timeout ends it."""
+
+    def __init__(self) -> None:
+        self.started = 0
+
+    async def execute_async(self, context: Any, cancellation_event: asyncio.Event) -> None:
+        self.started += 1
+        await asyncio.sleep(30)
+
+
+class TestCancelVersusTimeout:
+    def _scheduler(self, storage: InMemoryJobStorageProvider) -> tuple[CliJobScheduler, list[CliEvent]]:
+        bus = CliEventBus()
+        events: list[CliEvent] = []
+        bus.subscribe("job:*", events.append)
+        return CliJobScheduler(storage, event_bus=bus), events
+
+    @pytest.mark.parametrize("how", ["cancel", "stop", "overlap"])
+    async def test_a_manual_cancel_is_cancelled_not_timed_out(self, storage, how: str):
+        scheduler, events = self._scheduler(storage)
+        job = StubbornJob()
+        reg = _register(scheduler, job, timeout="1s", max_retries=0, overlap_policy="cancel")
+        try:
+            await scheduler.trigger(reg.id)
+            await until(lambda: len(reg.running_execution_ids) == 1)
+            first = reg.running_execution_ids[0]
+            if how == "cancel":
+                await scheduler.cancel_current(reg.id)
+            elif how == "stop":
+                await scheduler.stop_job(reg.id)
+            else:
+                await scheduler.trigger(reg.id)  # cancels the oldest run
+            await until(lambda: (storage._executions_by_id.get(first) or JobExecution()).status != "running")
+            execution = await storage.get_execution(first)
+            assert execution.status == "cancelled" and execution.error is None
+            finished = [e.type for e in events if e.data.get("executionId") == first]
+            assert "job:cancelled" in finished and "job:timed_out" not in finished
+        finally:
+            await scheduler.stop()
+            await settle()
+
+    async def test_a_real_timeout_is_timed_out(self, storage):
+        scheduler, events = self._scheduler(storage)
+        reg = _register(scheduler, StubbornJob(), timeout="1s", max_retries=0)
+        try:
+            await scheduler.trigger(reg.id)
+            await until(lambda: reg.last_run_status is not None)
+            assert reg.last_run_status == "timed_out"
+            assert [e.type for e in events][-1] == "job:timed_out"
+        finally:
+            await scheduler.stop()
