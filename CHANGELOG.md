@@ -4,6 +4,19 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## Unreleased
+
+- **Delete job runs** (jobs plugin), the same API on the .NET, Node and Python servers:
+  - `DELETE /api/v1/qcli/jobs/{id}/history/{exec_id}` deletes one run and its logs: `200 { "message": "Run deleted" }`,
+    `404` `JOB_NOT_FOUND` / `EXECUTION_NOT_FOUND` (missing, or a run of another job), `409 EXECUTION_RUNNING`, `501
+    NOT_SUPPORTED` when the storage cannot delete runs.
+  - `DELETE /api/v1/qcli/jobs/{id}/history?status=` deletes every finished run of the job, or only those with that
+    status; running runs are kept. Answers `200 { "deleted": n }`, with the same 404 and 501 answers.
+  - `CliJobScheduler.delete_execution(job_id, exec_id)` and `delete_executions(job_id, status=None)` (also on
+    `ICliJobScheduler`); they delete through the storage's `delete_execution`, and a storage that keeps the base
+    implementation gets `NotSupportedError` (501).
+  - MCP tool `jobs_delete_runs {id, execution?, status?}` (`jobs:manage`, `destructiveHint`).
+
 ## 1.0.0b20
 
 - Version only, to keep every server package on one version: the .NET jobs EF Core store fix of this release has no Node/Python counterpart.
