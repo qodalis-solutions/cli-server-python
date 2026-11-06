@@ -4,7 +4,11 @@ import abc
 import asyncio
 import logging
 import time
-from typing import Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterator, Sequence
+
+from qodalis_cli_server_abstractions.events import CliEventAudience, ICliEventBus
 
 from ..abstractions import CliProcessCommand, ICliCommandProcessor, ICliProcessorFilter
 from ..models.cli_server_output import CliServerTextOutput
@@ -14,6 +18,30 @@ from .cli_command_usage import CliCommandUsageTracker
 from .cli_output_limits import DEFAULT_MAX_TABLE_ROWS, apply_response_limits
 
 logger = logging.getLogger(__name__)
+
+#: Permission of the ``command:executed`` event's audience.
+AUDIT_READ = "audit:read"
+
+#: The user running the current command (``command:executed``'s ``userId``),
+#: set by the REST API and the MCP endpoint around an execution.
+command_user_id: ContextVar[str | None] = ContextVar("qcli_command_user_id", default=None)
+
+
+def caller_user_id(auth: Any) -> str | None:
+    """The user id of an auth context (``None`` without one)."""
+    user = getattr(auth, "user", None)
+    user_id = getattr(user, "id", None)
+    return user_id if isinstance(user_id, str) and user_id else None
+
+
+@contextmanager
+def executing_as(auth: Any) -> Iterator[None]:
+    """Run commands in this block as the caller of ``auth`` (an auth context)."""
+    token = command_user_id.set(caller_user_id(auth))
+    try:
+        yield
+    finally:
+        command_user_id.reset(token)
 
 
 class ICliCommandExecutorService(abc.ABC):
@@ -64,6 +92,9 @@ class CliCommandExecutorService(ICliCommandExecutorService):
         self.max_table_rows = max_table_rows
         #: Executions per root command since start (``GET /commands/stats``).
         self.usage = CliCommandUsageTracker()
+        #: The server's event bus: ``command:executed`` after every command
+        #: (set by ``create_cli_server``).
+        self.event_bus: ICliEventBus | None = None
 
     def record_usage(self, command: str, duration_ms: float, failed: bool) -> None:
         """Count one execution of the root command ``command`` (named as the
@@ -78,6 +109,29 @@ class CliCommandExecutorService(ICliCommandExecutorService):
             duration_ms=duration_ms,
             failed=failed,
         )
+
+    async def notify_executed(
+        self, command: str, duration_ms: float, failed: bool, user_id: str | None = None,
+    ) -> None:
+        """Publish ``command:executed`` for the root command ``command``: the
+        processor's name only (never arguments or input), so unknown commands
+        are not published.  ``user_id`` defaults to the current caller."""
+        bus = self.event_bus
+        name = (command or "").strip()
+        if bus is None or not name:
+            return
+        processor = self._registry.find_processor(name, None)
+        if processor is None:
+            return
+        data: dict[str, Any] = {
+            "command": processor.command,
+            "success": not failed,
+            "durationMs": round(duration_ms),
+        }
+        user_id = user_id or command_user_id.get()
+        if user_id:
+            data["userId"] = user_id
+        await bus.publish("command:executed", data, CliEventAudience(permission=AUDIT_READ))
 
     def add_filter(self, filter_: ICliProcessorFilter) -> None:
         """Register an additional processor filter at runtime.
@@ -103,7 +157,9 @@ class CliCommandExecutorService(ICliCommandExecutorService):
             failed = response.exit_code != 0
             return response
         finally:
-            self.record_usage(command.command, (time.perf_counter() - started) * 1000, failed)
+            duration_ms = (time.perf_counter() - started) * 1000
+            self.record_usage(command.command, duration_ms, failed)
+            await self.notify_executed(command.command, duration_ms, failed)
 
     async def _execute(
         self,
