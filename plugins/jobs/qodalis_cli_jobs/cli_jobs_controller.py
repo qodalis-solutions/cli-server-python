@@ -19,6 +19,7 @@ from .cli_job_scheduler import (
     CliJobScheduler,
     ExecutionNotFoundError,
     InvalidOperationError,
+    InvalidValueError,
     NotSupportedError,
 )
 from .interval_parser import parse_interval
@@ -43,6 +44,9 @@ class UpdateJobRequest(BaseModel):
     retry_strategy: str | None = Field(None, alias="retryStrategy")
     timeout: str | None = None
     overlap_policy: str | None = Field(None, alias="overlapPolicy")
+    #: Validated by the scheduler (an integer >= 1, else 400 like the other
+    #: invalid values), so it is not coerced here.
+    max_concurrent_runs: Any = Field(None, alias="maxConcurrentRuns")
 
     model_config = {"populate_by_name": True}
 
@@ -70,7 +74,10 @@ def _job_dto(reg: Any) -> dict[str, Any]:
         "retryStrategy": reg.options.retry_strategy,
         "timeout": reg.options.timeout,
         "overlapPolicy": reg.options.overlap_policy,
+        "maxConcurrentRuns": reg.options.max_concurrent_runs,
         "currentExecutionId": reg.current_execution_id,
+        "runningExecutionIds": reg.running_execution_ids,
+        "queued": reg.queued,
         "nextRunAt": _serialize_dt(reg.next_run_at),
         "lastRunAt": _serialize_dt(reg.last_run_at),
         "lastRunStatus": reg.last_run_status,
@@ -190,8 +197,10 @@ def create_cli_jobs_router(
     @router.post("/{job_id}/trigger")
     async def trigger_job(job_id: str) -> Any:
         try:
-            await scheduler.trigger(job_id)
-            return {"message": "Job triggered"}
+            result = await scheduler.trigger(job_id)
+            if result == "queued":
+                return {"message": "Job queued", "queued": True}
+            return {"message": "Job triggered", "queued": False}
         except KeyError:
             return JSONResponse(
                 status_code=404,
@@ -276,12 +285,18 @@ def create_cli_jobs_router(
                 retry_strategy=body.retry_strategy,
                 timeout=body.timeout,
                 overlap_policy=body.overlap_policy,
+                max_concurrent_runs=body.max_concurrent_runs,
             )
             return {"message": "Job updated"}
         except KeyError:
             return JSONResponse(
                 status_code=404,
                 content={"error": "Job not found", "code": "JOB_NOT_FOUND"},
+            )
+        except InvalidValueError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": str(exc), "code": "INVALID_VALUE"},
             )
         except ValueError as exc:
             return JSONResponse(

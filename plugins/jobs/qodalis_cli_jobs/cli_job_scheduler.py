@@ -7,7 +7,6 @@ import datetime
 import json
 import logging
 import uuid
-from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -25,14 +24,35 @@ from qodalis_cli_server_abstractions.jobs import (
     JobState,
 )
 from qodalis_cli_server_abstractions.jobs.job_execution_query import as_utc
+from qodalis_cli_server_abstractions.events import CliEventAudience, ICliEventBus
 
 from .cli_job_execution_context import CliJobExecutionContext
 from .interval_parser import parse_interval
 
 logger = logging.getLogger(__name__)
 
+#: Permission of the audience of every ``job:*`` event.
+JOBS_READ = "jobs:read"
+
 # Characters a job id may not have: it is part of the jobs API's URLs
 _UNSAFE_ID_CHARS = frozenset("/\\?#")
+
+
+#: Error of a run left ``running`` by a previous process (finished at start).
+INTERRUPTED_ERROR = "Interrupted: the server stopped during the run"
+
+
+@dataclass(eq=False)
+class JobRun:
+    """One run of a job.  It holds one of the job's ``max_concurrent_runs``
+    slots from its start until it ends, its retries and the delays between
+    them included."""
+
+    #: Set to cancel the run (its current attempt and any retry to come).
+    cancellation: asyncio.Event = field(default_factory=asyncio.Event)
+    #: The execution of the running attempt (``None`` between attempts).
+    execution_id: str | None = None
+    task: asyncio.Task[Any] | None = None
 
 
 @dataclass
@@ -43,14 +63,31 @@ class JobRegistration:
     job: ICliJob
     options: CliJobOptions
     status: str = "active"  # 'active' | 'paused' | 'stopped'
-    current_execution_id: str | None = None
-    current_cancellation: asyncio.Event | None = None
     next_run_at: datetime.datetime | None = None
     last_run_at: datetime.datetime | None = None
     last_run_status: str | None = None
     last_run_duration: float | None = None  # ms
     timer_task: asyncio.Task[Any] | None = None
-    queue: deque[int] = field(default_factory=deque)  # queued retry_attempt values
+    #: The runs holding a slot, oldest first.
+    runs: list[JobRun] = field(default_factory=list)
+    #: A run waits for a free slot (``queue`` overlap policy; at most one).
+    queued: bool = False
+
+    @property
+    def running_execution_ids(self) -> list[str]:
+        """Executions of the running attempts, oldest run first."""
+        return [r.execution_id for r in self.runs if r.execution_id is not None]
+
+    @property
+    def current_execution_id(self) -> str | None:
+        """The newest running execution, or ``None``."""
+        ids = self.running_execution_ids
+        return ids[-1] if ids else None
+
+    @property
+    def current_cancellation(self) -> asyncio.Event | None:
+        """The newest run's cancellation event, or ``None`` when idle."""
+        return self.runs[-1].cancellation if self.runs else None
 
 
 #: Former name of :class:`JobRegistration`.
@@ -71,9 +108,11 @@ class ICliJobScheduler(Protocol):
         """The registered jobs keyed by job id."""
         ...
 
-    async def trigger(self, job_id: str) -> None:
-        """Runs the job now; raises :class:`InvalidOperationError` when it is
-        running and may not overlap, :class:`KeyError` for an unknown job."""
+    async def trigger(self, job_id: str) -> Any:
+        """Runs the job now (or queues the run, ``queue`` policy, when every
+        slot is taken); raises :class:`InvalidOperationError` when every slot
+        is taken and the policy is ``skip``, :class:`KeyError` for an unknown
+        job."""
         ...
 
     async def pause(self, job_id: str) -> None:
@@ -89,7 +128,7 @@ class ICliJobScheduler(Protocol):
         ...
 
     async def cancel_current(self, job_id: str) -> None:
-        """Cancels the job's running execution."""
+        """Cancels every running run of the job and drops a queued one."""
         ...
 
     async def update_options(self, job_id: str, **changes: Any) -> None:
@@ -112,15 +151,22 @@ class ICliJobScheduler(Protocol):
 
 class CliJobScheduler:
     """Background job scheduler using asyncio tasks (implements
-    :class:`ICliJobScheduler`)."""
+    :class:`ICliJobScheduler`).
+
+    Its ``job:*`` events go to ``event_bus`` (audience ``jobs:read``); without
+    a bus, to ``broadcast_fn`` as flat JSON (every socket).  Mounting the jobs
+    plugin sets the server's bus."""
 
     def __init__(
         self,
         storage: ICliJobStorageProvider,
         broadcast_fn: BroadcastFn | None = None,
+        event_bus: ICliEventBus | None = None,
     ) -> None:
         self._storage = storage
         self._broadcast_fn = broadcast_fn
+        #: The server's event bus (``job:*`` events, audience ``jobs:read``).
+        self.event_bus = event_bus
         self._registrations: dict[str, JobRegistration] = {}
         self._running = False
 
@@ -150,6 +196,7 @@ class CliJobScheduler:
                 them with ``-``).
             InvalidOperationError: a job with ``options.id`` is registered.
         """
+        _validate_max_concurrent_runs(options.max_concurrent_runs)
         if not options.name:
             options.name = type(job).__name__
         if not options.description:
@@ -180,9 +227,12 @@ class CliJobScheduler:
         return job_id
 
     async def start(self) -> None:
-        """Load persisted states and start timers for active jobs."""
+        """Finish runs a previous process left running, load persisted states
+        and start timers for active jobs."""
         self._running = True
+        await self._finish_interrupted_runs()
         persisted = await self._storage.get_all_job_states()
+        now = datetime.datetime.now(datetime.UTC)
 
         for reg in self._registrations.values():
             # Apply persisted state if available
@@ -194,23 +244,72 @@ class CliJobScheduler:
                 if reg.options.enabled:
                     reg.status = state.status
 
-            if reg.status == "active":
-                # An interval job runs on start through its timer (due now),
-                # so the two never overlap.
-                run_now = bool(
-                    reg.options.run_on_start and not reg.options.schedule and reg.options.interval
-                )
-                self._schedule_next(reg, run_now=run_now)
-                if reg.options.run_on_start and not run_now:
-                    asyncio.create_task(self._execute_job(reg, retry_attempt=0))
+            if reg.status != "active":
+                continue
+            run_on_start = reg.options.run_on_start and self._due_on_start(reg, now)
+            if reg.options.interval and not reg.options.schedule:
+                # The timer runs it (due now), so the two never overlap.
+                self._schedule_next(reg, run_now=run_on_start)
+            else:
+                self._schedule_next(reg)
+                if run_on_start:
+                    self._launch(reg, self._admit(reg))
+
+    def _due_on_start(self, reg: JobRegistration, now: datetime.datetime) -> bool:
+        """Run on start unless the job ran recently: never ran, its interval
+        has passed, or a cron occurrence was missed; always for a job without
+        a schedule."""
+        last = reg.last_run_at
+        if reg.options.schedule:
+            if last is None:
+                return True
+            return _next_occurrence(reg.options.schedule, as_utc(last)) <= now
+        if reg.options.interval:
+            if last is None:
+                return True
+            return as_utc(last) + datetime.timedelta(seconds=parse_interval(reg.options.interval)) <= now
+        return True
+
+    async def _finish_interrupted_runs(self) -> None:
+        """Runs of the registered jobs that the store still has as running
+        were cut off by a previous process: finish them as cancelled.  No
+        events (no client is connected yet)."""
+        for reg in list(self._registrations.values()):
+            try:
+                stale: list[JobExecution] = []
+                offset = 0
+                while True:
+                    items, total = await self._storage.get_executions(
+                        reg.id, limit=100, offset=offset, status="running"
+                    )
+                    stale.extend(e for e in items if e.status == "running")
+                    offset += len(items)
+                    if not items or offset >= total:
+                        break
+                ours = set(reg.running_execution_ids)
+                for execution in stale:
+                    if execution.id in ours:
+                        continue
+                    started = as_utc(execution.started_at)
+                    # The last thing it logged is the latest time it is known
+                    # to have run; else its start (durations stay sane).
+                    ended = max(
+                        [started, *(as_utc(e.timestamp) for e in execution.logs)],
+                    )
+                    execution.status = "cancelled"
+                    execution.error = INTERRUPTED_ERROR
+                    execution.completed_at = ended
+                    execution.duration = round((ended - started).total_seconds() * 1000)
+                    await self._storage.save_execution(execution)
+            except Exception:
+                logger.exception("Finishing the interrupted runs of job %s failed", reg.id)
 
     async def stop(self) -> None:
         """Cancel all running executions, stop timers, persist states."""
         self._running = False
         for reg in list(self._registrations.values()):
-            # Cancel running execution
-            if reg.current_cancellation is not None:
-                reg.current_cancellation.set()
+            # Cancel running runs (and a queued one)
+            self._cancel_runs(reg)
             # Cancel timer
             if reg.timer_task is not None and not reg.timer_task.done():
                 reg.timer_task.cancel()
@@ -228,20 +327,21 @@ class CliJobScheduler:
                 ),
             )
 
-    async def trigger(self, job_id: str) -> None:
-        """Manually trigger a job execution."""
+    async def trigger(self, job_id: str) -> str:
+        """Manually trigger a run: ``"started"``, or ``"queued"`` when every
+        slot is taken and the overlap policy is ``queue`` (or ``cancel``: the
+        run starts once the cancelled oldest run has ended).
+
+        Raises:
+            KeyError: unknown job.
+            InvalidOperationError: every slot is taken (``skip`` policy).
+        """
         reg = self._get_registration(job_id)
-        if reg.current_execution_id is not None:
-            policy = reg.options.overlap_policy
-            if policy == "skip":
-                raise InvalidOperationError("Job is already running")
-            elif policy == "cancel":
-                if reg.current_cancellation:
-                    reg.current_cancellation.set()
-            elif policy == "queue":
-                reg.queue.append(0)
-                return
-        asyncio.create_task(self._execute_job(reg, retry_attempt=0))
+        run = self._admit(reg, manual=True)
+        # Published first, so job:triggered comes before the run's job:started.
+        await self._broadcast({"type": "job:triggered", "jobId": job_id})
+        self._launch(reg, run)
+        return "started" if run is not None else "queued"
 
     async def pause(self, job_id: str) -> None:
         """Pause a running job, cancelling its next scheduled execution."""
@@ -251,7 +351,7 @@ class CliJobScheduler:
         reg.status = "paused"
         self._cancel_timer(reg)
         await self._persist_state(reg)
-        await self._broadcast({"type": "job:paused", "jobId": job_id})
+        await self._broadcast({"type": "job:paused", "jobId": job_id, "status": "paused"})
 
     async def resume(self, job_id: str) -> None:
         """Resume a paused job and reschedule its next execution."""
@@ -261,24 +361,24 @@ class CliJobScheduler:
         reg.status = "active"
         self._schedule_next(reg)
         await self._persist_state(reg)
-        await self._broadcast({"type": "job:resumed", "jobId": job_id})
+        await self._broadcast({"type": "job:resumed", "jobId": job_id, "status": "active"})
 
     async def stop_job(self, job_id: str) -> None:
-        """Stop a job permanently, cancelling any running execution."""
+        """Stop a job permanently, cancelling its runs and a queued one."""
         reg = self._get_registration(job_id)
         reg.status = "stopped"
         self._cancel_timer(reg)
-        if reg.current_cancellation is not None:
-            reg.current_cancellation.set()
+        self._cancel_runs(reg)
         await self._persist_state(reg)
-        await self._broadcast({"type": "job:stopped", "jobId": job_id})
+        await self._broadcast({"type": "job:stopped", "jobId": job_id, "status": "stopped"})
 
     async def cancel_current(self, job_id: str) -> None:
-        """Cancel the currently running execution for a job."""
+        """Cancel every running run of the job (retries to come included) and
+        drop a queued one."""
         reg = self._get_registration(job_id)
-        if reg.current_execution_id is None or reg.current_cancellation is None:
+        if not reg.runs and not reg.queued:
             raise InvalidOperationError("No execution is currently running")
-        reg.current_cancellation.set()
+        self._cancel_runs(reg)
 
     async def update_options(
         self,
@@ -293,10 +393,16 @@ class CliJobScheduler:
         retry_strategy: str | None = None,
         timeout: str | None = None,
         overlap_policy: str | None = None,
+        max_concurrent_runs: int | None = None,
     ) -> None:
-        """Update mutable options for a registered job and reschedule if active."""
+        """Update mutable options for a registered job and reschedule if active.
+
+        Lowering ``max_concurrent_runs`` below the running count cancels
+        nothing: new runs start once fewer are running."""
         reg = self._get_registration(job_id)
         opts = reg.options
+        if max_concurrent_runs is not None:
+            _validate_max_concurrent_runs(max_concurrent_runs)
 
         if description is not None:
             opts.description = description
@@ -329,11 +435,16 @@ class CliJobScheduler:
             if overlap_policy not in ("skip", "queue", "cancel"):
                 raise ValueError(f"Invalid overlap policy: {overlap_policy!r}")
             opts.overlap_policy = overlap_policy
+        if max_concurrent_runs is not None:
+            opts.max_concurrent_runs = max_concurrent_runs
+            # A higher limit may free a slot for a queued run.
+            self._start_queued(reg)
 
         # Reschedule if active
         if reg.status == "active":
             self._cancel_timer(reg)
             self._schedule_next(reg)
+        await self._broadcast({"type": "job:updated", "jobId": job_id})
 
     async def query_executions(
         self, query: JobExecutionQuery
@@ -370,6 +481,7 @@ class CliJobScheduler:
             raise InvalidOperationError("The execution is still running")
         if not await self._storage.delete_execution(execution_id):
             raise ExecutionNotFoundError(f"Execution not found: {execution_id}")
+        await self._broadcast({"type": "job:runs-deleted", "jobId": job_id, "executionId": execution_id})
 
     async def delete_executions(self, job_id: str, status: str | None = None) -> int:
         """Deletes every finished run of the job, or only those with ``status``
@@ -393,12 +505,14 @@ class CliJobScheduler:
         for execution_id in to_delete:
             if await self._storage.delete_execution(execution_id):
                 deleted += 1
+        if deleted:
+            await self._broadcast({"type": "job:runs-deleted", "jobId": job_id, "count": deleted})
         return deleted
 
     def _is_running(self, execution: JobExecution) -> bool:
         reg = self._registrations.get(execution.job_id)
         return execution.status == "running" or (
-            reg is not None and reg.current_execution_id == execution.id
+            reg is not None and execution.id in reg.running_execution_ids
         )
 
     def _ensure_storage_deletes(self) -> None:
@@ -408,13 +522,20 @@ class CliJobScheduler:
             raise NotSupportedError("The job storage cannot delete executions")
 
     def _schedule_next(
-        self, reg: JobRegistration, *, run_now: bool = False, after_fire: bool = False
+        self,
+        reg: JobRegistration,
+        *,
+        run_now: bool = False,
+        after_fire: bool = False,
+        fired_at: datetime.datetime | None = None,
     ) -> None:
         """Compute next run time and create timer task.
 
         An interval job keeps its rhythm across restarts and pauses: it is due
         one interval after its last run (right away when that has passed, or
-        with ``run_now``); right after a firing, one interval from now."""
+        with ``run_now``); right after a firing, one interval from now.  A
+        cron job's next run follows the occurrence that fired (``fired_at``),
+        so a timer that fires early never runs one occurrence twice."""
         if not self._running:
             return
 
@@ -422,10 +543,13 @@ class CliJobScheduler:
         delay: float
 
         if reg.options.schedule:
-            cron = croniter(reg.options.schedule, now)
-            next_dt = cron.get_next(datetime.datetime)
-            if next_dt.tzinfo is None:
-                next_dt = next_dt.replace(tzinfo=datetime.UTC)
+            next_dt = None
+            if fired_at is not None:
+                next_dt = _next_occurrence(reg.options.schedule, as_utc(fired_at))
+                if next_dt <= now:  # busy, or the clock jumped
+                    next_dt = None
+            if next_dt is None:
+                next_dt = _next_occurrence(reg.options.schedule, now)
             reg.next_run_at = next_dt
             delay = max((next_dt - now).total_seconds(), 0.1)
         elif reg.options.interval:
@@ -446,7 +570,7 @@ class CliJobScheduler:
         reg.timer_task = asyncio.create_task(self._timer_fire(reg, delay))
 
     async def _timer_fire(self, reg: JobRegistration, delay: float) -> None:
-        """Wait for the delay, then execute the job and reschedule."""
+        """Wait for the delay, then start a run (through the slots) and reschedule."""
         try:
             await asyncio.sleep(delay)
         except asyncio.CancelledError:
@@ -455,31 +579,129 @@ class CliJobScheduler:
         if not self._running or reg.status != "active":
             return
 
-        # Overlap check
-        if reg.current_execution_id is not None:
-            policy = reg.options.overlap_policy
-            if policy == "skip":
-                pass  # skip this firing
-            elif policy == "cancel":
-                if reg.current_cancellation:
-                    reg.current_cancellation.set()
-                asyncio.create_task(self._execute_job(reg, retry_attempt=0))
-            elif policy == "queue":
-                reg.queue.append(0)
-        else:
-            asyncio.create_task(self._execute_job(reg, retry_attempt=0))
+        fired_at = reg.next_run_at
+        self._launch(reg, self._admit(reg))
 
         # Reschedule
         if reg.status == "active":
-            self._schedule_next(reg, after_fire=True)
+            self._schedule_next(reg, after_fire=True, fired_at=fired_at)
 
-    async def _execute_job(self, reg: JobRegistration, retry_attempt: int) -> None:
+    # ------------------------------------------------------------------
+    # Slots: a run holds one of max_concurrent_runs from start to end
+    # ------------------------------------------------------------------
+
+    def _admit(self, reg: JobRegistration, *, manual: bool = False) -> JobRun | None:
+        """Decide a due run (timer, trigger, run on start) and take its slot.
+
+        Synchronous on purpose: nothing else runs on the event loop between
+        the check and taking the slot, so due runs at the same moment never
+        exceed the limit.  Returns the run to :meth:`_launch`, or ``None``
+        when it was queued or skipped (a manual trigger is refused instead).
+
+        ``cancel`` cancels the oldest run and queues the new one: it starts
+        once the cancelled run has ended, so the limit holds even for a job
+        that ignores its cancellation.  Due runs while it waits merge into it
+        (no other run is cancelled)."""
+        limit = reg.options.max_concurrent_runs
+        if len(reg.runs) < limit:
+            return self._take_slot(reg)
+        policy = reg.options.overlap_policy
+        if policy == "queue":
+            reg.queued = True  # coalesces: at most one waits
+            return None
+        if policy == "cancel":
+            if not reg.queued:
+                reg.runs[0].cancellation.set()
+                reg.queued = True
+            return None
+        if manual:
+            raise InvalidOperationError("Job is already running")
+        return None
+
+    @staticmethod
+    def _take_slot(reg: JobRegistration) -> JobRun:
+        run = JobRun()
+        reg.runs.append(run)
+        return run
+
+    def _launch(self, reg: JobRegistration, run: JobRun | None) -> None:
+        if run is not None:
+            run.task = asyncio.ensure_future(self._run(reg, run))
+
+    def _release(self, reg: JobRegistration, run: JobRun) -> None:
+        if run in reg.runs:
+            reg.runs.remove(run)
+        self._start_queued(reg)
+
+    def _start_queued(self, reg: JobRegistration) -> None:
+        if reg.queued and len(reg.runs) < reg.options.max_concurrent_runs:
+            reg.queued = False
+            self._launch(reg, self._take_slot(reg))
+
+    @staticmethod
+    def _cancel_runs(reg: JobRegistration) -> None:
+        reg.queued = False
+        for run in reg.runs:
+            run.cancellation.set()
+
+    async def _run(self, reg: JobRegistration, run: JobRun) -> None:
+        """One run: the attempt, and its retries while it fails; the slot is
+        held until the end, the delays between attempts included."""
+        attempt = 0
+        try:
+            while True:
+                execution = await self._execute_attempt(reg, run, attempt)
+                if (
+                    execution.status != "failed"
+                    or attempt >= reg.options.max_retries
+                    or run.cancellation.is_set()
+                ):
+                    return
+                delay = self._retry_delay(reg, attempt)
+                logger.info(
+                    "Retrying job %s in %.1fs (attempt %d/%d)",
+                    reg.options.name,
+                    delay,
+                    attempt + 1,
+                    reg.options.max_retries,
+                )
+                await self._broadcast({
+                    "type": "job:retrying",
+                    "jobId": reg.id,
+                    "executionId": execution.id,
+                    "attempt": attempt + 1,
+                    "maxRetries": reg.options.max_retries,
+                    "delayMs": round(delay * 1000),
+                })
+                try:
+                    await asyncio.wait_for(run.cancellation.wait(), timeout=delay)
+                    return  # cancelled while waiting for the retry
+                except asyncio.TimeoutError:
+                    pass
+                attempt += 1
+        except Exception:
+            logger.exception("Run of job %s failed", reg.id)
+        finally:
+            self._release(reg, run)
+
+    @staticmethod
+    def _retry_delay(reg: JobRegistration, retry_attempt: int) -> float:
+        base_delay = parse_interval(reg.options.retry_delay) if reg.options.retry_delay else 5.0
+        strategy = reg.options.retry_strategy or "exponential"
+        if strategy == "fixed":
+            return base_delay
+        if strategy == "linear":
+            return base_delay * (retry_attempt + 1)
+        return base_delay * (2 ** retry_attempt)  # exponential
+
+    async def _execute_attempt(
+        self, reg: JobRegistration, run: JobRun, retry_attempt: int,
+    ) -> JobExecution:
         exec_id = str(uuid.uuid4())
-        cancel_event = asyncio.Event()
+        cancel_event = run.cancellation
         now = datetime.datetime.now(datetime.UTC)
 
-        reg.current_execution_id = exec_id
-        reg.current_cancellation = cancel_event
+        run.execution_id = exec_id
 
         execution = JobExecution(
             id=exec_id,
@@ -525,15 +747,26 @@ class CliJobScheduler:
                 execution.status = "completed"
 
         except asyncio.TimeoutError:
-            cancel_event.set()
-            execution.status = "timed_out"
-            execution.error = f"Timed out after {reg.options.timeout}"
-            await self._broadcast({
-                "type": "job:timed_out",
-                "jobId": reg.id,
-                "executionId": exec_id,
-                "timeout": reg.options.timeout,
-            })
+            if cancel_event.is_set():
+                # Cancelled by hand (cancel, stop, overlap cancel) before the
+                # timeout ran out: a job that ignores its cancellation is
+                # still a cancelled run, not a timed-out one.
+                execution.status = "cancelled"
+                await self._broadcast({
+                    "type": "job:cancelled",
+                    "jobId": reg.id,
+                    "executionId": exec_id,
+                })
+            else:
+                cancel_event.set()
+                execution.status = "timed_out"
+                execution.error = f"Timed out after {reg.options.timeout}"
+                await self._broadcast({
+                    "type": "job:timed_out",
+                    "jobId": reg.id,
+                    "executionId": exec_id,
+                    "timeout": reg.options.timeout,
+                })
         except asyncio.CancelledError:
             execution.status = "cancelled"
             await self._broadcast({
@@ -564,8 +797,7 @@ class CliJobScheduler:
         reg.last_run_at = execution.started_at
         reg.last_run_status = execution.status
         reg.last_run_duration = execution.duration
-        reg.current_execution_id = None
-        reg.current_cancellation = None
+        run.execution_id = None
         # The last run survives a restart (interval rhythm, see _schedule_next)
         try:
             await self._persist_state(reg)
@@ -580,39 +812,7 @@ class CliJobScheduler:
                 "duration": execution.duration,
             })
 
-        # Retry on failure
-        if execution.status == "failed" and retry_attempt < reg.options.max_retries:
-            base_delay = parse_interval(reg.options.retry_delay) if reg.options.retry_delay else 5.0
-            strategy = reg.options.retry_strategy or "exponential"
-            if strategy == "fixed":
-                delay = base_delay
-            elif strategy == "linear":
-                delay = base_delay * (retry_attempt + 1)
-            else:  # exponential
-                delay = base_delay * (2 ** retry_attempt)
-            logger.info(
-                "Retrying job %s in %.1fs (attempt %d/%d)",
-                reg.options.name,
-                delay,
-                retry_attempt + 1,
-                reg.options.max_retries,
-            )
-            await self._broadcast({
-                "type": "job:retrying",
-                "jobId": reg.id,
-                "executionId": exec_id,
-                "attempt": retry_attempt + 1,
-                "maxRetries": reg.options.max_retries,
-                "delayMs": round(delay * 1000),
-            })
-            await asyncio.sleep(delay)
-            asyncio.create_task(self._execute_job(reg, retry_attempt + 1))
-            return
-
-        # Process queue
-        if reg.queue:
-            queued_attempt = reg.queue.popleft()
-            asyncio.create_task(self._execute_job(reg, queued_attempt))
+        return execution
 
     async def _save_finished(self, execution: JobExecution, discard: bool) -> None:
         """Save the finished run, or delete a discarded one (a store that
@@ -665,11 +865,34 @@ class CliJobScheduler:
         )
 
     async def _broadcast(self, message: dict[str, Any]) -> None:
-        if self._broadcast_fn is not None:
-            try:
-                await self._broadcast_fn(json.dumps(message))
-            except Exception:
-                logger.debug("Failed to broadcast job event", exc_info=True)
+        """Publish a ``job:*`` event (``message``: ``type`` and the fields)."""
+        data = dict(message)
+        event_type = data.pop("type")
+        try:
+            if self.event_bus is not None:
+                await self.event_bus.publish(event_type, data, CliEventAudience(permission=JOBS_READ))
+            elif self._broadcast_fn is not None:
+                data.setdefault("timestamp", datetime.datetime.now(datetime.UTC).isoformat())
+                await self._broadcast_fn(json.dumps({"type": event_type, **data}))
+        except Exception:
+            logger.debug("Failed to publish job event", exc_info=True)
+
+
+def _next_occurrence(schedule: str, after: datetime.datetime) -> datetime.datetime:
+    """The cron ``schedule``'s first occurrence after ``after`` (UTC)."""
+    next_dt = croniter(schedule, after).get_next(datetime.datetime)
+    if next_dt.tzinfo is None:
+        next_dt = next_dt.replace(tzinfo=datetime.UTC)
+    return next_dt
+
+
+def _validate_max_concurrent_runs(value: Any) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise InvalidValueError("maxConcurrentRuns must be an integer >= 1")
+
+
+class InvalidValueError(ValueError):
+    """An option value out of range (the jobs API answers 400 ``INVALID_VALUE``)."""
 
 
 class InvalidOperationError(Exception):

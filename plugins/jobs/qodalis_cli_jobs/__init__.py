@@ -8,6 +8,7 @@ from .cli_job_scheduler import (
     ExecutionNotFoundError,
     ICliJobScheduler,
     InvalidOperationError,
+    InvalidValueError,
     JobRegistration,
     NotSupportedError,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "ICliJobScheduler",
     "InMemoryJobStorageProvider",
     "InvalidOperationError",
+    "InvalidValueError",
     "JobRegistration",
     "NotSupportedError",
     "create_cli_jobs_router",

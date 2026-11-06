@@ -35,12 +35,12 @@ share one store, the one set on either of them (`CliAuditBuilder().set_store(...
 
 ## Recording your own changes
 
-Log an entry in the plugin's store (`IAuditStore`, `qodalis_cli_server_abstractions.audit`):
+Log an entry with the plugin (`AuditEntry`, `qodalis_cli_server_abstractions.audit`):
 
 ```python
 from qodalis_cli_server_abstractions.audit import AuditEntry
 
-await audit_plugin.store.log(AuditEntry(
+await audit_plugin.log(AuditEntry(
     event="role.save",
     actor=current_user.email,
     target="role:editor",
@@ -51,6 +51,11 @@ await audit_plugin.store.log(AuditEntry(
 An entry has the `event`, the user it is about (`username`), who did it (`actor`), what else it is about (`target`,
 e.g. `group:admins`), `details`, `metadata` (`AuditMetadata`: `remoteAddress`, `sessionId`) and the application's own
 values (`properties`). With the users plugin, `users_plugin.audit_store` is the same store.
+
+`audit_plugin.log(entry)` stores the entry and, once the plugin is mounted, publishes `audit:recorded` on the server's
+event bus (audience `audit:read`): the entry's fields as `GET /audit` returns them, with the entry's time as the event's
+`timestamp` (ISO 8601). The users plugin's entries and `audit_cleared` are published the same way. Writing to
+`audit_plugin.store` directly records the entry without an event.
 
 ## API
 

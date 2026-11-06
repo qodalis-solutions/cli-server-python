@@ -15,7 +15,12 @@ from ..abstractions import ICliCommandProcessor
 from ..abstractions.cli_process_command import CliProcessCommand
 from qodalis_cli_server_abstractions import is_stream_capable
 from ..models import CliServerCommandDescriptor, CliServerCommandParameterDescriptorDto, CliServerResponse
-from ..services.cli_command_executor_service import ICliCommandExecutorService
+from ..services.cli_command_executor_service import (
+    ICliCommandExecutorService,
+    caller_user_id,
+    command_user_id,
+    executing_as,
+)
 from ..services.cli_command_registry import ICliCommandRegistry
 from ..services.cli_output_limits import DEFAULT_MAX_TABLE_ROWS, apply_output_limits
 from ..security import get_auth_context, missing_processor_permissions
@@ -186,7 +191,8 @@ def create_cli_router(
             data=request.data,
             positionals=request.positionals,
         )
-        result = await executor.execute_async(cmd, cancellation_event=None)
+        with executing_as(get_auth_context(http_request)):
+            result = await executor.execute_async(cmd, cancellation_event=None)
         return JSONResponse(result.model_dump(by_alias=True, exclude_none=True))
 
     @router.post("/execute/stream")
@@ -205,8 +211,12 @@ def create_cli_router(
         )
 
         cancellation_event = asyncio.Event()
+        user_id = caller_user_id(get_auth_context(http_request))
 
         async def event_generator():
+            # The generator runs in the response's own task: the executor
+            # reads the caller from there.
+            command_user_id.set(user_id)
             def sse_event(event_type: str, data: dict) -> str:
                 return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
@@ -276,9 +286,13 @@ def create_cli_router(
                     usage_failed = True
                 yield sse_event("error", {"message": f"Error executing command: {exc}"})
             finally:
+                duration_ms = (time.perf_counter() - started) * 1000
                 record = getattr(executor, "record_usage", None)
                 if usage_failed is not None and callable(record):
-                    record(command.command, (time.perf_counter() - started) * 1000, usage_failed)
+                    record(command.command, duration_ms, usage_failed)
+                notify = getattr(executor, "notify_executed", None)
+                if usage_failed is not None and callable(notify):
+                    await notify(command.command, duration_ms, usage_failed, user_id)
 
         return StreamingResponse(
             event_generator(),

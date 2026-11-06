@@ -17,6 +17,7 @@ from .controllers import create_cli_router, create_cli_version_router
 from .controllers.filesystem_controller import create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemPathValidator
+from .filesystem.event_publishing_provider import EventPublishingFileStorageProvider
 from .filesystem.filesystem_options import DEFAULT_MAX_UPLOAD_BYTES
 from .mcp import (
     CliMcpOptions,
@@ -33,6 +34,7 @@ from .security import WebSocketOriginMiddleware, get_auth_context, origins_regex
 from .shell_security import CliShellOptions, ShellAccessProvider
 from .services import (
     CliCommandExecutorService,
+    CliEventBus,
     CliCommandRegistry,
     CliEventSocketManager,
     CliLogSocketManager,
@@ -94,6 +96,12 @@ class CliServerResult:
     #: MCP tool providers — ``result.mcp.add_provider(provider)`` (plugins
     #: register theirs when mounted).  Present even when MCP is disabled.
     mcp: McpToolRegistry = field(default_factory=McpToolRegistry)
+    #: The server's event bus: ``await result.event_bus.publish("ns:name",
+    #: {...}, CliEventAudience(permission=...))`` reaches the events
+    #: WebSocket (``/ws/v1/qcli/events``) and in-process subscribers
+    #: (``result.event_bus.subscribe("job:*", handler)``).  Plugins mounted
+    #: with ``mount_plugin`` publish through it.
+    event_bus: CliEventBus = field(default_factory=CliEventBus)
 
     def set_shell_access_provider(self, provider: ShellAccessProvider | None) -> None:
         """Let an auth plugin own shell access (the users plugin calls this
@@ -151,7 +159,9 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     """
     opts = options or CliServerOptions()
 
+    event_bus = CliEventBus()
     event_socket_manager = CliEventSocketManager()
+    event_socket_manager.attach(event_bus)
     log_socket_manager = CliLogSocketManager()
     shell_session_manager = CliShellSessionManager(opts.shell, enabled=opts.enable_shell)
 
@@ -193,6 +203,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         opts.configure(builder)
 
     executor = CliCommandExecutorService(registry, max_table_rows=opts.max_table_rows)
+    executor.event_bus = event_bus
     shell_auth = lambda: shell_session_manager.access_mode  # noqa: E731
     router = create_cli_router(registry, executor, enable_shell=opts.enable_shell, shell_auth=shell_auth)
     version_router = create_cli_version_router(enable_shell=opts.enable_shell, shell_auth=shell_auth)
@@ -223,6 +234,8 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
             )
         )
     if fs_provider is not None:
+        # The API and the MCP tools share it: one fs:changed per change.
+        fs_provider = EventPublishingFileStorageProvider(fs_provider, event_bus)
         fs_router = create_filesystem_router(
             fs_provider,
             max_upload_bytes=(
@@ -305,6 +318,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         options=opts,
         shell_session_manager=shell_session_manager,
         mcp=mcp_tools,
+        event_bus=event_bus,
     )
 
 
