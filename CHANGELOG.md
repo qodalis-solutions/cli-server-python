@@ -25,9 +25,10 @@ PEP 440 for `1.0.0-beta.19`).
   - `CliAuditPlugin.log(entry)` stores an entry and publishes `audit:recorded`.
 - **Jobs: max concurrent runs, and no job started twice** (jobs plugin), the same design on every server:
   - New option `max_concurrent_runs` (`CliJobOptions`, default 1; `PUT /jobs/{id}` `maxConcurrentRuns`, an integer
-    >= 1, else 400). A run holds its slot from start to end, retries and retry delays included. When every slot is
+    >= 1, else 400 `INVALID_VALUE`). A run holds its slot from start to end, retries and retry delays included. When every slot is
     taken, `overlap_policy` decides: `skip` drops the due run (a trigger answers 409), `queue` keeps one run waiting
-    (coalesced; a trigger answers `{"message": "Job queued", "queued": true}`), `cancel` cancels the oldest run.
+    (coalesced; a trigger answers `{"message": "Job queued", "queued": true}`), `cancel` cancels the oldest run and
+    starts the new one once that run has ended (queued meanwhile; further due runs merge into it).
   - Job info adds `maxConcurrentRuns`, `runningExecutionIds` (oldest first) and `queued`; `currentExecutionId` is the
     newest running run. `cancel` cancels every running run and drops a queued one.
   - Fixes: run on start skips a job that ran recently (interval not yet passed, no missed cron occurrence); a retry

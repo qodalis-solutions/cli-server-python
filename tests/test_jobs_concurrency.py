@@ -63,6 +63,40 @@ class GateJob(ICliJob):
             self.running -= 1
 
 
+class IgnoringJob(ICliJob):
+    """Ignores its cancellation: run ``i`` ends only on ``release(i)``."""
+
+    def __init__(self) -> None:
+        self.started = 0
+        self.running = 0
+        self.peak = 0
+        self.cancellations: list[asyncio.Event] = []
+        self._gates: list[asyncio.Event] = []
+        self._all = False
+
+    def release(self, index: int) -> None:
+        self._gates[index].set()
+
+    def release_all(self) -> None:
+        self._all = True
+        for gate in self._gates:
+            gate.set()
+
+    async def execute_async(self, context: Any, cancellation_event: asyncio.Event) -> None:
+        gate = asyncio.Event()
+        if self._all:
+            gate.set()
+        self._gates.append(gate)
+        self.cancellations.append(cancellation_event)
+        self.started += 1
+        self.running += 1
+        self.peak = max(self.peak, self.running)
+        try:
+            await gate.wait()
+        finally:
+            self.running -= 1
+
+
 async def until(condition: Callable[[], bool], timeout: float = 3.0) -> None:
     deadline = asyncio.get_running_loop().time() + timeout
     while not condition():
@@ -221,19 +255,30 @@ class TestOverlapPolicies:
         await settle()
         assert job.started == 2 and job.peak == 1
 
-    async def test_cancel_cancels_the_oldest_run(self, scheduler):
-        job = GateJob()
+    async def test_cancel_cancels_the_oldest_run_and_waits_for_it(self, scheduler):
+        job = IgnoringJob()  # ignores its cancellation: the limit must hold anyway
         reg = _register(scheduler, job, overlap_policy="cancel", max_concurrent_runs=2)
         await scheduler.trigger(reg.id)
         await until(lambda: job.running == 1)
         await scheduler.trigger(reg.id)
         await until(lambda: job.running == 2)
         oldest, newer = job.cancellations
-        await scheduler.trigger(reg.id)
+
+        assert await scheduler.trigger(reg.id) == "queued"
         assert oldest.is_set() and not newer.is_set()
+        assert reg.queued is True
+        # Further due runs merge into the waiting one; no other run is cancelled.
+        await scheduler._timer_fire(reg, 0)
+        assert await scheduler.trigger(reg.id) == "queued"
+        await settle()
+        assert not newer.is_set() and job.started == 2
+
+        job.release(0)  # the cancelled run ends: the waiting run starts
         await until(lambda: job.started == 3)
-        assert len(reg.runs) == 2
-        job.open()
+        assert reg.queued is False and len(reg.runs) == 2 and job.peak == 2
+        job.release_all()
+        await until(lambda: not reg.runs)
+        assert job.started == 3 and job.peak == 2
 
     async def test_cancel_and_stop_cancel_every_run_and_the_queued_one(self, scheduler):
         job = GateJob()
@@ -387,6 +432,7 @@ class TestApi:
             for bad in (0, -1, "2", 1.5, True, "x"):
                 res = c.put(f"{JOBS}/gate", json={"maxConcurrentRuns": bad})
                 assert res.status_code == 400, (bad, res.text)
+                assert res.json()["code"] == "INVALID_VALUE"
             assert c.get(f"{JOBS}/gate").json()["maxConcurrentRuns"] == 1
 
             assert c.post(f"{JOBS}/gate/trigger").json() == {"message": "Job triggered", "queued": False}

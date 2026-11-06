@@ -102,7 +102,9 @@ When a run is due (timer, trigger, run on start) and every slot is taken, `overl
 - `skip`: the due run is dropped; a trigger is refused (`409 JOB_ALREADY_RUNNING`).
 - `queue`: one run waits and starts when a slot frees. Queued runs coalesce: several due runs while full make one more
   run, not a backlog. A trigger answers `200 { "message": "Job queued", "queued": true }`.
-- `cancel`: the oldest run is cancelled and the new one starts in its slot.
+- `cancel`: the oldest run is cancelled and the new run waits (`queued: true`) until that run has ended, so the limit
+  holds even for a job that ignores its cancellation. Due runs while it waits merge into it and cancel nothing else.
+  A trigger answers `{ "message": "Job queued", "queued": true }`.
 
 Taking a slot happens without yielding to the event loop, so due runs at the same moment never exceed the limit.
 Lowering `max_concurrent_runs` cancels nothing: running runs finish and new ones start once fewer are running; raising
@@ -128,7 +130,7 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli/jobs`).
 | POST | `/{id}/resume` | Resume a paused job |
 | POST | `/{id}/stop` | Stop job and cancel if running |
 | POST | `/{id}/cancel` | Cancel current execution only |
-| PUT | `/{id}` | Update job options (`description`, `group`, `schedule`, `interval`, `maxRetries`, `retryDelay`, `retryStrategy`, `timeout`, `overlapPolicy`, `maxConcurrentRuns`); an invalid value answers 400 |
+| PUT | `/{id}` | Update job options (`description`, `group`, `schedule`, `interval`, `maxRetries`, `retryDelay`, `retryStrategy`, `timeout`, `overlapPolicy`, `maxConcurrentRuns`); an invalid value answers 400 (`INVALID_VALUE` for `maxConcurrentRuns`) |
 | GET | `/{id}/history` | Paginated execution history |
 | GET | `/{id}/history/{exec_id}` | Execution detail with logs |
 | DELETE | `/{id}/history/{exec_id}` | Delete one finished run and its logs |

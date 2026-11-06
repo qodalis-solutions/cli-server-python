@@ -329,7 +329,8 @@ class CliJobScheduler:
 
     async def trigger(self, job_id: str) -> str:
         """Manually trigger a run: ``"started"``, or ``"queued"`` when every
-        slot is taken and the overlap policy is ``queue``.
+        slot is taken and the overlap policy is ``queue`` (or ``cancel``: the
+        run starts once the cancelled oldest run has ended).
 
         Raises:
             KeyError: unknown job.
@@ -595,7 +596,12 @@ class CliJobScheduler:
         Synchronous on purpose: nothing else runs on the event loop between
         the check and taking the slot, so due runs at the same moment never
         exceed the limit.  Returns the run to :meth:`_launch`, or ``None``
-        when it was queued or skipped (a manual trigger is refused instead)."""
+        when it was queued or skipped (a manual trigger is refused instead).
+
+        ``cancel`` cancels the oldest run and queues the new one: it starts
+        once the cancelled run has ended, so the limit holds even for a job
+        that ignores its cancellation.  Due runs while it waits merge into it
+        (no other run is cancelled)."""
         limit = reg.options.max_concurrent_runs
         if len(reg.runs) < limit:
             return self._take_slot(reg)
@@ -603,10 +609,11 @@ class CliJobScheduler:
         if policy == "queue":
             reg.queued = True  # coalesces: at most one waits
             return None
-        if policy == "cancel" and len(reg.runs) == limit:
-            oldest = reg.runs.pop(0)  # its slot goes to the new run
-            oldest.cancellation.set()
-            return self._take_slot(reg)
+        if policy == "cancel":
+            if not reg.queued:
+                reg.runs[0].cancellation.set()
+                reg.queued = True
+            return None
         if manual:
             raise InvalidOperationError("Job is already running")
         return None
@@ -881,7 +888,11 @@ def _next_occurrence(schedule: str, after: datetime.datetime) -> datetime.dateti
 
 def _validate_max_concurrent_runs(value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError("maxConcurrentRuns must be an integer >= 1")
+        raise InvalidValueError("maxConcurrentRuns must be an integer >= 1")
+
+
+class InvalidValueError(ValueError):
+    """An option value out of range (the jobs API answers 400 ``INVALID_VALUE``)."""
 
 
 class InvalidOperationError(Exception):

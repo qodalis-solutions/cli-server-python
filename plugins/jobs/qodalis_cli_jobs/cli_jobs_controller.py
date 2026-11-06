@@ -19,6 +19,7 @@ from .cli_job_scheduler import (
     CliJobScheduler,
     ExecutionNotFoundError,
     InvalidOperationError,
+    InvalidValueError,
     NotSupportedError,
 )
 from .interval_parser import parse_interval
@@ -291,6 +292,11 @@ def create_cli_jobs_router(
             return JSONResponse(
                 status_code=404,
                 content={"error": "Job not found", "code": "JOB_NOT_FOUND"},
+            )
+        except InvalidValueError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": str(exc), "code": "INVALID_VALUE"},
             )
         except ValueError as exc:
             return JSONResponse(
