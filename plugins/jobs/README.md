@@ -42,7 +42,7 @@ jobs_plugin = (
             interval="30s",
         ),
     )
-    .build(broadcast_fn=event_socket_manager.broadcast_message)
+    .build()
 )
 
 # Using create_cli_server:
@@ -126,6 +126,19 @@ job, `409 { "error", "code": "EXECUTION_RUNNING" }` for a running run and `501 {
 when the storage cannot delete runs. `DELETE /{id}/history` never deletes running runs and answers `200 { "deleted": n }`,
 with the same 404 and 501 answers. From code: `await scheduler.delete_execution(job_id, exec_id)` and
 `await scheduler.delete_executions(job_id, status=None)` (returns the count). Keep job ids stable (`id`): saved pauses and history are found again by id after a restart.
+
+## Events
+
+Mounted with `result.mount_plugin(jobs_plugin)`, the scheduler publishes its events on the server's event bus
+(`result.event_bus`) with the audience `jobs:read`: `job:started`, `job:completed`, `job:failed`, `job:cancelled`,
+`job:timed_out`, `job:retrying`, `job:paused` / `job:resumed` / `job:stopped` (with `status`: `paused`, `active`,
+`stopped`), `job:triggered`, `job:updated` (after an options change) and `job:runs-deleted` (`executionId` for one run,
+`count` for a bulk delete). They come from the scheduler's methods, which the REST API, the MCP tools and your own code
+all call, so each action is published once. See the server README, *Server Events*, for the wire format.
+
+`build(broadcast_fn=None, event_bus=None)`: `event_bus` sets a bus of your own (mounting keeps it). `broadcast_fn`
+(an async function taking a JSON string) still works for a scheduler used without a bus: it receives the same events,
+flat, for every socket.
 
 ## MCP tools
 
