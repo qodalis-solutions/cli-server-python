@@ -4,6 +4,10 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## 1.0.0b22
+
+- The admin plugin embeds dashboard 1.0.0-beta.17: logs jump to newest, pause, copy an entry and collapsed exceptions; jobs run again and delete runs from the recent runs table.
+
 ## 1.0.0b21
 
 - The admin plugin embeds dashboard 1.0.0-beta.16: delete job runs (one, a result's or every finished one), older log
