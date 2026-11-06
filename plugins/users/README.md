@@ -59,9 +59,9 @@ result.app.router.lifespan_context = lifespan
 | `set_read_only_users(bool=True)` | `False` | The host owns the users: user writes answer `501` (see [Read-only stores](#read-only-stores)) |
 | `set_read_only_groups(bool=True)` | `False` | The host owns the groups: group writes answer `501` |
 | `set_auth_adapter(adapter)` | `None` | Delegate authentication to the host app (a sync or async callable; see below) |
-| `build(broadcast_fn=None)` | | Returns a `CliUsersPlugin` (`prefix`, `router`, `startup()`, `shutdown()`, `require_auth`, `require_permission(p)`, `protect(app)`, `auth_service`, stores) |
+| `build(broadcast_fn=None, event_bus=None)` | | Returns a `CliUsersPlugin` (`prefix`, `router`, `startup()`, `shutdown()`, `require_auth`, `require_permission(p)`, `protect(app)`, `auth_service`, stores) |
 
-When mounted with `result.mount_plugin(...)`, user-scoped events (`session-kicked`) go only to event sockets authenticated as that user. `broadcast_fn` (JSON strings, sync or async) is only used when the plugin is not mounted on a CLI server.
+When mounted with `result.mount_plugin(...)`, user-scoped events (`session-kicked`) go only to event sockets authenticated as that user, and the [server events](#server-events) go to the server's event bus. `broadcast_fn` (JSON strings, sync or async) is only used when the plugin is not mounted on a CLI server (and has no `event_bus`).
 
 ### Guards for host routes
 
@@ -178,6 +178,22 @@ Use a token with the server's MCP endpoint — see the main README, [*Using the 
 claude mcp add --transport http qcli http://localhost:8048/api/qcli/mcp \
   --header "Authorization: Bearer <token>"
 ```
+
+## Server events
+
+Mounted on a CLI server, the plugin publishes on the server's event bus (`result.event_bus`; see the server README,
+*Server Events*). Each event goes to the event sockets whose user holds its permission:
+
+| Event | Fields | Audience |
+|---|---|---|
+| `user:created`, `user:updated`, `user:deleted` | `userId`, `username`, `actor` | `users:read` |
+| `group:created`, `group:updated`, `group:deleted` | `group`, `actor` | `groups:read` |
+| `token:created`, `token:revoked` | `tokenId`, `name`, `userId`, `actor` | `tokens:read`, or the token's owner |
+| `session:opened`, `session:closed` | `userId`, `username`, `sessionId`, `actor` | `sessions:read` |
+
+`user:updated` covers profile, enabled/disabled, password and group membership changes (deleting a group updates its
+members). `session:closed` covers sign-out, revoke (kick, disable, delete, password change) and expiry. The plugin's audit
+entries are published as `audit:recorded` (`audit:read`) by the [audit plugin](../audit/README.md).
 
 ## Session events
 

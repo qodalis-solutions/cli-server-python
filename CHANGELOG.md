@@ -4,6 +4,25 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## 1.0.0b23
+
+- **Server events**, the same design on the .NET, Node and Python servers:
+  - `create_cli_server` creates an event bus, `CliServerResult.event_bus` (`CliEventBus`; `ICliEventBus`, `CliEvent`,
+    `CliEventAudience` and `cli_event_pattern_matches` in `qodalis_cli_server_abstractions.events`).
+    `publish(type, data=None, audience=None)` and `subscribe(pattern, handler)` (`*`, `ns:*` or a type; returns the
+    unsubscribe function). Handler errors are logged and never fail the publisher.
+  - Every event is one flat camelCase JSON object on `/ws/v1/qcli/events` (`type`, `timestamp` in ISO 8601 UTC, the
+    fields) and has an audience: everyone, a permission, a user, or the user or the permission. Sockets get only the
+    events of their audience; on a server without authentication every socket gets every event.
+    `broadcast_message` keeps working.
+  - New events: `job:triggered`, `job:updated`, `job:runs-deleted`; `user:*`, `group:*`, `token:*`, `session:*`
+    (users plugin); `fs:changed` (filesystem API and MCP `fs_*` tools); `command:executed` (REST execute, stream and MCP;
+    the processor name only); `audit:recorded` (audit plugin). `job:paused`, `job:resumed` and `job:stopped` carry
+    `status`. See the README, *Server Events*.
+  - Jobs events have the audience `jobs:read`. The jobs and users plugins publish on the server's bus once mounted;
+    their `build(broadcast_fn=...)` keeps working without a bus and takes `event_bus=`.
+  - `CliAuditPlugin.log(entry)` stores an entry and publishes `audit:recorded`.
+
 ## 1.0.0b22
 
 - The admin plugin embeds dashboard 1.0.0-beta.17: logs jump to newest, pause, copy an entry and collapsed exceptions; jobs run again and delete runs from the recent runs table.
