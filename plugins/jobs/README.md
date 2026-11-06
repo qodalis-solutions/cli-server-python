@@ -108,6 +108,8 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli/jobs`).
 | PUT | `/{id}` | Update job options |
 | GET | `/{id}/history` | Paginated execution history |
 | GET | `/{id}/history/{exec_id}` | Execution detail with logs |
+| DELETE | `/{id}/history/{exec_id}` | Delete one finished run and its logs |
+| DELETE | `/{id}/history` | Delete every finished run of the job: `?status=` deletes only the runs with that status (e.g. `failed`) |
 | GET | `/executions` | Executions across jobs, newest first: `?job=a,b&group=&status=&since=&limit=&offset=` |
 | GET | `/stats` | Run statistics for charts: `?since=&until=&buckets=&job=&group=` (default the last 24 h in 24 columns) |
 
@@ -116,11 +118,18 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli/jobs`).
 values. `GET /stats` counts every run started in `[since, until)` (it pages through the storage's execution query, so
 any storage works) per time column by outcome (`succeeded`, `failed`, `cancelled`, `running`), with totals and per-job
 figures (`successRate`, `avgDuration`, `p95Duration`, `maxDuration`, `lastFailureAt`, the 12 newest runs); `buckets` is
-clamped to 1..200 and a bad time answers `400 { "error": "..." }`. Keep job ids stable (`id`): saved pauses and history are found again by id after a restart.
+clamped to 1..200 and a bad time answers `400 { "error": "..." }`.
+
+`DELETE /{id}/history/{exec_id}` answers `200 { "message": "Run deleted" }`, `404 { "error", "code": "JOB_NOT_FOUND" }`
+for an unknown job, `404 { "error", "code": "EXECUTION_NOT_FOUND" }` for a run that is missing or belongs to another
+job, `409 { "error", "code": "EXECUTION_RUNNING" }` for a running run and `501 { "error", "code": "NOT_SUPPORTED" }`
+when the storage cannot delete runs. `DELETE /{id}/history` never deletes running runs and answers `200 { "deleted": n }`,
+with the same 404 and 501 answers. From code: `await scheduler.delete_execution(job_id, exec_id)` and
+`await scheduler.delete_executions(job_id, status=None)` (returns the count). Keep job ids stable (`id`): saved pauses and history are found again by id after a restart.
 
 ## MCP tools
 
-When mounted with `result.mount_plugin(jobs_plugin)` on a server with the MCP endpoint enabled, the plugin adds the `jobs_list`, `jobs_get {id}`, `jobs_history {id, limit?}` (`jobs:read`) and `jobs_trigger`, `jobs_pause`, `jobs_resume`, `jobs_stop`, `jobs_cancel` `{id}` (`jobs:manage`) tools. They use the same scheduler as the REST API. See the server README, *MCP endpoint*.
+When mounted with `result.mount_plugin(jobs_plugin)` on a server with the MCP endpoint enabled, the plugin adds the `jobs_list`, `jobs_get {id}`, `jobs_history {id, limit?}` (`jobs:read`) and `jobs_trigger`, `jobs_pause`, `jobs_resume`, `jobs_stop`, `jobs_cancel` `{id}` and `jobs_delete_runs {id, execution?, status?}` (`jobs:manage`) tools. They use the same scheduler as the REST API. See the server README, *MCP endpoint*.
 
 ## Custom Storage
 
@@ -137,7 +146,8 @@ plugin = (
 
 Besides saving and reading executions and states, a store may implement `query_executions(query)` (executions
 across jobs; the default merges `get_executions` per job and raises `NotImplementedError` for every job, where the
-scheduler merges the registered jobs instead), `delete_execution(id)` (for `discard()`; the default keeps the run)
+scheduler merges the registered jobs instead), `delete_execution(id)` (deletes the run and its logs, for `discard()` and the `DELETE .../history` routes; the
+default keeps the run, and the routes then answer `501 NOT_SUPPORTED`)
 and `prune(before)` (delete executions older than `before`; the default keeps everything). Call `prune` on a
 schedule, for example from a job, to keep the history bounded.
 

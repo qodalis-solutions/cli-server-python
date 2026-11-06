@@ -347,8 +347,9 @@ Tools are collected from **tool providers** on every request, so registrations, 
 | data explorer (when a provider is registered) | `data_sources`, `data_schema {source}`, `data_query {source, query, parameters?}` | `data:query` |
 | jobs (jobs plugin mounted) | `jobs_list`, `jobs_get {id}`, `jobs_history {id, limit?=20}` | `jobs:read` |
 | | `jobs_trigger`, `jobs_pause`, `jobs_resume`, `jobs_stop`, `jobs_cancel` `{id}` | `jobs:manage` |
+| | `jobs_delete_runs {id, execution?, status?}`: one run, or every finished run (optionally of a status) | `jobs:manage` |
 
-Read-only tools carry the MCP annotation `readOnlyHint`, `fs_delete` / `jobs_stop` / `jobs_cancel` carry `destructiveHint`. Feature tools reuse the same services as the HTTP routes (file storage provider and its path whitelist, data-explorer executor and its limits, job scheduler); their errors come back as `isError: true` results. The interactive shell is never a tool.
+Read-only tools carry the MCP annotation `readOnlyHint`, `fs_delete` / `jobs_stop` / `jobs_cancel` / `jobs_delete_runs` carry `destructiveHint`. Feature tools reuse the same services as the HTTP routes (file storage provider and its path whitelist, data-explorer executor and its limits, job scheduler); their errors come back as `isError: true` results. The interactive shell is never a tool.
 
 **Command tools.** Every root processor and its sub-processors are walked; a node becomes a tool when it has no sub-processors, declares `parameters`, or takes a value (`value_required` is `True` — required — or `False` — optional). The name is the command path joined with `_` (`weather`, `weather_current`), lower-cased, characters outside `[a-z0-9_-]` replaced by `-`, at most 64 characters. The input schema has one property per parameter (`string`/`number`/`boolean`, `array` → array of strings, anything else → string; with `description`, `default` and `required`) plus `value` (the positional input) when the command takes a value, and `additionalProperties: false`. A call is validated against the schema, then runs through the same executor as `/execute`; the result is `{ content: [{ type: "text", text }], isError }` with the outputs rendered as text (tables as `a | b` rows, followed by a line such as `(rows 51-100 of 120; next: skip=100)` when paged or cut, lists one item per line, JSON pretty-printed, key-value as `key: value`) and `isError` = `exitCode != 0`. A single JSON-object output is also returned as `structuredContent`.
 
@@ -846,7 +847,7 @@ The image runs the demo server (all plugins, users plugin with `root` / `admin`)
 
 ## Versioning
 
-Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b20` today (PEP 440 for `1.0.0-beta.20`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
+Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b21` today (PEP 440 for `1.0.0-beta.21`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
 
 ## Development
 

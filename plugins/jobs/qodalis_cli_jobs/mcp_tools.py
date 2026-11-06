@@ -12,7 +12,12 @@ from typing import Any
 from qodalis_cli.mcp import McpCallContext, McpTool, McpToolResult, object_schema
 from qodalis_cli.mcp.core import TIER_BUILTIN
 
-from .cli_job_scheduler import CliJobScheduler, InvalidOperationError
+from .cli_job_scheduler import (
+    CliJobScheduler,
+    ExecutionNotFoundError,
+    InvalidOperationError,
+    NotSupportedError,
+)
 from .cli_jobs_controller import _job_dto, _serialize_dt
 
 JOBS_READ = "jobs:read"
@@ -30,7 +35,7 @@ def _json(value: Any) -> str:
 
 class JobsMcpToolProvider:
     """``jobs_list``, ``jobs_get``, ``jobs_history`` (``jobs:read``) and
-    ``jobs_trigger/pause/resume/stop/cancel`` (``jobs:manage``)."""
+    ``jobs_trigger/pause/resume/stop/cancel/delete_runs`` (``jobs:manage``)."""
 
     mcp_tier = TIER_BUILTIN
     name = "jobs"
@@ -113,6 +118,30 @@ class JobsMcpToolProvider:
 
             return call
 
+        async def jobs_delete_runs(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
+            job_id = self._resolve(args["id"])
+            if job_id is None:
+                return McpToolResult.error(JOB_NOT_FOUND)
+            execution_id = args.get("execution")
+            try:
+                if execution_id:
+                    await scheduler.delete_execution(job_id, execution_id)
+                    return McpToolResult(
+                        text="Run deleted",
+                        structured={"jobId": job_id, "deleted": 1},
+                    )
+                deleted = await scheduler.delete_executions(job_id, status=args.get("status") or None)
+            except KeyError:
+                return McpToolResult.error(JOB_NOT_FOUND)
+            except ExecutionNotFoundError:
+                return McpToolResult.error("Execution not found")
+            except (InvalidOperationError, NotSupportedError) as exc:
+                return McpToolResult.error(str(exc))
+            return McpToolResult(
+                text=f"Deleted {deleted} run(s)",
+                structured={"jobId": job_id, "deleted": deleted},
+            )
+
         id_only = object_schema({"id": _ID}, ["id"])
         return [
             McpTool("jobs_list", "List background jobs", object_schema(), jobs_list, [JOBS_READ], dict(READ_ONLY)),
@@ -133,4 +162,15 @@ class JobsMcpToolProvider:
                     action("stop_job", "Job stopped"), [JOBS_MANAGE], dict(DESTRUCTIVE)),
             McpTool("jobs_cancel", "Cancel the running execution of a job", id_only,
                     action("cancel_current", "Execution cancelled"), [JOBS_MANAGE], dict(DESTRUCTIVE)),
+            McpTool(
+                "jobs_delete_runs",
+                "Delete finished runs of a job and their logs: one run (execution), "
+                "or every finished run, optionally only those with a status",
+                object_schema({
+                    "id": _ID,
+                    "execution": {"type": "string", "description": "Execution id: delete only this run"},
+                    "status": {"type": "string", "description": "Delete only runs with this status (e.g. failed)"},
+                }, ["id"]),
+                jobs_delete_runs, [JOBS_MANAGE], dict(DESTRUCTIVE),
+            ),
         ]
