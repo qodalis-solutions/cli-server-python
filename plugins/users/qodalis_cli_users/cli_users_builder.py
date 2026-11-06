@@ -28,6 +28,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Request
 
 from qodalis_cli_audit import CliAuditBuilder, CliAuditPlugin
+from qodalis_cli_server_abstractions.events import ICliEventBus
 
 from .controllers.groups_controller import create_groups_router
 from .controllers.sessions_controller import create_sessions_router
@@ -168,6 +169,10 @@ class CliUsersPlugin:
         manager = getattr(server, "event_socket_manager", None)
         if manager is not None and hasattr(manager, "send_to_user"):
             self.auth_service.user_event_sender = manager.send_to_user
+        # user:*, group:*, token:* and session:* events go to the server's bus.
+        bus = getattr(server, "event_bus", None)
+        if self.auth_service.event_bus is None and bus is not None:
+            self.auth_service.event_bus = bus
         options = getattr(server, "options", None)
         # The host application signs users in (read by the admin dashboard).
         if self.auth_service.external_auth and hasattr(options, "external_authentication"):
@@ -465,9 +470,16 @@ class CliUsersBuilder:
         self._cleanup_interval_ms = interval_ms
         return self
 
-    def build(self, broadcast_fn: BroadcastFn | None = None) -> CliUsersPlugin:
-        """Build the plugin.  ``broadcast_fn`` receives JSON-encoded events
-        (e.g. ``session-kicked``); it may be sync or async."""
+    def build(
+        self,
+        broadcast_fn: BroadcastFn | None = None,
+        event_bus: ICliEventBus | None = None,
+    ) -> CliUsersPlugin:
+        """Build the plugin.  ``user:*``, ``group:*``, ``token:*`` and
+        ``session:*`` events go to ``event_bus`` (default: the server's, set
+        when mounted).  ``broadcast_fn`` receives JSON-encoded events (e.g.
+        ``session-kicked``, and the others without a bus); it may be sync or
+        async."""
         audit_builder = CliAuditBuilder()
         if self._audit_store is not None:
             audit_builder.set_store(self._audit_store)
@@ -496,6 +508,8 @@ class CliUsersBuilder:
             auth_adapter=self._auth_adapter,
             api_token_store=self._api_token_store or InMemoryApiTokenStore(),
         )
+        auth_service.event_bus = event_bus
+        auth_service.audit_recorded = audit_plugin.publish_recorded
         users_service = UsersService(auth_service)
 
         router = APIRouter()

@@ -137,7 +137,7 @@ def create_audit_router(plugin: CliAuditPlugin) -> APIRouter:
         user = getattr(caller, "user", None)
         name = getattr(user, "name", None)
         user_id = getattr(user, "id", None)
-        await plugin.store.log(AuditEntry(
+        await plugin.log(AuditEntry(
             event=AUDIT_CLEARED_EVENT,
             username=name or "",
             user_id=user_id,

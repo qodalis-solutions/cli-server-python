@@ -7,6 +7,7 @@ from typing import Callable, Awaitable
 
 from fastapi import APIRouter
 
+from qodalis_cli_server_abstractions.events import ICliEventBus
 from qodalis_cli_server_abstractions.jobs import (
     CliJobOptions,
     ICliJob,
@@ -27,8 +28,12 @@ class CliJobsPlugin:
     scheduler: CliJobScheduler
 
     def on_mount(self, server: object) -> None:
-        """Hook called by ``CliServerResult.mount_plugin``: registers the
-        ``jobs_*`` MCP tools on the server's MCP tool registry."""
+        """Hook called by ``CliServerResult.mount_plugin``: publishes the
+        ``job:*`` events on the server's event bus (unless built with one) and
+        registers the ``jobs_*`` MCP tools on the server's MCP tool registry."""
+        bus = getattr(server, "event_bus", None)
+        if self.scheduler.event_bus is None and bus is not None:
+            self.scheduler.event_bus = bus
         mcp = getattr(server, "mcp", None)
         if mcp is not None and hasattr(mcp, "add_provider"):
             from .mcp_tools import JobsMcpToolProvider
@@ -53,10 +58,18 @@ class CliJobsBuilder:
         self._storage_provider = provider
         return self
 
-    def build(self, broadcast_fn: BroadcastFn | None = None) -> CliJobsPlugin:
-        """Build the plugin, returning the router and scheduler."""
+    def build(
+        self,
+        broadcast_fn: BroadcastFn | None = None,
+        event_bus: ICliEventBus | None = None,
+    ) -> CliJobsPlugin:
+        """Build the plugin, returning the router and scheduler.
+
+        ``job:*`` events go to ``event_bus`` (default: the server's, set when
+        mounted); ``broadcast_fn`` (JSON strings to every socket) is only used
+        without a bus."""
         storage = self._storage_provider or InMemoryJobStorageProvider()
-        scheduler = CliJobScheduler(storage, broadcast_fn=broadcast_fn)
+        scheduler = CliJobScheduler(storage, broadcast_fn=broadcast_fn, event_bus=event_bus)
 
         for job, opts in self._registrations:
             scheduler.register(job, opts)

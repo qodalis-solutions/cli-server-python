@@ -118,6 +118,9 @@ def create_tokens_router(
             actor=ctx.user.name, actor_id=ctx.user.id, user_id=ctx.user.id,
             metadata={"tokenId": record.id, "tokenName": record.name},
         )
+        await auth_service.publish("token:created", {
+            "tokenId": record.id, "name": record.name, "userId": record.user_id, "actor": ctx.user.name,
+        }, permission=TOKENS_READ, user_id=record.user_id)
         return {"token": token, "apiToken": record.to_view(ctx.user.name)}
 
     @router.delete("/{token_id}", status_code=204)
@@ -135,6 +138,9 @@ def create_tokens_router(
             actor=ctx.user.name, actor_id=ctx.user.id, user_id=record.user_id,
             metadata={"tokenId": record.id, "tokenName": record.name},
         )
+        await auth_service.publish("token:revoked", {
+            "tokenId": record.id, "name": record.name, "userId": record.user_id, "actor": ctx.user.name,
+        }, permission=TOKENS_READ, user_id=record.user_id)
         return Response(status_code=204)
 
     return router

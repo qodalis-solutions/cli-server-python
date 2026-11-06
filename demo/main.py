@@ -285,7 +285,7 @@ def main() -> None:
             description="Periodic health check",
             interval="30s",
         ))
-        .build(broadcast_fn=lambda msg: result.event_socket_manager.broadcast_message(msg))
+        .build()  # job:* events go to the server's event bus once mounted
     )
 
     result.mount_plugin(jobs_plugin)

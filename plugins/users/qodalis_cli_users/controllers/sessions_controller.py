@@ -87,6 +87,7 @@ def create_sessions_router(
         for session in await auth_service.session_store.get_active_sessions():
             if auth_service.is_expired(session):
                 await auth_service.session_store.delete_session_by_id(session.id)
+                await auth_service.publish_session_closed(session)
                 continue
             user = await auth_service.user_store.get_user(session.user_id)
             result.append(session.to_listing_dict(

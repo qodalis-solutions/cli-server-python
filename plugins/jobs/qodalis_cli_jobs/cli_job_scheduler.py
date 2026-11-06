@@ -25,11 +25,15 @@ from qodalis_cli_server_abstractions.jobs import (
     JobState,
 )
 from qodalis_cli_server_abstractions.jobs.job_execution_query import as_utc
+from qodalis_cli_server_abstractions.events import CliEventAudience, ICliEventBus
 
 from .cli_job_execution_context import CliJobExecutionContext
 from .interval_parser import parse_interval
 
 logger = logging.getLogger(__name__)
+
+#: Permission of the audience of every ``job:*`` event.
+JOBS_READ = "jobs:read"
 
 # Characters a job id may not have: it is part of the jobs API's URLs
 _UNSAFE_ID_CHARS = frozenset("/\\?#")
@@ -112,15 +116,22 @@ class ICliJobScheduler(Protocol):
 
 class CliJobScheduler:
     """Background job scheduler using asyncio tasks (implements
-    :class:`ICliJobScheduler`)."""
+    :class:`ICliJobScheduler`).
+
+    Its ``job:*`` events go to ``event_bus`` (audience ``jobs:read``); without
+    a bus, to ``broadcast_fn`` as flat JSON (every socket).  Mounting the jobs
+    plugin sets the server's bus."""
 
     def __init__(
         self,
         storage: ICliJobStorageProvider,
         broadcast_fn: BroadcastFn | None = None,
+        event_bus: ICliEventBus | None = None,
     ) -> None:
         self._storage = storage
         self._broadcast_fn = broadcast_fn
+        #: The server's event bus (``job:*`` events, audience ``jobs:read``).
+        self.event_bus = event_bus
         self._registrations: dict[str, JobRegistration] = {}
         self._running = False
 
@@ -240,7 +251,10 @@ class CliJobScheduler:
                     reg.current_cancellation.set()
             elif policy == "queue":
                 reg.queue.append(0)
+                await self._broadcast({"type": "job:triggered", "jobId": job_id})
                 return
+        # Published first, so job:triggered comes before the run's job:started.
+        await self._broadcast({"type": "job:triggered", "jobId": job_id})
         asyncio.create_task(self._execute_job(reg, retry_attempt=0))
 
     async def pause(self, job_id: str) -> None:
@@ -251,7 +265,7 @@ class CliJobScheduler:
         reg.status = "paused"
         self._cancel_timer(reg)
         await self._persist_state(reg)
-        await self._broadcast({"type": "job:paused", "jobId": job_id})
+        await self._broadcast({"type": "job:paused", "jobId": job_id, "status": "paused"})
 
     async def resume(self, job_id: str) -> None:
         """Resume a paused job and reschedule its next execution."""
@@ -261,7 +275,7 @@ class CliJobScheduler:
         reg.status = "active"
         self._schedule_next(reg)
         await self._persist_state(reg)
-        await self._broadcast({"type": "job:resumed", "jobId": job_id})
+        await self._broadcast({"type": "job:resumed", "jobId": job_id, "status": "active"})
 
     async def stop_job(self, job_id: str) -> None:
         """Stop a job permanently, cancelling any running execution."""
@@ -271,7 +285,7 @@ class CliJobScheduler:
         if reg.current_cancellation is not None:
             reg.current_cancellation.set()
         await self._persist_state(reg)
-        await self._broadcast({"type": "job:stopped", "jobId": job_id})
+        await self._broadcast({"type": "job:stopped", "jobId": job_id, "status": "stopped"})
 
     async def cancel_current(self, job_id: str) -> None:
         """Cancel the currently running execution for a job."""
@@ -334,6 +348,7 @@ class CliJobScheduler:
         if reg.status == "active":
             self._cancel_timer(reg)
             self._schedule_next(reg)
+        await self._broadcast({"type": "job:updated", "jobId": job_id})
 
     async def query_executions(
         self, query: JobExecutionQuery
@@ -370,6 +385,7 @@ class CliJobScheduler:
             raise InvalidOperationError("The execution is still running")
         if not await self._storage.delete_execution(execution_id):
             raise ExecutionNotFoundError(f"Execution not found: {execution_id}")
+        await self._broadcast({"type": "job:runs-deleted", "jobId": job_id, "executionId": execution_id})
 
     async def delete_executions(self, job_id: str, status: str | None = None) -> int:
         """Deletes every finished run of the job, or only those with ``status``
@@ -393,6 +409,8 @@ class CliJobScheduler:
         for execution_id in to_delete:
             if await self._storage.delete_execution(execution_id):
                 deleted += 1
+        if deleted:
+            await self._broadcast({"type": "job:runs-deleted", "jobId": job_id, "count": deleted})
         return deleted
 
     def _is_running(self, execution: JobExecution) -> bool:
@@ -665,11 +683,17 @@ class CliJobScheduler:
         )
 
     async def _broadcast(self, message: dict[str, Any]) -> None:
-        if self._broadcast_fn is not None:
-            try:
-                await self._broadcast_fn(json.dumps(message))
-            except Exception:
-                logger.debug("Failed to broadcast job event", exc_info=True)
+        """Publish a ``job:*`` event (``message``: ``type`` and the fields)."""
+        data = dict(message)
+        event_type = data.pop("type")
+        try:
+            if self.event_bus is not None:
+                await self.event_bus.publish(event_type, data, CliEventAudience(permission=JOBS_READ))
+            elif self._broadcast_fn is not None:
+                data.setdefault("timestamp", datetime.datetime.now(datetime.UTC).isoformat())
+                await self._broadcast_fn(json.dumps({"type": event_type, **data}))
+        except Exception:
+            logger.debug("Failed to publish job event", exc_info=True)
 
 
 class InvalidOperationError(Exception):
