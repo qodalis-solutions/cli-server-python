@@ -301,6 +301,63 @@ CORS never combines `*` with credentials. With `allowed_origins` set, a WebSocke
 
 Every WebSocket is also served without the version (`/ws/qcli/events`, ...). Plugins add their own routes, e.g. the users plugin's `/api/v1/qcli/sessions`, `/users`, `/groups` and `/tokens`.
 
+## Server Events
+
+`create_cli_server` creates one event bus, `result.event_bus` (`CliEventBus`, protocol `ICliEventBus` in
+`qodalis_cli_server_abstractions.events`). Changes made through the REST API, the MCP tools or the plugins are published
+on it; the events WebSocket (`/ws/v1/qcli/events`) is one subscriber, and host code can be another:
+
+```python
+from qodalis_cli import CliEventAudience
+
+# React to events in code (every event, whatever its audience)
+unsubscribe = result.event_bus.subscribe("job:*", lambda event: print(event.type, event.data))
+
+# Publish your own (to the sockets with that permission)
+await result.event_bus.publish("order:shipped", {"orderId": "o-1"}, CliEventAudience(permission="orders:read"))
+```
+
+Patterns: `*` matches every event, `ns:*` every type starting with `ns:`, anything else one exact type. Handlers run in
+subscription order and may be sync or async; `publish` returns when they all ran. A handler that raises is logged and
+never fails the action that published.
+
+**Wire format.** One flat camelCase JSON object per message: `type` (`namespace:name`), `timestamp` (ISO 8601 UTC, added
+by the bus unless the publisher set one) and the publisher's fields:
+
+```json
+{ "type": "job:completed", "timestamp": "2026-11-06T10:15:00.000Z", "jobId": "cleanup", "executionId": "…", "duration": 1520 }
+```
+
+**Audience.** Every event has one (`CliEventAudience`), never sent: everyone (default), `permission` (sockets whose
+user has it), `user_id` (that user's sockets) or both (the user **or** anyone with the permission). On a server without
+authentication every socket receives every event. `connected`, `disconnect` and the users plugin's `session-kicked`,
+`session-ended` and `access-changed` are unchanged; `event_socket_manager.broadcast_message(text)` still sends to every
+socket.
+
+| Event | Fields | Audience | Published by |
+|---|---|---|---|
+| `job:started`, `job:cancelled`, `job:timed_out` | `jobId`, `executionId` | `jobs:read` | jobs scheduler |
+| `job:completed` | `jobId`, `executionId`, `duration` | `jobs:read` | jobs scheduler |
+| `job:failed` | `jobId`, `executionId`, `error` | `jobs:read` | jobs scheduler |
+| `job:retrying` | `jobId`, `executionId`, `attempt`, `maxRetries`, `delayMs` | `jobs:read` | jobs scheduler |
+| `job:paused`, `job:resumed`, `job:stopped` | `jobId`, `status` (`paused`, `active`, `stopped`) | `jobs:read` | jobs scheduler |
+| `job:triggered`, `job:updated` | `jobId` | `jobs:read` | jobs scheduler (`trigger`, `update_options`) |
+| `job:runs-deleted` | `jobId`, `executionId` (one run) or `count` | `jobs:read` | jobs scheduler (`delete_execution(s)`) |
+| `user:created`, `user:updated`, `user:deleted` | `userId`, `username`, `actor` | `users:read` | users plugin |
+| `group:created`, `group:updated`, `group:deleted` | `group`, `actor` | `groups:read` | users plugin |
+| `token:created`, `token:revoked` | `tokenId`, `name`, `userId`, `actor` | `tokens:read` or the owner | users plugin |
+| `session:opened`, `session:closed` | `userId`, `username`, `sessionId`, `actor` | `sessions:read` | users plugin |
+| `fs:changed` | `action` (`upload`, `mkdir`, `delete`, `write`, `move`, `copy`), `path`, `newPath` | `files:read` | file storage (API and MCP `fs_*`) |
+| `command:executed` | `command` (processor name only), `success`, `durationMs`, `userId` | `audit:read` | REST execute and stream, MCP |
+| `audit:recorded` | the audit entry as `GET /audit` returns it | `audit:read` | audit plugin |
+
+`actor` is the user who made the change, when known. `user:updated` covers profile, password, enabled/disabled and group
+membership changes; `session:closed` covers sign-out, kicks and expiry. The jobs events are published by the scheduler,
+which the REST API, the MCP tools and host code all go through, so each action is published once. `fs:changed` comes
+from the server's file storage provider, wrapped by `create_cli_server` (`EventPublishingFileStorageProvider`); the
+filesystem API and the MCP `fs_*` tools share it. `command:executed` names the root processor and is not published for
+unknown commands.
+
 ## MCP Endpoint
 
 The server can expose **the whole system** to AI clients such as Claude Code as [MCP](https://modelcontextprotocol.io) tools: CLI commands, the filesystem API, the data explorer, background jobs and tools contributed by plugins — each with the same permissions as a CLI user. It works with or without the users plugin (which only supplies identities and API tokens).
