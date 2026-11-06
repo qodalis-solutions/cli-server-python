@@ -6,6 +6,8 @@ PEP 440 for `1.0.0-beta.19`).
 
 ## 1.0.0b23
 
+- The admin plugin embeds dashboard 1.0.0-beta.18: pages update live from the server events (jobs, job detail, files, audit, overview, events), a run's full error in a details dialog, max concurrent runs in the job editor, and no session token in WebSocket URLs when the ticket request fails.
+
 - **Server events**, the same design on the .NET, Node and Python servers:
   - `create_cli_server` creates an event bus, `CliServerResult.event_bus` (`CliEventBus`; `ICliEventBus`, `CliEvent`,
     `CliEventAudience` and `cli_event_pattern_matches` in `qodalis_cli_server_abstractions.events`).
