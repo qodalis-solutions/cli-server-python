@@ -23,6 +23,21 @@ PEP 440 for `1.0.0-beta.19`).
   - Jobs events have the audience `jobs:read`. The jobs and users plugins publish on the server's bus once mounted;
     their `build(broadcast_fn=...)` keeps working without a bus and takes `event_bus=`.
   - `CliAuditPlugin.log(entry)` stores an entry and publishes `audit:recorded`.
+- **Jobs: max concurrent runs, and no job started twice** (jobs plugin), the same design on every server:
+  - New option `max_concurrent_runs` (`CliJobOptions`, default 1; `PUT /jobs/{id}` `maxConcurrentRuns`, an integer
+    >= 1, else 400). A run holds its slot from start to end, retries and retry delays included. When every slot is
+    taken, `overlap_policy` decides: `skip` drops the due run (a trigger answers 409), `queue` keeps one run waiting
+    (coalesced; a trigger answers `{"message": "Job queued", "queued": true}`), `cancel` cancels the oldest run.
+  - Job info adds `maxConcurrentRuns`, `runningExecutionIds` (oldest first) and `queued`; `currentExecutionId` is the
+    newest running run. `cancel` cancels every running run and drops a queued one.
+  - Fixes: run on start skips a job that ran recently (interval not yet passed, no missed cron occurrence); a retry
+    delay no longer frees the job; `queue` no longer builds a backlog and `cancel` no longer runs two "current"
+    executions; due runs at the same moment can no longer both start; a cron timer that fires early no longer runs the
+    occurrence twice; runs left `running` by a previous process are finished as `cancelled` (`Interrupted: the server
+    stopped during the run`) when the scheduler starts.
+  - `JobRegistration` has `runs`, `queued` and `running_execution_ids`; `current_execution_id` and
+    `current_cancellation` are read-only properties now, and the `queue` field is gone. `trigger()` returns `"started"`
+    or `"queued"`.
 
 ## 1.0.0b22
 
