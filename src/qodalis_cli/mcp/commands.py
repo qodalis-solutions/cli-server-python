@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from ..abstractions import CliProcessCommand, ICliCommandProcessor
-from ..services.cli_command_executor_service import ICliCommandExecutorService
+from ..services.cli_command_executor_service import ICliCommandExecutorService, executing_as
 from ..services.cli_command_registry import ICliCommandRegistry
 from .core import TIER_COMMANDS, McpCallContext, McpTool, McpToolResult, object_schema
 
@@ -182,7 +182,8 @@ class CommandsMcpToolProvider:
                 # The tool's value is one argument as given: no shell re-parsing.
                 positionals=[value] if value else [],
             )
-            response = await self.executor.execute_async(command, cancellation_event=None)
+            with executing_as(context.auth):
+                response = await self.executor.execute_async(command, cancellation_event=None)
             outputs = [o.model_dump(by_alias=True, exclude_none=True) for o in response.outputs]
             structured = None
             if len(outputs) == 1 and outputs[0].get("type") == "json" and isinstance(outputs[0].get("value"), dict):
