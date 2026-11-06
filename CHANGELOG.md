@@ -13,7 +13,8 @@ PEP 440 for `1.0.0-beta.19`).
     unsubscribe function). Handler errors are logged and never fail the publisher.
   - Every event is one flat camelCase JSON object on `/ws/v1/qcli/events` (`type`, `timestamp` in ISO 8601 UTC, the
     fields) and has an audience: everyone, a permission, a user, or the user or the permission. Sockets get only the
-    events of their audience; on a server without authentication every socket gets every event.
+    events of their audience; on a server without authentication every socket gets every event. Each socket has its own
+    send queue, so publishing (and the request that published) never waits on a slow client.
     `broadcast_message` keeps working.
   - New events: `job:triggered`, `job:updated`, `job:runs-deleted`; `user:*`, `group:*`, `token:*`, `session:*`
     (users plugin); `fs:changed` (filesystem API and MCP `fs_*` tools); `command:executed` (REST execute, stream and MCP;

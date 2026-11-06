@@ -330,7 +330,10 @@ by the bus unless the publisher set one) and the publisher's fields:
 
 **Audience.** Every event has one (`CliEventAudience`), never sent: everyone (default), `permission` (sockets whose
 user has it), `user_id` (that user's sockets) or both (the user **or** anyone with the permission). On a server without
-authentication every socket receives every event. `connected`, `disconnect` and the users plugin's `session-kicked`,
+authentication every socket receives every event; whether the server requires authentication is read on every event
+(`event_socket_manager.set_authentication_required(check)`, installed by the users plugin). Publishing never waits on a
+client: each socket has its own queue and sender, so its events keep their order and a slow client delays no request
+(at most 1000 events wait per socket). `connected`, `disconnect` and the users plugin's `session-kicked`,
 `session-ended` and `access-changed` are unchanged; `event_socket_manager.broadcast_message(text)` still sends to every
 socket.
 
@@ -355,7 +358,7 @@ socket.
 membership changes; `session:closed` covers sign-out, kicks and expiry. The jobs events are published by the scheduler,
 which the REST API, the MCP tools and host code all go through, so each action is published once. `fs:changed` comes
 from the server's file storage provider, wrapped by `create_cli_server` (`EventPublishingFileStorageProvider`); the
-filesystem API and the MCP `fs_*` tools share it. `command:executed` names the root processor and is not published for
+filesystem API and the MCP `fs_*` tools share it, and `path`/`newPath` are the paths as the API takes and lists them. `command:executed` names the root processor and is not published for
 unknown commands.
 
 ## MCP Endpoint

@@ -14,6 +14,9 @@ from .session_bound_sockets import SessionBoundSockets
 
 logger = logging.getLogger(__name__)
 
+#: Events waiting for one socket; beyond this a slow client loses new events.
+MAX_PENDING_EVENTS = 1000
+
 
 class CliEventSocketManager(SessionBoundSockets):
     """Manages WebSocket connections for broadcasting server events to clients.
@@ -21,7 +24,13 @@ class CliEventSocketManager(SessionBoundSockets):
     Subscribed to the server's event bus (:meth:`attach`), it sends each event
     to the sockets of its audience: a socket's principal (the users plugin's
     auth context) must hold the event's permission or be its user.  Sockets
-    without a principal (no authentication) receive every event.
+    without a principal receive every event while the server does not
+    require authentication (read on every event, see
+    :meth:`set_authentication_required`), else only events for everyone.
+
+    Publishing never waits on a client: each socket has its own queue and
+    sender task, so its events keep their order and a slow socket delays
+    nobody else.
 
     Authenticated sockets are bound to their session: once it ends (logout,
     revoke, user disabled/deleted, expiry) the socket is closed with 4401
@@ -32,7 +41,25 @@ class CliEventSocketManager(SessionBoundSockets):
         self._clients: set[WebSocket] = set()
         self._client_info: dict[WebSocket, dict[str, Any]] = {}
         self._principals: dict[WebSocket, Any] = {}
+        self._outboxes: dict[WebSocket, asyncio.Queue[str]] = {}
+        self._senders: dict[WebSocket, asyncio.Task[None]] = {}
+        self._authentication_required: Callable[[], bool] | None = None
         self._next_client_id = 1
+
+    def set_authentication_required(self, check: Callable[[], bool] | None) -> None:
+        """``check()`` tells whether the server requires authentication (an
+        auth plugin installs it when mounted); called on every event."""
+        self._authentication_required = check
+
+    def _requires_authentication(self) -> bool:
+        check = self._authentication_required
+        if check is None:
+            return False
+        try:
+            return bool(check())
+        except Exception:
+            logger.debug("Authentication check failed", exc_info=True)
+            return True
 
     def attach(self, bus: ICliEventBus) -> Callable[[], None]:
         """Deliver every event of ``bus`` to the connected sockets of its
@@ -40,20 +67,44 @@ class CliEventSocketManager(SessionBoundSockets):
         return bus.subscribe("*", self.publish_event)
 
     async def publish_event(self, event: CliEvent) -> None:
-        """Send ``event`` (flat JSON) to the sockets of its audience."""
+        """Queue ``event`` (flat JSON) for the sockets of its audience; the
+        sends happen in each socket's sender task."""
         message = json.dumps(event.to_message(), default=str)
+        requires_auth = self._requires_authentication()
         for client in list(self._clients):
-            if not self._receives(self._principals.get(client), event.audience):
-                continue
+            if self._receives(self._principals.get(client), event.audience, requires_auth):
+                self._enqueue(client, message)
+
+    def _enqueue(self, websocket: WebSocket, message: str) -> None:
+        outbox = self._outboxes.get(websocket)
+        if outbox is None:
+            return
+        try:
+            outbox.put_nowait(message)
+        except asyncio.QueueFull:
+            logger.warning("Event socket too slow, event dropped")
+
+    async def _send_loop(self, websocket: WebSocket, outbox: asyncio.Queue[str]) -> None:
+        while True:
+            message = await outbox.get()
             try:
-                await client.send_text(message)
+                await websocket.send_text(message)
             except Exception:
                 logger.debug("Event send failed")
+                return
+
+    def _stop_sender(self, websocket: WebSocket) -> None:
+        self._outboxes.pop(websocket, None)
+        sender = self._senders.pop(websocket, None)
+        if sender is not None:
+            sender.cancel()
 
     @staticmethod
-    def _receives(principal: Any, audience: CliEventAudience) -> bool:
-        if principal is None or audience.is_everyone:
+    def _receives(principal: Any, audience: CliEventAudience, requires_auth: bool = False) -> bool:
+        if audience.is_everyone:
             return True
+        if principal is None:
+            return not requires_auth
         if audience.user_id is not None:
             user = getattr(principal, "user", None)
             if user is not None and getattr(user, "id", None) == audience.user_id:
@@ -104,9 +155,12 @@ class CliEventSocketManager(SessionBoundSockets):
 
         logger.info("Event client connected (id=%s)", client_id)
 
-        try:
-            await websocket.send_text(json.dumps({"type": "connected"}))
+        outbox: asyncio.Queue[str] = asyncio.Queue(MAX_PENDING_EVENTS)
+        outbox.put_nowait(json.dumps({"type": "connected"}))
+        self._outboxes[websocket] = outbox
+        self._senders[websocket] = asyncio.ensure_future(self._send_loop(websocket, outbox))
 
+        try:
             while True:
                 try:
                     await websocket.receive_text()
@@ -114,12 +168,14 @@ class CliEventSocketManager(SessionBoundSockets):
                     break
         finally:
             self.unbind(websocket)
+            self._stop_sender(websocket)
             self._clients.discard(websocket)
             self._client_info.pop(websocket, None)
             self._principals.pop(websocket, None)
             logger.info("Event client disconnected (id=%s)", client_id)
 
     def _on_session_ended(self, websocket: WebSocket) -> None:
+        self._stop_sender(websocket)
         self._clients.discard(websocket)
         self._client_info.pop(websocket, None)
         self._principals.pop(websocket, None)
@@ -155,6 +211,8 @@ class CliEventSocketManager(SessionBoundSockets):
         tasks = []
         for client in list(self._clients):
             tasks.append(self._send_and_close(client, message))
+        for client in list(self._senders):
+            self._stop_sender(client)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._clients.clear()

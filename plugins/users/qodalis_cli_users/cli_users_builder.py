@@ -173,6 +173,10 @@ class CliUsersPlugin:
         bus = getattr(server, "event_bus", None)
         if self.auth_service.event_bus is None and bus is not None:
             self.auth_service.event_bus = bus
+        # The server now requires authentication: scoped events never reach
+        # sockets without a user (read on every event).
+        if manager is not None and hasattr(manager, "set_authentication_required"):
+            manager.set_authentication_required(lambda: True)
         options = getattr(server, "options", None)
         # The host application signs users in (read by the admin dashboard).
         if self.auth_service.external_auth and hasattr(options, "external_authentication"):

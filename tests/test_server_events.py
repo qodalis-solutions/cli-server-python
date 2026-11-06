@@ -690,3 +690,110 @@ class TestJobsEvents:
         jobs = CliJobsBuilder().build(event_bus=own_bus)
         create_cli_server().mount_plugin(jobs)
         assert jobs.scheduler.event_bus is own_bus
+
+
+# =========================================================================
+# Socket fan-out: never waits on a client; auth state read on every event
+# =========================================================================
+
+
+class FakeSocket:
+    """A connected events socket; ``send_text`` blocks while ``stalled``."""
+
+    class _State:
+        name = "CONNECTED"
+
+    client = None
+    client_state = _State()
+
+    def __init__(self, stalled: bool = False) -> None:
+        self.sent: list[dict[str, Any]] = []
+        self.release = asyncio.Event()
+        if not stalled:
+            self.release.set()
+        self._closed = asyncio.Event()
+
+    async def send_text(self, text: str) -> None:
+        await self.release.wait()
+        self.sent.append(json.loads(text))
+
+    async def receive_text(self) -> str:
+        await self._closed.wait()
+        raise RuntimeError("closed")
+
+    async def close(self, *args: Any, **kwargs: Any) -> None:
+        self._closed.set()
+
+    def types(self) -> list[str]:
+        return [m["type"] for m in self.sent]
+
+
+class _Principal:
+    def __init__(self, user_id: str, permissions: list[str]) -> None:
+        self.user = type("U", (), {"id": user_id, "name": user_id})()
+        self.session = None
+        self._permissions = permissions
+
+    def can(self, permission: str) -> bool:
+        return permission in self._permissions
+
+
+async def _connect(manager: Any, socket: FakeSocket, identity: Any = None) -> asyncio.Task:
+    task = asyncio.ensure_future(manager.handle_connection(socket, identity))
+    await asyncio.sleep(0)
+    return task
+
+
+async def _settle() -> None:
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+class TestSocketFanOut:
+    async def test_publish_does_not_wait_on_a_slow_socket(self):
+        result = create_cli_server()
+        manager, bus = result.event_socket_manager, result.event_bus
+        slow, fast = FakeSocket(stalled=True), FakeSocket()
+        tasks = [await _connect(manager, slow), await _connect(manager, fast)]
+
+        for n in range(3):
+            await asyncio.wait_for(bus.publish("test:n", {"n": n}), timeout=1)
+        await _settle()
+        assert fast.types() == ["connected", "test:n", "test:n", "test:n"]
+        assert slow.sent == []
+
+        slow.release.set()  # the slow client catches up, in order
+        await _settle()
+        assert [m.get("n") for m in slow.sent] == [None, 0, 1, 2]
+        for socket in (slow, fast):
+            await socket.close()
+        await asyncio.gather(*tasks)
+        assert manager.get_clients() == []
+
+    async def test_authentication_state_is_read_on_every_event(self):
+        manager = create_cli_server().event_socket_manager
+        bus = CliEventBus()
+        manager.attach(bus)
+        anonymous, alice = FakeSocket(), FakeSocket()
+        tasks = [
+            await _connect(manager, anonymous),
+            await _connect(manager, alice, _Principal("alice", ["jobs:read"])),
+        ]
+        required = False
+        manager.set_authentication_required(lambda: required)
+
+        await bus.publish("test:open", audience=CliEventAudience(permission="jobs:read"))
+        required = True
+        await bus.publish("test:scoped", audience=CliEventAudience(permission="jobs:read"))
+        await bus.publish("test:everyone")
+        await _settle()
+        assert anonymous.types() == ["connected", "test:open", "test:everyone"]
+        assert alice.types() == ["connected", "test:open", "test:scoped", "test:everyone"]
+        for socket in (anonymous, alice):
+            await socket.close()
+        await asyncio.gather(*tasks)
+
+    def test_users_plugin_marks_the_server_as_requiring_authentication(self):
+        result, _ = _protected_server()
+        assert result.event_socket_manager._requires_authentication() is True
+        assert create_cli_server().event_socket_manager._requires_authentication() is False
