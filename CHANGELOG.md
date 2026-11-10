@@ -4,6 +4,16 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## Unreleased
+
+- **Admin: live log entries.** Every log line the admin plugin captures is published as `log:entry` (`timestamp`,
+  `level`, `message`, `source`, audience `logs:read`) on the server's event bus once the plugin is mounted (through
+  `AdminBuildDeps.broadcast_fn` when set; `AdminBuildDeps.event_bus` names a bus explicitly), so the dashboard's Logs
+  page follows the log live. The buffer stored its `broadcast_fn` but never called it, so new entries showed only after
+  a refresh. A line logged while an entry is delivered is kept but not published; lines from worker threads are
+  published on the loop seen before. `qodalis-cli-server-plugin-admin` now depends on
+  `qodalis-cli-server-abstractions`.
+
 ## 1.0.0b23
 
 - The admin plugin embeds dashboard 1.0.0-beta.18: pages update live from the server events (jobs, job detail, files, audit, overview, events), a run's full error in a details dialog, max concurrent runs in the job editor, and no session token in WebSocket URLs when the ticket request fails.
