@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-audit"
-version = "1.0.0b23"
+version = "1.0.0b24"
 description = "Audit log plugin for Qodalis CLI servers — who did what, to whom and when, and its API"
 readme = { text = "", content-type = "text/plain" }
 license = "MIT"
