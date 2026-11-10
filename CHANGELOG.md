@@ -4,8 +4,9 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
-## Unreleased
+## 1.0.0b24
 
+- The admin plugin embeds dashboard 1.0.0-beta.19: a phone layout (below 768 px the sidebar is a drawer, stat cards wrap, panels stack and tables scroll in their container) and tests for the live log tail.
 - **Admin: live log entries.** Every log line the admin plugin captures is published as `log:entry` (`timestamp`,
   `level`, `message`, `source`, audience `logs:read`) on the server's event bus once the plugin is mounted (through
   `AdminBuildDeps.broadcast_fn` when set; `AdminBuildDeps.event_bus` names a bus explicitly), so the dashboard's Logs
