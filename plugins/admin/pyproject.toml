@@ -27,6 +27,7 @@ dependencies = [
     "PyJWT>=2.0.0",
     "fastapi>=0.100.0",
     "psutil>=5.9.0",
+    "qodalis-cli-server-abstractions>=1.0.0b23",
 ]
 
 [project.urls]
