@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-admin"
-version = "1.0.0b23"
+version = "1.0.0b24"
 description = "Admin dashboard plugin for Qodalis CLI servers"
 readme = { text = "", content-type = "text/plain" }
 license = "MIT"
@@ -27,6 +27,7 @@ dependencies = [
     "PyJWT>=2.0.0",
     "fastapi>=0.100.0",
     "psutil>=5.9.0",
+    "qodalis-cli-server-abstractions>=1.0.0b23",
 ]
 
 [project.urls]

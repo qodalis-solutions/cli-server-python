@@ -36,6 +36,11 @@ if admin_plugin.dashboard_app:
     result.app.mount(admin_plugin.dashboard_prefix, admin_plugin.dashboard_app)
 ```
 
+Once mounted, every log line the plugin captures is published on the server's event bus as `log:entry` (`timestamp`,
+`level`, `message`, `source`; audience `logs:read`), which the dashboard's Logs page follows live. `AdminBuildDeps`
+takes `event_bus` to name a bus, or `broadcast_fn` (an async function receiving the JSON message) to send the entries
+yourself.
+
 ## Configuration
 
 Credentials can be set via the builder or environment variables:

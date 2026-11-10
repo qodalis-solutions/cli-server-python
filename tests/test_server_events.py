@@ -29,6 +29,7 @@ from qodalis_cli_jobs import CliJobScheduler, CliJobsBuilder, InMemoryJobStorage
 from qodalis_cli_server_abstractions import CliCommandProcessor, ICliStreamCommandProcessor
 from qodalis_cli_server_abstractions.jobs import CliJobOptions, ICliJob
 from qodalis_cli_users import CliUsersBuilder
+from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder
 
 BASE = "/api/v1/qcli"
 EVENTS = "/ws/v1/qcli/events"
@@ -797,3 +798,36 @@ class TestSocketFanOut:
         result, _ = _protected_server()
         assert result.event_socket_manager._requires_authentication() is True
         assert create_cli_server().event_socket_manager._requires_authentication() is False
+
+
+# =========================================================================
+# Log entries (admin plugin): the dashboard's live log tail
+# =========================================================================
+
+
+class TestLogEvents:
+    def test_log_lines_reach_the_sockets_with_logs_read(self, srv: _Server):
+        admin = CliAdminBuilder().set_users_plugin(srv.users).build(AdminBuildDeps(
+            registry=srv.result.registry,
+            event_socket_manager=srv.result.event_socket_manager,
+            builder=srv.result.builder,
+        ))
+        srv.result.mount_plugin(admin)  # publishes on the server's bus once mounted
+        try:
+            srv.create_user("bob")  # no logs:read
+            root, bob = srv.root, srv.login("bob")
+            with srv.events(root) as root_ws, srv.events(bob) as bob_ws:
+                root_ws.receive_text()
+                bob_ws.receive_text()
+                srv.c.portal.call(logging.getLogger("qodalis.test").warning, "disk is %s", "low")
+                srv.publish(MARKER)
+                root_messages, bob_messages = _received(root_ws), _received(bob_ws)
+        finally:
+            admin.log_buffer.uninstall_handler()
+
+        entries = [m for m in root_messages if m["type"] == "log:entry" and m["message"] == "disk is low"]
+        assert len(entries) == 1, root_messages
+        assert entries[0]["level"] == "WARN"
+        assert entries[0]["source"] == "qodalis.test"
+        assert ISO_UTC.match(entries[0]["timestamp"])
+        assert not [m for m in bob_messages if m["type"] == "log:entry"]
