@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import time
 
 import pytest
@@ -17,6 +20,7 @@ from qodalis_cli_admin.auth.jwt_service import JwtService
 from qodalis_cli_admin.services.admin_config import AdminConfig
 from qodalis_cli_admin.services.log_ring_buffer import LogEntry, LogRingBuffer, redact
 from qodalis_cli_admin.services.module_registry import ModuleRegistry
+from qodalis_cli_server_abstractions.events import CliEventAudience
 
 
 # ---------------------------------------------------------------------------
@@ -717,3 +721,92 @@ class TestModuleRegistryShape:
     def test_duplicate_names_fall_back_to_index(self) -> None:
         builder = _StubBuilder(modules=[_StubModule("same", 1), _StubModule("same", 1)])
         assert [m["id"] for m in ModuleRegistry(builder).list()] == ["0", "1"]
+
+
+# ---------------------------------------------------------------------------
+# Live log entries (the dashboard's Logs page tail)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingBus:
+    """An event bus that records what is published."""
+
+    def __init__(self) -> None:
+        self.published: list[tuple[str, dict, object]] = []
+
+    async def publish(self, type, data=None, audience=None):  # noqa: A002
+        self.published.append((type, dict(data or {}), audience))
+
+    def subscribe(self, pattern, handler):
+        return lambda: None
+
+
+class TestLogRingBufferLiveEntries:
+    """Every entry added is published as ``log:entry`` (audience ``logs:read``), so the dashboard's live tail follows."""
+
+    @pytest.mark.asyncio
+    async def test_add_publishes_log_entry_on_the_event_bus(self) -> None:
+        bus = _RecordingBus()
+        buf = LogRingBuffer(max_size=10, event_bus=bus)
+        buf.add(LogEntry(timestamp="2026-11-10T10:00:00.250000+00:00", level="WARNING", message="disk low", logger_name="demo"))
+        await asyncio.sleep(0)
+        assert bus.published == [(
+            "log:entry",
+            {"timestamp": "2026-11-10T10:00:00.250Z", "level": "WARN", "message": "disk low", "source": "demo"},
+            CliEventAudience(permission="logs:read"),
+        )]
+
+    @pytest.mark.asyncio
+    async def test_add_sends_the_wire_message_to_broadcast_fn(self) -> None:
+        sent: list[dict] = []
+
+        async def broadcast(message: str) -> None:
+            sent.append(json.loads(message))
+
+        buf = LogRingBuffer(max_size=10, broadcast_fn=broadcast)
+        buf.add(LogEntry(timestamp="2026-11-10T10:00:00.250000+00:00", level="INFO", message="hello", logger_name="demo"))
+        await asyncio.sleep(0)
+        assert sent == [{
+            "type": "log:entry", "timestamp": "2026-11-10T10:00:00.250Z", "level": "INFO", "message": "hello", "source": "demo",
+        }]
+
+    @pytest.mark.asyncio
+    async def test_a_line_logged_while_publishing_is_kept_but_not_published(self) -> None:
+        # The bus or a socket may log while delivering an entry: that line must not start a publish loop
+        bus = _RecordingBus()
+        logger = logging.getLogger("qodalis_cli_admin.tests.reentrant")
+
+        async def publish(type, data=None, audience=None):  # noqa: A002
+            bus.published.append((type, dict(data or {}), audience))
+            logger.warning("delivery failed")
+
+        bus.publish = publish  # type: ignore[method-assign]
+        buf = LogRingBuffer(max_size=10, event_bus=bus)
+        buf.install_handler(logger.name)
+        try:
+            logger.warning("first")
+            for _ in range(5):
+                await asyncio.sleep(0)
+        finally:
+            buf.uninstall_handler(logger.name)
+        assert [data["message"] for _, data, _ in bus.published] == ["first"]
+        assert {e["message"] for e in buf.query()[0]} == {"first", "delivery failed"}
+
+    def test_add_from_a_thread_publishes_on_the_loop_seen_before(self) -> None:
+        # A line logged from a worker thread (run_in_threadpool) reaches the loop the buffer saw a record on
+        bus = _RecordingBus()
+        buf = LogRingBuffer(max_size=10, event_bus=bus)
+
+        async def scenario() -> None:
+            buf.add(LogEntry(timestamp="t1", level="INFO", message="in loop"))
+            await asyncio.to_thread(buf.add, LogEntry(timestamp="t2", level="INFO", message="in thread"))
+            for _ in range(5):
+                await asyncio.sleep(0)
+
+        asyncio.run(scenario())
+        assert [data["message"] for _, data, _ in bus.published] == ["in loop", "in thread"]
+
+    def test_without_a_bus_or_broadcast_fn_nothing_is_published(self) -> None:
+        buf = LogRingBuffer(max_size=10)
+        buf.add(LogEntry(timestamp="t1", level="INFO", message="quiet"))
+        assert buf.query()[1] == 1
