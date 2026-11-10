@@ -353,6 +353,7 @@ socket.
 | `fs:changed` | `action` (`upload`, `mkdir`, `delete`, `write`, `move`, `copy`), `path`, `newPath` | `files:read` | file storage (API and MCP `fs_*`) |
 | `command:executed` | `command` (processor name only), `success`, `durationMs`, `userId` | `audit:read` | REST execute and stream, MCP |
 | `audit:recorded` | the audit entry as `GET /audit` returns it | `audit:read` | audit plugin |
+| `log:entry` | `timestamp`, `level`, `message`, `source` (a log line of this process) | `logs:read` | admin plugin (its log buffer, once mounted) |
 
 `actor` is the user who made the change, when known. `user:updated` covers profile, password, enabled/disabled and group
 membership changes; `session:closed` covers sign-out, kicks and expiry. The jobs events are published by the scheduler,
