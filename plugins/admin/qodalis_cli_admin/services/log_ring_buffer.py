@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import re
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Awaitable
+
+from qodalis_cli_server_abstractions.events import CliEventAudience, ICliEventBus
 
 
 @dataclass
@@ -21,6 +25,11 @@ class LogEntry:
 
 
 BroadcastFn = Callable[[str], Awaitable[None]]
+
+#: The event of every entry added, for the dashboard's live log tail.
+LOG_ENTRY_EVENT = "log:entry"
+#: Who receives it: the sockets of users who may read the logs.
+LOG_ENTRY_AUDIENCE = CliEventAudience(permission="logs:read")
 
 _REDACTIONS = [
     # Also the URL-encoded ``Bearer%20<token>`` form (``_header_Authorization`` query).
@@ -82,26 +91,82 @@ def _normalize_level(level: str) -> str:
     return _LEVEL_MAP.get(level.upper(), level.upper())
 
 
+def _wire_entry(entry: LogEntry) -> dict[str, Any]:
+    """The fields of an entry's ``log:entry`` event, as ``query`` returns them
+    (the timestamp in ISO 8601 UTC with milliseconds when it parses)."""
+    stamp = _entry_time(entry)
+    return {
+        "timestamp": iso_ms(stamp) if stamp is not None else entry.timestamp,
+        "level": _normalize_level(entry.level),
+        "message": entry.message,
+        "source": entry.logger_name,
+    }
+
+
 class LogRingBuffer:
     """Fixed-size ring buffer that stores log entries.
 
     Optionally captures records from Python's :mod:`logging` module via
-    :meth:`install_handler`.
+    :meth:`install_handler`.  Every entry added is also published as
+    ``log:entry`` (``timestamp``, ``level``, ``message``, ``source``): as the
+    wire message through ``broadcast_fn`` when set, otherwise on
+    ``event_bus`` with the audience ``logs:read``.
     """
 
     def __init__(
         self,
         max_size: int = 1000,
         broadcast_fn: BroadcastFn | None = None,
+        event_bus: ICliEventBus | None = None,
     ) -> None:
         self._buffer: deque[LogEntry] = deque(maxlen=max_size)
         self._broadcast_fn = broadcast_fn
+        #: The server's event bus; ``CliAdminPlugin.on_mount`` sets it when neither it nor ``broadcast_fn`` was given.
+        self.event_bus = event_bus
         self._handler: _RingBufferHandler | None = None
+        #: The loop entries were last added on: lines logged from a worker thread are published there.
+        self._loop: asyncio.AbstractEventLoop | None = None
+        #: Set while an entry is delivered: a line logged meanwhile is kept but not published (no loop).
+        self._publishing = False
+
+    @property
+    def broadcast_fn(self) -> BroadcastFn | None:
+        """The function the wire messages go to, when one was given."""
+        return self._broadcast_fn
 
     def add(self, entry: LogEntry) -> None:
-        """Append a log entry to the buffer."""
+        """Append a log entry to the buffer and publish it (see the class)."""
         entry.level = (entry.level or "INFO").upper()
         self._buffer.append(entry)
+        self._publish(entry)
+
+    def _publish(self, entry: LogEntry) -> None:
+        if self._publishing or (self._broadcast_fn is None and self.event_bus is None):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # A worker thread: deliver on the loop seen before, if it still runs
+            loop = self._loop
+            if loop is None or loop.is_closed():
+                return
+            asyncio.run_coroutine_threadsafe(self._deliver(entry), loop)
+            return
+        self._loop = loop
+        loop.create_task(self._deliver(entry))
+
+    async def _deliver(self, entry: LogEntry) -> None:
+        self._publishing = True
+        try:
+            fields = _wire_entry(entry)
+            if self._broadcast_fn is not None:
+                await self._broadcast_fn(json.dumps({"type": LOG_ENTRY_EVENT, **fields}))
+            elif self.event_bus is not None:
+                await self.event_bus.publish(LOG_ENTRY_EVENT, fields, LOG_ENTRY_AUDIENCE)
+        except Exception:
+            pass  # never log here: a log line is an event too
+        finally:
+            self._publishing = False
 
     def query(
         self,

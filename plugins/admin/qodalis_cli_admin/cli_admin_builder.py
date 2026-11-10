@@ -39,7 +39,12 @@ class AdminBuildDeps:
     registry: Any  # CliCommandRegistry
     event_socket_manager: Any  # CliEventSocketManager
     builder: Any  # CliBuilder
+    #: Where the wire message of every log entry (``log:entry``) goes; by
+    #: default they are published on ``event_bus`` with the audience ``logs:read``.
     broadcast_fn: BroadcastFn | None = None
+    #: The server's event bus (``result.event_bus``); taken from the server
+    #: by ``mount_plugin`` when neither it nor ``broadcast_fn`` is given.
+    event_bus: Any = None
     enabled_features: list[str] | None = None
     #: When set, the dashboard authenticates through the users plugin
     #: (``admin:access`` permission); static credentials are not used.
@@ -69,9 +74,14 @@ class CliAdminPlugin:
 
     def on_mount(self, server: Any) -> None:
         """Hook called by ``CliServerResult.mount_plugin``: the sign-in mode
-        follows the server's ``options.external_authentication``."""
+        follows the server's ``options.external_authentication`` and the log
+        entries go to the server's event bus."""
         if self._server.get("options") is None:
             self._server["options"] = getattr(server, "options", None)
+        # Log entries are published on the server's bus (``log:entry``, audience ``logs:read``)
+        # unless the plugin was built with a bus or a broadcast function
+        if self.log_buffer.event_bus is None and self.log_buffer.broadcast_fn is None:
+            self.log_buffer.event_bus = getattr(server, "event_bus", None)
         app = getattr(server, "app", None)
         router = getattr(app, "router", None)
         if self.status_history is not None and router is not None and not self._server.get("sampling"):
@@ -191,7 +201,7 @@ class CliAdminBuilder:
         def is_external() -> bool:
             return bool(getattr(server["options"], "external_authentication", False))
         jwt_service = JwtService(secret=config.jwt_secret)
-        log_buffer = LogRingBuffer(broadcast_fn=deps.broadcast_fn)
+        log_buffer = LogRingBuffer(broadcast_fn=deps.broadcast_fn, event_bus=deps.event_bus)
         log_buffer.install_handler()
         module_registry = ModuleRegistry(deps.builder)
         if users_plugin is not None:

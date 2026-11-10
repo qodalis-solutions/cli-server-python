@@ -299,7 +299,7 @@ def main() -> None:
             registry=result.registry,
             event_socket_manager=result.event_socket_manager,
             builder=result.builder,
-            broadcast_fn=lambda msg: result.event_socket_manager.broadcast_message(msg),
+            # log:entry events go to the server's event bus (audience logs:read) once mounted
             enabled_features=["jobs"],
         ))
     )

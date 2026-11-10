@@ -353,6 +353,7 @@ socket.
 | `fs:changed` | `action` (`upload`, `mkdir`, `delete`, `write`, `move`, `copy`), `path`, `newPath` | `files:read` | file storage (API and MCP `fs_*`) |
 | `command:executed` | `command` (processor name only), `success`, `durationMs`, `userId` | `audit:read` | REST execute and stream, MCP |
 | `audit:recorded` | the audit entry as `GET /audit` returns it | `audit:read` | audit plugin |
+| `log:entry` | `timestamp`, `level`, `message`, `source` (a log line of this process) | `logs:read` | admin plugin (its log buffer, once mounted) |
 
 `actor` is the user who made the change, when known. `user:updated` covers profile, password, enabled/disabled and group
 membership changes; `session:closed` covers sign-out, kicks and expiry. The jobs events are published by the scheduler,
@@ -907,7 +908,7 @@ The image runs the demo server (all plugins, users plugin with `root` / `admin`)
 
 ## Versioning
 
-Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b23` today (PEP 440 for `1.0.0-beta.23`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
+Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b24` today (PEP 440 for `1.0.0-beta.24`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
 
 ## Development
 
