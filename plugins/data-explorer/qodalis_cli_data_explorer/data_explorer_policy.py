@@ -203,7 +203,9 @@ def _quoted_identifier(sql: str, i: int, close: str) -> tuple[str, int]:
 
 def tokenize_sql(sql: str, reading: SqlReading = SQL_READINGS[0]) -> list[SqlToken]:
     """Splits SQL into words, quoted identifiers and punctuation; comments and
-    string literals are dropped, so keywords inside them do not count."""
+    string literals are dropped, so keywords inside them do not count. A ``"..."``
+    string (MySQL without ``ANSI_QUOTES``) stays a single name token, so it never
+    hides a keyword and still names what it quotes."""
     tokens: list[SqlToken] = []
     i, n = 0, len(sql)
     while i < n:
@@ -229,7 +231,15 @@ def tokenize_sql(sql: str, reading: SqlReading = SQL_READINGS[0]) -> list[SqlTok
             else:
                 i = _skip_block_comment(sql, i, reading.nested_comments)
             continue
-        if c == "'" or (c == '"' and reading.double_quoted_strings):
+        if c == '"' and reading.double_quoted_strings:
+            # A string here, but every other dialect reads a name, and a string cannot stand where a table
+            # or a column does: kept as that name, so FROM "Users" u WHERE ... still names the table
+            end = _skip_string(sql, i, c, reading.backslash_escapes)
+            name = sql[i + 1 : max(i + 1, end - 1)].replace('""', '"')
+            tokens.append(SqlToken("ident", name, name))
+            i = end
+            continue
+        if c == "'":
             i = _skip_string(sql, i, c, reading.backslash_escapes)
             continue
         if c == "$" and reading.dollar_quotes:
