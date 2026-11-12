@@ -18,6 +18,7 @@ from qodalis_cli import (
     ICliCommandProcessor,
     get_positional_text,
 )
+from qodalis_cli_server_abstractions import CliCommandExample
 
 
 def _get_location(command: CliProcessCommand) -> str:
@@ -102,6 +103,12 @@ class _WeatherCurrentProcessor(CliCommandProcessor):
         return "Shows current weather conditions"
 
     @property
+    def examples(self) -> list[CliCommandExample]:
+        return [
+            CliCommandExample("weather current Berlin", "Current weather in Berlin"),
+        ]
+
+    @property
     def parameters(self) -> list[ICliCommandParameterDescriptor]:
         return [_location_param]
 
@@ -121,6 +128,16 @@ class _WeatherForecastProcessor(CliCommandProcessor):
         return "Shows a 3-day weather forecast"
 
     @property
+    def aliases(self) -> list[str]:
+        return ["fc"]
+
+    @property
+    def examples(self) -> list[CliCommandExample]:
+        return [
+            CliCommandExample("weather forecast Tokyo", "Three-day forecast for Tokyo"),
+        ]
+
+    @property
     def parameters(self) -> list[ICliCommandParameterDescriptor]:
         return [_location_param]
 
@@ -138,6 +155,27 @@ class _CliWeatherCommandProcessor(CliCommandProcessor):
     @property
     def description(self) -> str:
         return "Shows weather information for a location"
+
+    @property
+    def module(self) -> str:
+        return "weather"
+
+    @property
+    def icon(self) -> str:
+        return "🌤"
+
+    @property
+    def examples(self) -> list[CliCommandExample]:
+        return [
+            CliCommandExample("weather London", "Current weather in London"),
+            CliCommandExample("weather forecast --location Paris", "Three-day forecast for Paris"),
+        ]
+
+    @property
+    def documentation(self) -> str:
+        return (
+            "Weather from wttr.in, fetched by the server. Give the place as the value or with --location; the default is London."
+        )
 
     @property
     def parameters(self) -> list[ICliCommandParameterDescriptor]:

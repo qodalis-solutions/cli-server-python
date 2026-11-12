@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 from typing import Sequence
 
-from ..abstractions import ICliCommandProcessor
+from ..abstractions import ICliCommandProcessor, command_matches
 
 
 class ICliCommandRegistry(abc.ABC):
@@ -60,7 +60,10 @@ class CliCommandRegistry(ICliCommandRegistry):
         command: str,
         chain_commands: list[str] | None = None,
     ) -> ICliCommandProcessor | None:
+        # A command name wins over another command's alias
         processor = self._processors.get(command.lower())
+        if processor is None:
+            processor = next((p for p in self._processors.values() if command_matches(p, command)), None)
         if processor is None:
             return None
 
@@ -82,7 +85,9 @@ class CliCommandRegistry(ICliCommandRegistry):
                 if current.allow_unlisted_commands:
                     return current
                 return None
-            found = next((p for p in subs if p.command.lower() == sub.lower()), None)
+            found = next((p for p in subs if p.command.lower() == sub.lower()), None) or next(
+                (p for p in subs if command_matches(p, sub)), None,
+            )
             if found is None:
                 if current.allow_unlisted_commands:
                     return current

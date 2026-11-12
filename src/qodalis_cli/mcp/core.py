@@ -262,6 +262,9 @@ def validate_arguments(arguments: dict[str, Any], schema: dict[str, Any]) -> str
         reason = _check_property(key, prop, value)
         if reason:
             return reason
+        allowed = prop.get("enum")
+        if isinstance(allowed, list) and value not in allowed:
+            return f"argument '{key}' must be one of: {', '.join(str(a) for a in allowed)}"
     for key in schema.get("required") or []:
         if arguments.get(key) is None:
             return f"missing required argument '{key}'"

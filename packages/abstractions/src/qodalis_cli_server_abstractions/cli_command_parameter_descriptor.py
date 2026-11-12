@@ -13,6 +13,9 @@ class ICliCommandParameterDescriptor(Protocol):
     type: str
     aliases: list[str] | None
     default_value: Any
+    #: The only values the parameter takes (help, completion and a check in
+    #: the web CLI, ``enum`` in MCP); optional on custom descriptors.
+    allowed_values: list[str] | None
 
 
 class CliCommandParameterDescriptor:
@@ -26,6 +29,7 @@ class CliCommandParameterDescriptor:
         type: str = "string",
         aliases: list[str] | None = None,
         default_value: Any = None,
+        allowed_values: list[str] | None = None,
     ) -> None:
         self.name = name
         self.description = description
@@ -33,3 +37,4 @@ class CliCommandParameterDescriptor:
         self.type = type
         self.aliases = aliases
         self.default_value = default_value
+        self.allowed_values = allowed_values

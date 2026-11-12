@@ -6,6 +6,7 @@ import platform
 import time
 
 from ..abstractions import CliCommandProcessor, CliProcessCommand
+from ..abstractions import CliCommandExample
 
 _start_time = time.time()
 
@@ -20,6 +21,18 @@ class CliSystemCommandProcessor(CliCommandProcessor):
     @property
     def description(self) -> str:
         return "Shows server system information"
+
+    @property
+    def examples(self) -> list[CliCommandExample]:
+        return [
+            CliCommandExample("system", "Operating system, CPU and memory of the server"),
+        ]
+
+    @property
+    def documentation(self) -> str:
+        return (
+            "Shows the operating system, CPU, memory and runtime of the machine the server runs on."
+        )
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         uptime_secs = int(time.time() - _start_time)

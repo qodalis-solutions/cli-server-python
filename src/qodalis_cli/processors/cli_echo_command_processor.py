@@ -9,6 +9,7 @@ from ..abstractions import (
     join_shell_words,
     split_shell_words,
 )
+from ..abstractions import CliCommandExample
 
 __all__ = ["CliEchoCommandProcessor", "join_shell_words", "split_shell_words"]
 
@@ -28,6 +29,18 @@ class CliEchoCommandProcessor(CliCommandProcessor):
     @property
     def description(self) -> str:
         return "Echoes the input text back"
+
+    @property
+    def examples(self) -> list[CliCommandExample]:
+        return [
+            CliCommandExample("echo hello world", "Prints hello world"),
+        ]
+
+    @property
+    def documentation(self) -> str:
+        return (
+            "Prints its input back as the server received it. Quoted words keep their spaces: echo \"a  b\" prints a  b."
+        )
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         text = get_positional_text(command)

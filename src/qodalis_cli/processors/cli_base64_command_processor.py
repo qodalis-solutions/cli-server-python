@@ -4,6 +4,7 @@ import asyncio
 import base64
 
 from ..abstractions import CliCommandProcessor, CliProcessCommand, ICliCommandProcessor, get_positional_text
+from ..abstractions import CliCommandExample
 
 
 class _Base64EncodeProcessor(CliCommandProcessor):
@@ -21,6 +22,16 @@ class _Base64EncodeProcessor(CliCommandProcessor):
     @property
     def description(self) -> str:
         return "Encodes text to Base64"
+
+    @property
+    def aliases(self) -> list[str]:
+        return ["enc"]
+
+    @property
+    def examples(self) -> list[CliCommandExample]:
+        return [
+            CliCommandExample("base64 encode hello", "Prints aGVsbG8="),
+        ]
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         text = get_positional_text(command)
@@ -45,6 +56,16 @@ class _Base64DecodeProcessor(CliCommandProcessor):
     def description(self) -> str:
         return "Decodes Base64 to text"
 
+    @property
+    def aliases(self) -> list[str]:
+        return ["dec"]
+
+    @property
+    def examples(self) -> list[CliCommandExample]:
+        return [
+            CliCommandExample("base64 decode aGVsbG8=", "Prints hello"),
+        ]
+
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         text = get_positional_text(command)
         if not text:
@@ -65,6 +86,23 @@ class CliBase64CommandProcessor(CliCommandProcessor):
     @property
     def description(self) -> str:
         return "Encodes or decodes Base64 text"
+
+    @property
+    def aliases(self) -> list[str]:
+        return ["b64"]
+
+    @property
+    def examples(self) -> list[CliCommandExample]:
+        return [
+            CliCommandExample("base64 encode hello", "Prints aGVsbG8="),
+            CliCommandExample("base64 decode aGVsbG8=", "Prints hello"),
+        ]
+
+    @property
+    def documentation(self) -> str:
+        return (
+            "Encodes text to Base64 or decodes Base64 back to text (UTF-8), on the server."
+        )
 
     @property
     def allow_unlisted_commands(self) -> bool:
