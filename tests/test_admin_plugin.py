@@ -284,6 +284,17 @@ class TestPlugins:
         assert data[0]["processorCount"] == 3
         assert data[0]["enabled"] is True
         assert data[1]["processorCount"] == 1
+        assert data[0]["icon"] is None
+
+    async def test_get_module_by_id(self, client: AsyncClient) -> None:
+        token = await get_token(client)
+        resp = await client.get(f"{PREFIX}/plugins/modulealpha", headers=auth_header(token))
+        assert resp.status_code == 200
+        assert resp.json()["id"] == "ModuleAlpha"
+        assert resp.json()["icon"] is None
+        missing = await client.get(f"{PREFIX}/plugins/missing", headers=auth_header(token))
+        assert missing.status_code == 404
+        assert missing.json()["code"] == "PLUGIN_NOT_FOUND"
 
     async def test_toggle_module(self, client: AsyncClient) -> None:
         token = await get_token(client)
@@ -637,6 +648,88 @@ class TestModuleRegistry:
         builder = _StubBuilder([])
         reg = ModuleRegistry(builder)
         assert reg.list() == []
+
+
+class _Cmd:
+    """A command processor stub registered on its own, naming its module."""
+
+    def __init__(self, command: str, module: str | None) -> None:
+        self.command = command
+        self.module = module
+
+
+class _IconModule(_StubModule):
+    @property
+    def icon(self) -> str:
+        return "🛒"
+
+
+class TestModuleRegistryCommandGroups:
+    """Commands added on their own are listed under the module they name
+    (mirrors the .NET ``ModuleRegistryCommandGroupsTests``)."""
+
+    def test_commands_added_on_their_own_are_listed_as_the_module_they_name(self) -> None:
+        stats, plans = _Cmd("stats", "shop"), _Cmd("plans", "Shop")
+        registry = ModuleRegistry(_StubBuilder([]), lambda: [stats, plans, _Cmd("loose", None)])
+
+        [shop] = registry.list()
+
+        assert shop["id"] == shop["name"] == "shop"
+        assert shop["processors"] == ["stats", "plans"]
+        assert shop["icon"] is None
+        assert registry.get("SHOP")["processorCount"] == 2
+
+    def test_a_module_with_the_same_name_describes_them_and_keeps_its_icon(self) -> None:
+        module = _IconModule("shop", 0)
+        own = _StubModule("weather", 1)
+        registry = ModuleRegistry(_StubBuilder([module, own]), lambda: [_Cmd("stats", "SHOP"), *own.processors])
+
+        plugins = registry.list()
+
+        assert [p["name"] for p in plugins] == ["shop", "weather"]
+        assert plugins[0]["icon"] == "🛒"
+        assert plugins[0]["description"] == "A stub module"
+        assert plugins[0]["processors"] == ["stats"]
+        assert plugins[1]["processors"] == ["stub"]  # a module's own processor is not counted twice
+        assert plugins[1]["icon"] is None  # a module without ``icon`` (older abstractions)
+
+    def test_disabling_the_group_blocks_its_commands(self) -> None:
+        stats, loose = _Cmd("stats", "shop"), _Cmd("loose", None)
+        registry = ModuleRegistry(_StubBuilder([]), lambda: [stats, loose])
+
+        assert registry.toggle("SHOP")["enabled"] is False
+
+        assert registry.is_allowed(stats) is False
+        assert registry.is_allowed(loose) is True
+
+    def test_the_admin_plugin_groups_the_hosts_commands(self) -> None:
+        from qodalis_cli import CliServerOptions, create_cli_server
+        from qodalis_cli_server_abstractions import CliModule, ICliCommandProcessor
+
+        class Stats(ICliCommandProcessor):
+            command = "stats"
+            description = "Shop statistics"
+            module = "shop"
+
+            async def handle_async(self, command, cancellation_event=None) -> str:
+                return "3"
+
+        class Shop(CliModule):
+            name = "shop"
+            version = "1.0.0"
+            description = "Shop administration"
+            processors: list = []
+            icon = "🛒"
+
+        result = create_cli_server(CliServerOptions())
+        registry = ModuleRegistry(result.builder)
+        # Added after the registry was made: still listed
+        result.builder.add_module(Shop()).add_processor(Stats())
+
+        shop = registry.get("shop")
+        assert shop["processors"] == ["stats"]
+        assert shop["icon"] == "🛒"
+        assert shop["description"] == "Shop administration"
 
 
 # ---------------------------------------------------------------------------
