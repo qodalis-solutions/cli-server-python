@@ -77,7 +77,7 @@ class ThingsProcessor(CliCommandProcessor):
     def parameters(self):
         return [
             CliCommandParameterDescriptor("format", "Output format", aliases=["f"], default_value="table",
-                                          allowed_values=["table", "json"]),
+                                          allowed_values=["table", "json"], examples=["json"]),
             CliCommandParameterDescriptor("verbose", "More output", type="boolean"),
         ]
 
@@ -102,7 +102,9 @@ def test_commands_send_the_metadata() -> None:
     assert things["documentation"] == "First paragraph.\n\nSecond paragraph."
     assert things["examples"] == [{"command": "things show 1", "description": "Shows thing 1"}, {"command": "things"}]
     assert things["parameters"][0]["allowedValues"] == ["table", "json"]
+    assert things["parameters"][0]["examples"] == ["json"]
     assert "allowedValues" not in things["parameters"][1]
+    assert "examples" not in things["parameters"][1]
     sub = things["processors"][0]
     assert sub["aliases"] == ["sh"]
     assert "examples" not in sub and "module" not in sub
@@ -136,6 +138,8 @@ def test_an_alias_carries_the_permissions_of_its_command() -> None:
 def test_mcp_schema_lists_allowed_values_as_enum() -> None:
     schema = command_input_schema(ThingsProcessor())
     assert schema["properties"]["format"]["enum"] == ["table", "json"]
+    assert schema["properties"]["format"]["examples"] == ["json"]
+    assert "examples" not in schema["properties"]["verbose"]
     assert validate_arguments({"format": "xml"}, schema) == "argument 'format' must be one of: table, json"
     assert validate_arguments({"format": "json"}, schema) is None
 

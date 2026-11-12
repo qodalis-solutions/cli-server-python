@@ -127,7 +127,7 @@ Every processor receives a `CliProcessCommand`:
 
 ### Parameters
 
-Declare parameters with names, types, aliases, and defaults. The CLI client uses this metadata for autocompletion and validation. `allowed_values` lists the only values a parameter takes: the web CLI shows them in help, completes them with Tab and refuses others before sending; MCP tools list them as an `enum`.
+Declare parameters with names, types, aliases, and defaults. The CLI client uses this metadata for autocompletion and validation. `allowed_values` lists the only values a parameter takes: the web CLI shows them in help, completes them with Tab and refuses others before sending; MCP tools list them as an `enum`. `examples` lists example values, shown in help and as `examples` in MCP.
 
 ```python
 from qodalis_cli import (
