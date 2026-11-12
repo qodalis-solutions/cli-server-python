@@ -18,6 +18,8 @@ from .data_explorer_policy import (
     apply_column_policy,
     filter_listing,
     is_read_only,
+    masked_column_error,
+    masked_result_error,
     missing_permissions,
     objects_error,
     rate_limit_of,
@@ -61,7 +63,7 @@ def result_to_dict(result: DataExplorerResult) -> dict[str, Any]:
 
 class DataExplorerExecutor:
     """Executes data explorer queries: the source's permissions, rate limit,
-    read-only rules and allowed objects first, then the provider with a
+    read-only rules, allowed objects and masked columns first, then the provider with a
     timeout, then the row limit, column masking and the audit entry."""
 
     def __init__(
@@ -108,6 +110,9 @@ class DataExplorerExecutor:
         objects = objects_error(options, query)
         if objects:
             return await self._refuse(request, options, caller, objects, "object_not_allowed")
+        masked = masked_column_error(options, query)
+        if masked:
+            return await self._refuse(request, options, caller, masked, "masked_column")
 
         context = DataExplorerExecutionContext(query=query, parameters=parameters, options=options)
         timeout_s = options.timeout / 1000.0
@@ -122,7 +127,11 @@ class DataExplorerExecutor:
                 result.rows = result.rows[: options.max_rows]
                 result.row_count = options.max_rows
                 result.truncated = True
-            if result.success:
+            masked = masked_result_error(options, query, result.columns) if result.success else None
+            if masked:
+                # A masked column came back under another name: withhold the rows
+                result = _failure(source, options, masked, _elapsed_ms(start), "masked_column")
+            elif result.success:
                 filter_listing(result, options, query)
                 apply_column_policy(result, options)
 

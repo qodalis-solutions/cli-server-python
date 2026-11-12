@@ -94,7 +94,9 @@ class DataExplorerProviderOptions:
 
 
 #: Why the server refused a data explorer query.
-DataExplorerErrorCode = Literal["forbidden", "rate_limited", "read_only", "object_not_allowed", "unknown_source"]
+DataExplorerErrorCode = Literal[
+    "forbidden", "rate_limited", "read_only", "object_not_allowed", "masked_column", "unknown_source",
+]
 
 
 def is_read_only_source(options: Any) -> bool:
@@ -151,7 +153,7 @@ class DataExplorerResult:
     error: str | None
     #: Why the server refused the query, when it did: ``forbidden`` (missing
     #: permission, 403), ``rate_limited`` (429), ``read_only``,
-    #: ``object_not_allowed``, ``unknown_source``.
+    #: ``object_not_allowed``, ``masked_column``, ``unknown_source``.
     error_code: DataExplorerErrorCode | None = None
 
 

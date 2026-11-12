@@ -44,6 +44,8 @@ from qodalis_cli_data_explorer import (  # noqa: E402
     apply_column_policy,
     filter_schema,
     is_object_allowed,
+    masked_column_error,
+    masked_result_error,
     objects_error,
     read_only_error,
     sql_objects,
@@ -124,6 +126,12 @@ class TestReadOnlyRules:
         "-- DROP TABLE users\nSELECT 1",
         "SHOW TABLES",
         "SELECT replace(name, 'a', 'b') FROM users",
+        "SELECT 'it''s'",
+        "SELECT 1 # trailing MySQL comment",
+        "SELECT E'it\\'s' AS s",
+        'SELECT "a""b", [c]]d], `e``f` FROM t',
+        "SELECT 1 /* a /* nested */ b */",
+        "SELECT $1::int",
     ])
     def test_sql_reads(self, q: str) -> None:
         assert read_only_error(L.SQL, q) is None
@@ -139,6 +147,19 @@ class TestReadOnlyRules:
         "TRUNCATE users",
         "CREATE TABLE t (a int)",
         "PRAGMA writable_schema = 1",
+        # A backslash or dollar quote one dialect reads as a string another runs as code
+        "SELECT 'a\\'; DROP TABLE users; --'",
+        "SELECT * FROM #t; DROP TABLE users",
+        "SELECT $$; DROP TABLE users; $$",
+        # MySQL: ``--`` needs a space (``1 --1`` is ``1 - -1``), /*! ... */ runs, "..." is a string
+        "SELECT 1 --1; COMMIT; DELETE FROM users",
+        "SELECT 1 /*! INTO OUTFILE '/tmp/x' */",
+        "SELECT \"\\\"\" INTO OUTFILE '/tmp/f' -- \"",
+        # Postgres and SQL Server comments nest; SQL Server escapes ] as ]]
+        "SELECT 1 /* /* */ ' */ COMMIT DROP TABLE users --'",
+        "SELECT [x]]'] , 1 DROP TABLE users --'",
+        # # is a comment only in MySQL
+        "SELECT 1 # x\n; DROP TABLE users",
     ])
     def test_sql_writes(self, q: str) -> None:
         assert read_only_error(L.SQL, q) is not None
@@ -182,6 +203,26 @@ class TestAllowedObjects:
         assert sql_objects("WITH x AS (SELECT 1) SELECT * FROM x") == []
         assert sql_objects("SELECT EXTRACT(YEAR FROM day) FROM t") == ["t"]
         assert sql_objects('SELECT * FROM "Users", [dbo].[orders]') == ["Users", "dbo.orders"]
+        # Read as each dialect reads its comments and brackets
+        assert "secret" in sql_objects("SELECT * FROM allowed /* /* */ ' */ , secret --'")
+        assert "secret" in sql_objects("SELECT arr[(SELECT 1 FROM secret)] FROM allowed")
+
+    @pytest.mark.parametrize("q", [
+        # Found by the Node review: a quote or comment one dialect skips hides the table from another
+        r"SELECT 1 $x$, '\'' a FROM secret WHERE ''='' -- $x$",
+        r'SELECT "\"" a FROM secret WHERE ""=""',
+        "SELECT 1 #'\n FROM secret -- '",
+        "SELECT a--1, b FROM secret",
+        "SELECT 1 /*! FROM secret */",
+        r"SELECT '\', $x$ ' $x$ FROM secret -- '",
+        "SELECT $a1$ ' $a1$ FROM secret -- '",
+        r"SELECT E'\'' FROM secret -- '",
+        "SELECT 1 # 2 FROM secret",
+        "SELECT (ARRAY[1,2])[(SELECT length(']'))] FROM secret",
+    ])
+    def test_objects_under_every_reading(self, q: str) -> None:
+        assert "secret" in sql_objects(q)
+        assert objects_error(opts(allowed_objects=["allowed"]), q) == "'secret' is not available on this source"
 
     def test_patterns(self) -> None:
         assert is_object_allowed("public.users", ["users"])
@@ -224,9 +265,172 @@ class TestAllowedObjects:
         assert docs.rows == [{"id": 1, "email": MASK, "nested": {"email": MASK}}]
 
 
+class TestParityRules:
+    """Rules shared with the Node and .NET servers (same inputs as their tests)."""
+
+    NAMES_THE_OBJECTS = "This source only accepts queries that name the objects they read"
+
+    @pytest.mark.parametrize("q", [
+        "SELECT $a1$ ' $a1$; DELETE FROM users; -- '",
+        "SELECT 1 COMMIT",
+        "SELECT 1 ROLLBACK",
+        "SELECT 1 /* /* */ ' */ COMMIT DROP TABLE users --'",
+        "SELECT 1 DENY SELECT ON users TO public",
+        "SELECT 1 --x\r; DELETE FROM users",
+    ])
+    def test_sql_refused(self, q: str) -> None:
+        assert read_only_error(L.SQL, q) is not None
+
+    @pytest.mark.parametrize("q", ["SELECT $1::int", "SELECT café FROM t", "SELECT 1\r\nFROM t"])
+    def test_sql_accepted(self, q: str) -> None:
+        assert read_only_error(L.SQL, q) is None
+
+    def test_error_texts(self) -> None:
+        assert read_only_error(L.SQL, "SELECT 1 COMMIT") == "Read-only source: COMMIT is not allowed"
+        assert read_only_error(L.SQL, "SELECT 1 --x\r; DELETE FROM users") == \
+            "Read-only source: end lines with \\n or \\r\\n"
+        assert objects_error(opts(allowed_objects=["t"]), "SELECT 1 --x\r FROM t") == self.NAMES_THE_OBJECTS
+
+    @pytest.mark.parametrize("q", [
+        "SELECT $a1$ ' $a1$ FROM secret -- '",
+        "SELECT * FROM (SELECT 1) a, secret",
+        "SELECT * FROM allowed a, generate_series(1, 2) g, secret",
+        "DELETE FROM allowed USING secret WHERE 1=1",
+        "SELECT * FROM allowed WHERE EXISTS (WITH secret AS (SELECT 1) SELECT 1) UNION SELECT * FROM secret",
+        "SELECT * FROM allowed..secret",
+        "DESCRIBE secret",
+        "EXPLAIN secret",
+    ])
+    def test_sql_exposes_secret(self, q: str) -> None:
+        assert any(o.split(".")[-1] == "secret" for o in sql_objects(q)), sql_objects(q)
+        assert objects_error(opts(allowed_objects=["allowed"]), q) is not None
+
+    def test_sql_objects(self) -> None:
+        assert sql_objects("SELECT * FROM état") == ["état"]
+        assert sql_objects("SELECT EXTRACT(YEAR FROM day) AS y") == []
+        assert sql_objects("WITH recent AS (SELECT * FROM users) SELECT * FROM recent") == ["users"]
+        assert sql_objects("EXPLAIN ANALYZE SELECT 1") == []
+        assert sql_objects('SELECT * FROM "sec""ret"') == ['sec"ret']
+
+    def test_mongo(self) -> None:
+        escaped = 'db.users.aggregate([{ "\\u0024out": "x" }])'
+        assert read_only_error(L.SHELL, escaped) == "Read-only source: $out and $merge are not allowed"
+        o = opts(language=L.SHELL, allowed_objects=["users"])
+        assert objects_error(o, "db.users.aggregate([{ $match: {} }])") is None
+        for q in [
+            'db.users.aggregate([{ $lookup: { from: "secret", localField: "a", foreignField: "b", as: "s" } }])',
+            'db.users.aggregate([{ "$unionWith": "secret" }])',
+            'db.users.aggregate([{ "$unionWith": { "coll": "secret" } }])',
+            'db.users.aggregate([{ "\\u0024lookup": { "from": "secret" } }])',
+            'db.users.aggregate([{ $graphLookup: { from: "secret", startWith: "$a", connectFromField: "a", '
+            'connectToField: "b", as: "s" } }])',
+        ]:
+            assert objects_error(o, q) == "'secret' is not available on this source", q
+        assert objects_error(o, 'db.users.aggregate([{ $lookup: { from: name, as: "s" } }])') == self.NAMES_THE_OBJECTS
+
+    @pytest.mark.parametrize("q", [
+        "GET /logs/_search", "POST /logs/_search\n{}", "POST /_all/_search\n{}", "POST /logs/_validate/query\n{}",
+    ])
+    def test_elasticsearch_reads(self, q: str) -> None:
+        assert read_only_error(L.ELASTICSEARCH, q) is None
+
+    @pytest.mark.parametrize("q", [
+        "DELETE /logs", "POST /logs/_doc\n{}", "POST /logs/_delete_by_query#/_search\n{}", "POST /logs/_doc/_search\n{}",
+    ])
+    def test_elasticsearch_writes(self, q: str) -> None:
+        assert read_only_error(L.ELASTICSEARCH, q) is not None
+
+    def test_elasticsearch_objects(self) -> None:
+        assert read_only_error(L.ELASTICSEARCH, "POST /logs/_delete_by_query#/_search\n{}") == \
+            "Read-only source: POST /logs/_delete_by_query is not allowed"
+        o = opts(language=L.ELASTICSEARCH, allowed_objects=["logs"])
+        assert objects_error(o, 'POST /logs/_search\n{"query":{"match_all":{}}}') is None
+        assert objects_error(o, 'POST /logs/_msearch\n{"index":"secret"}\n{}') == self.NAMES_THE_OBJECTS
+        refused = objects_error(opts(language=L.ELASTICSEARCH, allowed_objects=["metrics-*"]), "GET /logs/_search")
+        assert "logs" in (refused or "")
+
+    def test_redis_keys(self) -> None:
+        exact = opts(language=L.REDIS, allowed_objects=["rates:usd"])
+        assert objects_error(exact, "GET rates:usd") is None
+        assert objects_error(exact, "GET 'rates:usd'x") == "'rates:usdx' is not available on this source"
+        # Split on any whitespace, as the provider does
+        assert objects_error(exact, "MGET rates:usd\nsecret") == "'secret' is not available on this source"
+        pattern = opts(language=L.REDIS, allowed_objects=["rates:*"])
+        assert "session:1" in (objects_error(pattern, "GET session:1") or "")
+        assert objects_error(pattern, "SCAN 0") == self.NAMES_THE_OBJECTS
+        assert objects_error(pattern, 'MSET rates:a 1 "rates:b" 2') is None
+        assert read_only_error(L.REDIS, "") == "Read-only source: this command is not allowed"
+
+    def test_json_text_is_masked_like_a_document(self) -> None:
+        o = opts(mask_columns=["email"], drop_columns=["pass*"])
+        table = apply_column_policy(result(["response"], [
+            ['{"_source":{"email":"a@x.io","password":"h","id":1}}'], ["[not json"], ['{"id":1}'],
+        ]), o)
+        assert table.rows == [['{"_source":{"email":"***","id":1}}'], ["[not json"], ['{"id":1}']]
+
+
 # ---------------------------------------------------------------------------
 # Executor
 # ---------------------------------------------------------------------------
+
+
+class TestMaskedColumns:
+    O = opts(mask_columns=["email", "*phone*"], drop_columns=["password_hash"])
+
+    @pytest.mark.parametrize("q", [
+        "SELECT * FROM users",
+        "SELECT email FROM users",
+        "SELECT DISTINCT u.email, name FROM users u",
+        "SELECT TOP 5 email FROM users",
+        "SELECT password_hash FROM users;",
+        "SELECT * FROM phones",
+        "SELECT p.number FROM phones AS p",
+        "WITH x AS (SELECT 1 AS a) SELECT a FROM x",
+    ])
+    def test_plain_selects(self, q: str) -> None:
+        assert masked_column_error(self.O, q) is None
+
+    @pytest.mark.parametrize("q", [
+        "SELECT email AS e FROM users",
+        "SELECT email e FROM users",
+        "SELECT upper(email) FROM users",
+        "SELECT email || '' FROM users",
+        "SELECT id FROM users WHERE email = 'a@x.io'",
+        "SELECT * FROM users u WHERE u.email LIKE 'a%'",
+        "SELECT * FROM users ORDER BY email",
+        "SELECT name AS email, email AS name FROM users",
+        "SELECT id FROM t UNION SELECT email FROM users",
+        "SELECT (SELECT email FROM users LIMIT 1)",
+        "SELECT CASE WHEN home_phone LIKE '5%' THEN 1 END FROM users",
+        "SELECT password_hash AS h FROM users",
+        # under the MySQL reading the # comment hides nothing: the alias counts
+        "SELECT email # x\nAS e FROM users",
+    ])
+    def test_other_uses_are_refused(self, q: str) -> None:
+        assert masked_column_error(self.O, q) is not None
+        assert "can only be selected by its own name" in (masked_column_error(self.O, q) or "")
+
+    @pytest.mark.parametrize("q", [
+        "SELECT u FROM users u",
+        "SELECT row_to_json(u) FROM users AS u",
+        "SELECT * FROM users WHERE users::text LIKE '%@%'",
+        "WITH x AS (SELECT * FROM users) SELECT x FROM x",
+    ])
+    def test_whole_rows_are_refused(self, q: str) -> None:
+        assert "is a whole row" in (masked_column_error(self.O, q) or "")
+
+    def test_unicode_escaped_names_are_refused(self) -> None:
+        assert "Unicode escapes" in (masked_column_error(self.O, 'SELECT U&"\\0065mail" AS e FROM users') or "")
+
+    def test_only_sql_and_only_with_a_policy(self) -> None:
+        assert masked_column_error(opts(), "SELECT email AS e FROM users") is None
+        mongo = opts(language=L.SHELL, mask_columns=["email"])
+        assert masked_column_error(mongo, "db.users.find({email: 'a'})") is None
+
+    def test_result_must_carry_the_column(self) -> None:
+        assert masked_result_error(self.O, "SELECT email FROM users", ["EMAIL"]) is None
+        assert masked_result_error(self.O, "SELECT email FROM users FOR JSON PATH", ["JSON_F52E"]) is not None
+        assert masked_result_error(self.O, "SELECT * FROM users", ["x"]) is None
 
 
 def executor_for(o: DataExplorerProviderOptions, provider: FakeProvider | None = None, **kw: Any):
@@ -300,6 +504,22 @@ class TestExecutor:
         assert entries[0].metadata["rowCount"] == 1 and "durationMs" in entries[0].metadata
         assert entries[0].metadata["remoteAddress"] == "10.0.0.1"
         assert entries[1].metadata["success"] is False and entries[1].metadata["error"].startswith("Read-only source")
+
+    async def test_masked_columns_cannot_be_renamed(self) -> None:
+        executor, provider, entries, _ = executor_for(opts(mask_columns=["email"]))
+        res = await executor.execute_async({"source": "db", "query": "SELECT email AS e FROM users"}, caller())
+        assert not res.success and res.error_code == "masked_column"  # type: ignore[attr-defined]
+        assert res.error == "Masked column 'email' can only be selected by its own name"
+        assert provider.queries == [] and entries[0].metadata["error"] == res.error
+
+    async def test_rows_under_another_name_are_withheld(self) -> None:
+        class JsonProvider(FakeProvider):
+            async def execute_async(self, context: DataExplorerExecutionContext) -> DataExplorerResult:
+                return result(["JSON_F52E"], [['[{"email":"a@x.io"}]']])
+
+        executor, _, _, _ = executor_for(opts(mask_columns=["email"]), JsonProvider())
+        res = await executor.execute_async({"source": "db", "query": "SELECT email FROM users FOR JSON PATH"})
+        assert not res.success and res.rows == [] and res.error_code == "masked_column"  # type: ignore[attr-defined]
 
     async def test_audit_truncates_and_can_be_off(self) -> None:
         executor, _, entries, _ = executor_for(opts())
@@ -403,6 +623,7 @@ class TestProtectedServer:
         schema = client.get(DE + "/schema?source=main", headers=users["plain"]).json()
         assert [t["name"] for t in schema["tables"]] == ["users"]
         assert [c["name"] for c in schema["tables"][0]["columns"]] == ["id"]
+        assert schema["tables"][0]["columns"][0]["primaryKey"] is False
 
     def test_refusals(self, protected) -> None:
         client, users, _ = protected
@@ -442,6 +663,7 @@ class TestProtectedServer:
         assert schema["isError"] is True and "data:billing" in schema["content"][0]["text"]
         schema = mcp_call(client, users["plain"], "data_schema", {"source": "main"})
         assert [t["name"] for t in schema["structuredContent"]["tables"]] == ["users"]
+        assert "primaryKey" in schema["structuredContent"]["tables"][0]["columns"][0]
         query = mcp_call(client, users["plain"], "data_query", {"source": "billing", "query": "SELECT 1"})
         assert query["isError"] is True and "data:billing" in query["content"][0]["text"]
         write = mcp_call(client, users["plain"], "data_query", {"source": "main", "query": "DELETE FROM users"})
@@ -482,19 +704,26 @@ class TestSqliteReadOnly:
 
 
 class _PgStatement:
+    def __init__(self, rows: bool = True) -> None:
+        self.rows = rows
+
     def get_attributes(self):
         attr = MagicMock()
         attr.name = "id"
-        return [attr]
+        return [attr] if self.rows else []
 
     async def fetch(self, *args: Any):
-        return [[1]]
+        return [[1]] if self.rows else []
+
+    def get_statusmsg(self) -> str:
+        return "UPDATE 2"
 
 
 class _PgConnection:
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, fail: bool = False, rows: bool = True) -> None:
         self.calls: list[str] = []
         self.fail = fail
+        self.rows = rows
 
     async def execute(self, query: str, *args: Any):
         self.calls.append(query)
@@ -504,7 +733,7 @@ class _PgConnection:
         self.calls.append(query)
         if self.fail:
             raise RuntimeError("cannot execute DELETE in a read-only transaction")
-        return _PgStatement()
+        return _PgStatement(self.rows)
 
     async def close(self) -> None:
         self.calls.append("close")
@@ -542,6 +771,20 @@ class TestPostgresReadOnly:
         monkeypatch.setattr(pg_mod.asyncpg, "connect", connect)
         await pg_mod.PostgresDataExplorerProvider("postgresql://x").execute_async(ctx("SELECT 1 AS id", read_only=False))
         assert conn.calls == ["SELECT 1 AS id", "close"]
+
+    async def test_statements_without_rows_run_prepared(self, monkeypatch) -> None:
+        # Never through conn.execute (the simple protocol runs several statements)
+        conn = _PgConnection(rows=False)
+
+        async def connect(*a: Any, **k: Any):
+            return conn
+
+        monkeypatch.setattr(pg_mod.asyncpg, "connect", connect)
+        res = await pg_mod.PostgresDataExplorerProvider("postgresql://x").execute_async(
+            ctx("UPDATE t SET a = 1", read_only=False),
+        )
+        assert res.success is True and res.rows == [[2]]
+        assert conn.calls == ["UPDATE t SET a = 1", "close"]
 
 
 class _MysqlCursor:

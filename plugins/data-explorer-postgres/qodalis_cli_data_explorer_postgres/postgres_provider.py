@@ -36,6 +36,9 @@ class PostgresDataExplorerProvider(IDataExplorerProvider):
             conn = await asyncpg.connect(self._connection_string)
             if read_only:
                 await conn.execute("BEGIN READ ONLY")
+            # Only through a prepared statement (the extended protocol): it
+            # refuses several statements, so a hidden "COMMIT; ..." cannot end
+            # the read-only transaction
             stmt = await conn.prepare(context.query)
             attributes = stmt.get_attributes()
 
@@ -56,7 +59,8 @@ class PostgresDataExplorerProvider(IDataExplorerProvider):
                     error=None,
                 )
             else:
-                status = await conn.execute(context.query, *( context.parameters or []))
+                await stmt.fetch(*( context.parameters or []))
+                status = stmt.get_statusmsg() or ""
                 try:
                     affected = int(status.split()[-1])
                 except (ValueError, IndexError):
