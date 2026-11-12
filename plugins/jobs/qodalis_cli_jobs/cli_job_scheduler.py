@@ -37,6 +37,9 @@ JOBS_READ = "jobs:read"
 # Characters a job id may not have: it is part of the jobs API's URLs
 _UNSAFE_ID_CHARS = frozenset("/\\?#")
 
+#: Marks an ``update_options`` argument that was not given (``None`` is a value for ``tags``).
+_UNSET: Any = object()
+
 
 #: Error of a run left ``running`` by a previous process (finished at start).
 INTERRUPTED_ERROR = "Interrupted: the server stopped during the run"
@@ -197,6 +200,7 @@ class CliJobScheduler:
             InvalidOperationError: a job with ``options.id`` is registered.
         """
         _validate_max_concurrent_runs(options.max_concurrent_runs)
+        options.tags = normalize_job_tags(options.tags)
         if not options.name:
             options.name = type(job).__name__
         if not options.description:
@@ -394,20 +398,25 @@ class CliJobScheduler:
         timeout: str | None = None,
         overlap_policy: str | None = None,
         max_concurrent_runs: int | None = None,
+        tags: Any = _UNSET,
     ) -> None:
         """Update mutable options for a registered job and reschedule if active.
 
         Lowering ``max_concurrent_runs`` below the running count cancels
-        nothing: new runs start once fewer are running."""
+        nothing: new runs start once fewer are running.  ``tags`` replaces the
+        job's tags when given (``None`` clears them)."""
         reg = self._get_registration(job_id)
         opts = reg.options
         if max_concurrent_runs is not None:
             _validate_max_concurrent_runs(max_concurrent_runs)
+        new_tags = normalize_job_tags(tags) if tags is not _UNSET else None
 
         if description is not None:
             opts.description = description
         if group is not None:
             opts.group = group
+        if new_tags is not None:
+            opts.tags = new_tags
         if schedule is not None and interval is not None:
             raise ValueError("Cannot provide both schedule and interval")
         if schedule is not None:
@@ -884,6 +893,49 @@ def _next_occurrence(schedule: str, after: datetime.datetime) -> datetime.dateti
     if next_dt.tzinfo is None:
         next_dt = next_dt.replace(tzinfo=datetime.UTC)
     return next_dt
+
+
+#: Most tags a job may have, and the longest tag.
+MAX_JOB_TAGS = 20
+MAX_JOB_TAG_LENGTH = 64
+
+
+def normalize_job_tags(value: Any) -> list[str]:
+    """Validates and normalizes a job's tags: trimmed, duplicates (ignoring
+    case) dropped keeping the first spelling; ``None`` is no tags.
+
+    Raises:
+        InvalidValueError: not a list of strings, a tag empty, longer than 64
+            characters or with a comma, or more than 20 tags.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise InvalidValueError("tags must be an array of strings")
+    tags: list[str] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, str):
+            raise InvalidValueError("tags must be an array of strings")
+        tag = raw.strip()
+        if not tag or len(tag) > MAX_JOB_TAG_LENGTH or "," in tag:
+            raise InvalidValueError(
+                f"Invalid tag '{raw}': 1-{MAX_JOB_TAG_LENGTH} characters, no commas"
+            )
+        if tag.lower() in seen:
+            continue
+        seen.add(tag.lower())
+        tags.append(tag)
+    if len(tags) > MAX_JOB_TAGS:
+        raise InvalidValueError(f"A job has at most {MAX_JOB_TAGS} tags")
+    return tags
+
+
+def job_has_tags(job_tags: list[str] | None, tags: list[str]) -> bool:
+    """Whether ``job_tags`` holds every tag in ``tags`` (ignoring case); true
+    when ``tags`` is empty."""
+    own = {t.lower() for t in (job_tags or [])}
+    return all(t.lower() in own for t in tags)
 
 
 def _validate_max_concurrent_runs(value: Any) -> None:

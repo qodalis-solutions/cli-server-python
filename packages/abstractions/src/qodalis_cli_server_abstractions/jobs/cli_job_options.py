@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -10,6 +10,11 @@ class CliJobOptions:
     name: str | None = None
     description: str | None = None
     group: str | None = None
+    #: Free-form labels besides the single ``group`` (``country:ro``, ``bank``)
+    #: to filter jobs by: ``GET /jobs?tag=...`` lists the jobs that have every
+    #: tag given, ignoring case.  Each tag is 1-64 characters without commas,
+    #: at most 20; duplicates (ignoring case) are dropped.
+    tags: list[str] = field(default_factory=list)
     schedule: str | None = None  # cron expression
     interval: str | None = None  # e.g. "30s", "5m", "1h", "1d"
     enabled: bool = True
