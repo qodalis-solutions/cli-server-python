@@ -41,10 +41,12 @@ from qodalis_cli_data_explorer import (  # noqa: E402
     DataExplorerExecutor,
     DataExplorerRateLimiter,
     DataExplorerRegistry,
+    result_to_dict,
     apply_column_policy,
     filter_schema,
     is_object_allowed,
     masked_column_error,
+    fix_name_case,
     masked_result_error,
     name_case_hint,
     objects_error,
@@ -504,6 +506,113 @@ class TestNameCaseHint:
         shell, _, _, _ = executor_for(opts(language=L.SHELL, read_only=False), failing)
         res = await shell.execute_async({"source": "db", "query": "db.users.find()"})
         assert res.error == 'relation "users" does not exist'
+
+
+class TestFixNameCase:
+    SCHEMA = DataExplorerSchemaResult(source="db", tables=[
+        DataExplorerSchemaTable("public.Users", "table", [
+            DataExplorerSchemaColumn("CountryCode", "text"), DataExplorerSchemaColumn("Count", "int"),
+        ]),
+        DataExplorerSchemaTable("job_states", "table", [DataExplorerSchemaColumn("status", "text")]),
+    ])
+
+    @pytest.mark.parametrize("query,error,fixed", [
+        ("select count(*) from Users", 'relation "users" does not exist', 'select count(*) from "Users"'),
+        ("SELECT * FROM USERS -- Users\nWHERE 1 = 1", 'relation "users" does not exist',
+         'SELECT * FROM "Users" -- Users\nWHERE 1 = 1'),
+        ("""SELECT * FROM "Users" u WHERE u.countrycode = 'countrycode'""", "column u.countrycode does not exist",
+         """SELECT * FROM "Users" u WHERE u."CountryCode" = 'countrycode'"""),
+        ('SELECT count(*), count FROM "Users"', 'column "count" does not exist', 'SELECT count(*), "Count" FROM "Users"'),
+        ("select * from users", "Table 'shop.users' doesn't exist", 'select * from "Users"'),
+    ])
+    def test_writes_the_name_as_the_schema_spells_it(self, query: str, error: str, fixed: str) -> None:
+        assert fix_name_case(query, error, self.SCHEMA) == fixed
+
+    def test_quotes_the_way_the_source_does(self) -> None:
+        quote = lambda n: f"[{n}]"  # noqa: E731
+        assert fix_name_case("select * from users", "Invalid object name 'users'.", self.SCHEMA, quote) == \
+            "select * from [Users]"
+        assert fix_name_case("select countrycode from x", "Invalid column name 'countrycode'.", self.SCHEMA, quote) == \
+            "select [CountryCode] from x"
+
+    def test_providers_quote_names(self) -> None:
+        assert mssql_mod.MssqlDataExplorerProvider.quote_name(None, "a]b") == "[a]]b]"  # type: ignore[arg-type]
+        assert mysql_mod.MysqlDataExplorerProvider.quote_name(None, "a`b") == "`a``b`"  # type: ignore[arg-type]
+        assert FakeProvider().quote_name('a"b') == '"a""b"'
+
+    @pytest.mark.parametrize("query,error", [
+        # No name differing only in case, a name already quoted, a hidden table, another error
+        ("select * from job_states", 'relation "job_states" does not exist'),
+        ('select * from "users"', 'relation "users" does not exist'),
+        ("select * from onetimecodes", 'relation "onetimecodes" does not exist'),
+        ("select * form Users", 'syntax error at or near "form"'),
+        # Only inside a string under some dialect's reading (MySQL backslash escapes)
+        ("select 'it\\' Users' from t", 'relation "users" does not exist'),
+    ])
+    def test_leaves_other_queries_alone(self, query: str, error: str) -> None:
+        assert fix_name_case(query, error, self.SCHEMA) is None
+
+    def test_several_names_differing_only_in_case_are_not_guessed(self) -> None:
+        schema = DataExplorerSchemaResult(source="db", tables=[
+            DataExplorerSchemaTable("Users", "table", []), DataExplorerSchemaTable("USERS", "table", []),
+        ])
+        assert fix_name_case("select * from users", 'relation "users" does not exist', schema) is None
+        assert name_case_hint('relation "users" does not exist', schema) is None
+
+
+class CaseFoldingProvider(FakeProvider):
+    """A PostgreSQL-like source: names without quotes are folded to lower
+    case and the table is ``"Users"``."""
+
+    async def execute_async(self, context: DataExplorerExecutionContext) -> DataExplorerResult:
+        self.queries.append(context.query)
+        if '"Users"' not in context.query:
+            raise RuntimeError('42P01: relation "users" does not exist')
+        if "countrycode" in context.query.lower() and '"CountryCode"' not in context.query:
+            raise RuntimeError('42703: column "countrycode" does not exist')
+        return DataExplorerResult(
+            success=True, source=context.options.name, language=context.options.language,
+            default_output_format=context.options.default_output_format, execution_time=1,
+            columns=["n"], rows=[[3]], row_count=1, truncated=False, error=None,
+        )
+
+    async def get_schema_async(self, options: DataExplorerProviderOptions) -> DataExplorerSchemaResult:
+        return DataExplorerSchemaResult(source=options.name, tables=[
+            DataExplorerSchemaTable("public.Users", "table", [DataExplorerSchemaColumn("CountryCode", "text")]),
+        ])
+
+
+class TestExecutorNameCase:
+    async def test_runs_again_with_each_name_as_the_schema_spells_it(self) -> None:
+        executor, provider, entries, _ = executor_for(opts(), CaseFoldingProvider())
+
+        res = await executor.execute_async({"source": "db", "query": "select count(*) from Users where countrycode = 'MD'"})
+
+        assert res.success is True, res.error
+        assert res.executed_query == """select count(*) from "Users" where "CountryCode" = 'MD'"""
+        assert len(provider.queries) == 3
+        assert len(entries) == 1
+        assert entries[0].metadata["query"] == "select count(*) from Users where countrycode = 'MD'"
+        assert entries[0].metadata["executedQuery"] == res.executed_query
+        assert result_to_dict(res)["executed_query"] == res.executed_query
+
+    async def test_leaves_a_query_that_ran_as_sent_alone(self) -> None:
+        executor, _, entries, _ = executor_for(opts(), CaseFoldingProvider())
+        res = await executor.execute_async({"source": "db", "query": 'select count(*) from "Users"'})
+        assert res.success is True
+        assert res.executed_query is None
+        assert "executed_query" not in result_to_dict(res)
+        assert "executedQuery" not in entries[0].metadata
+
+    @pytest.mark.parametrize("read_only,fix", [(False, True), (True, False)])
+    async def test_only_hints_on_a_writable_source_or_when_turned_off(self, read_only: bool, fix: bool) -> None:
+        executor, provider, _, _ = executor_for(opts(read_only=read_only, fix_name_case=fix), CaseFoldingProvider())
+
+        res = await executor.execute_async({"source": "db", "query": "select count(*) from Users"})
+
+        assert res.success is False
+        assert (res.error or "").endswith('Names with capital letters need double quotes: "Users"')
+        assert len(provider.queries) == 1
 
 
 def executor_for(o: DataExplorerProviderOptions, provider: FakeProvider | None = None, **kw: Any):

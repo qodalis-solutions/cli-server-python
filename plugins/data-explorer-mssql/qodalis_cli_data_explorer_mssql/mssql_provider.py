@@ -207,6 +207,10 @@ class MssqlDataExplorerProvider(IDataExplorerProvider):
             if conn is not None:
                 conn.close()
 
+    def quote_name(self, name: str) -> str:
+        """SQL Server quotes names in brackets: ``[Users]``."""
+        return "[" + name.replace("]", "]]") + "]"
+
     async def execute_async(
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:

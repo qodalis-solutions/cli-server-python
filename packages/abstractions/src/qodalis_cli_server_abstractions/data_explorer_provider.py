@@ -20,6 +20,13 @@ class IDataExplorerProvider(abc.ABC):
     #: so the server skips its read-only query checks for read-only sources.
     read_only_queries: bool = False
 
+    def quote_name(self, name: str) -> str:
+        """A table or column name quoted for this source's SQL, used when the
+        server fixes the case of a name a query wrote without quotes
+        (``DataExplorerProviderOptions.fix_name_case``).  Default: double
+        quotes (ANSI)."""
+        return '"' + name.replace('"', '""') + '"'
+
     @abc.abstractmethod
     async def execute_async(
         self, context: DataExplorerExecutionContext

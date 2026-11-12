@@ -94,6 +94,8 @@ class SqlToken:
     value: str
     #: As written (words keep their case for object names).
     raw: str
+    #: Offset of a word in the query (``-1`` for other tokens).
+    start: int = -1
 
 
 #: ``$$`` or ``$tag$`` (a tag is an identifier without ``$``: ``$a1$``, ``$é$``, not ``$1$``).
@@ -269,7 +271,7 @@ def tokenize_sql(sql: str, reading: SqlReading = SQL_READINGS[0]) -> list[SqlTok
                 # Postgres escape string: E'it\'s'
                 i = _skip_string(sql, j, "'", True)
                 continue
-            tokens.append(SqlToken("word", raw.upper(), raw))
+            tokens.append(SqlToken("word", raw.upper(), raw, i))
             i = j
             continue
         if c.isspace() or c.isdigit():
@@ -945,6 +947,42 @@ def filter_schema(schema: Any, options: Any) -> Any:
 
 # PostgreSQL: 'relation "users" does not exist', 'column "countrycode" does not exist', 'column u.countrycode does not exist'
 _MISSING_NAME = re.compile(r'\b(relation|column) (?:"?[^"\s.]+"?\.)?"?([^"\s.]+)"? does not exist')
+# MySQL (table names are case-sensitive on Linux): "Table 'shop.users' doesn't exist"
+_MYSQL_MISSING_TABLE = re.compile(r"\bTable '(?:[^'.]+\.)?([^'.]+)' doesn't exist")
+# SQL Server with a case-sensitive collation: "Invalid object name 'users'.", "Invalid column name 'countrycode'."
+_MSSQL_MISSING_NAME = re.compile(r"\bInvalid (object|column) name '(?:[^'.]+\.)*([^'.]+)'")
+
+
+def _missing_name_in(error: str) -> tuple[bool, str] | None:
+    """The table (``True``) or column an error says does not exist, as the database reports it."""
+    m = _MISSING_NAME.search(error)
+    if m:
+        return m.group(1) == "relation", m.group(2)
+    m = _MYSQL_MISSING_TABLE.search(error)
+    if m:
+        return True, m.group(1)
+    m = _MSSQL_MISSING_NAME.search(error)
+    if m:
+        return m.group(1) == "object", m.group(2)
+    return None
+
+
+def _case_match(missing: tuple[bool, str], schema: Any) -> str | None:
+    """The name of ``schema`` that differs from the missing one only in case,
+    or ``None`` (none, the same name, or several that differ only in case)."""
+    table, name = missing
+    if table:
+        candidates = [t.name.split(".")[-1] for t in schema.tables]
+    else:
+        candidates = [c.name for t in schema.tables for c in t.columns]
+    lower = name.lower()
+    matches = list(dict.fromkeys(c for c in candidates if c.lower() == lower))
+    return matches[0] if len(matches) == 1 and matches[0] != name else None
+
+
+def quote_name_ansi(name: str) -> str:
+    """A name in double quotes (ANSI SQL: PostgreSQL, SQLite)."""
+    return '"' + name.replace('"', '""') + '"'
 
 
 def name_case_hint(error: str, schema: Any) -> str | None:
@@ -955,17 +993,42 @@ def name_case_hint(error: str, schema: Any) -> str | None:
     matches."""
     if schema is None:
         return None
-    match = _MISSING_NAME.search(error)
+    missing = _missing_name_in(error)
+    match = _case_match(missing, schema) if missing else None
+    return None if match is None else f'Names with capital letters need double quotes: "{match}"'
+
+
+def fix_name_case(query: str, error: str, schema: Any, quote: Callable[[str], str] = quote_name_ansi) -> str | None:
+    """The query with the name an error says does not exist written as
+    ``schema`` spells it and quoted by ``quote``, so ``select * from Users``
+    runs as ``select * from "Users"``; ``None`` when the error names no such
+    table or column.  Only an unquoted name outside strings and comments under
+    every dialect's reading (:data:`SQL_READINGS`) is changed, never a
+    function name (``count(``)."""
+    if schema is None:
+        return None
+    missing = _missing_name_in(error)
+    match = _case_match(missing, schema) if missing else None
     if match is None:
         return None
-    kind, name = match.group(1), match.group(2)
-    if kind == "relation":
-        candidates = [t.name.split(".")[-1] for t in schema.tables]
-    else:
-        candidates = [c.name for t in schema.tables for c in t.columns]
-    lower = name.lower()
-    found = next((c for c in candidates if c.lower() == lower and c != name), None)
-    return None if found is None else f'Names with capital letters need double quotes: "{found}"'
+    name = missing[1].lower()  # type: ignore[index]
+    starts: set[int] | None = None
+    for reading in SQL_READINGS:
+        tokens = tokenize_sql(query, reading)
+        here = {
+            t.start for i, t in enumerate(tokens)
+            if t.kind == "word" and t.raw.lower() == name
+            and not (i + 1 < len(tokens) and tokens[i + 1].kind == "punct" and tokens[i + 1].value == "(")
+        }
+        starts = here if starts is None else starts & here
+    if not starts:
+        return None
+    quoted = quote(match)
+    length = len(missing[1])  # type: ignore[index]
+    fixed = query
+    for start in sorted(starts, reverse=True):
+        fixed = fixed[:start] + quoted + fixed[start + length:]
+    return fixed
 
 
 _SHOW_COLLECTIONS = re.compile(r"^show\s+collections", re.IGNORECASE)
@@ -1024,7 +1087,9 @@ __all__ = [
     "can_use_source",
     "filter_listing",
     "filter_schema",
+    "fix_name_case",
     "name_case_hint",
+    "quote_name_ansi",
     "glob_to_regex",
     "is_object_allowed",
     "is_read_only",

@@ -91,6 +91,13 @@ class DataExplorerProviderOptions:
     #: Permissions needed to export results (``json``/``csv`` output in the
     #: web CLI).  Advisory.
     export_permissions: list[str] | None = None
+    #: A read-only SQL query that fails because a table or column without
+    #: quotes does not exist (PostgreSQL folds such names to lower case) runs
+    #: again with the name as the schema spells it, quoted
+    #: (``select * from Users`` runs as ``select * from "Users"``), when
+    #: exactly one visible name matches.  ``DataExplorerResult.executed_query``
+    #: then shows the query that ran.
+    fix_name_case: bool = True
 
 
 #: Why the server refused a data explorer query.
@@ -155,6 +162,9 @@ class DataExplorerResult:
     #: permission, 403), ``rate_limited`` (429), ``read_only``,
     #: ``object_not_allowed``, ``masked_column``, ``unknown_source``.
     error_code: DataExplorerErrorCode | None = None
+    #: The query as the server ran it, when it differs from the one sent (see
+    #: ``DataExplorerProviderOptions.fix_name_case``); omitted when ``None``.
+    executed_query: str | None = None
 
 
 @dataclass
