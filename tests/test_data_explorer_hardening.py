@@ -746,7 +746,7 @@ class TestPostgresReadOnly:
         async def connect(*a: Any, **k: Any):
             return conn
 
-        monkeypatch.setattr(pg_mod.asyncpg, "connect", connect)
+        monkeypatch.setattr(pg_mod.asyncpg, "connect", connect, raising=False)
         res = await pg_mod.PostgresDataExplorerProvider("postgresql://x").execute_async(ctx("SELECT 1 AS id"))
         assert res.success is True
         assert conn.calls == ["BEGIN READ ONLY", "SELECT 1 AS id", "ROLLBACK", "close"]
@@ -757,7 +757,7 @@ class TestPostgresReadOnly:
         async def connect(*a: Any, **k: Any):
             return conn
 
-        monkeypatch.setattr(pg_mod.asyncpg, "connect", connect)
+        monkeypatch.setattr(pg_mod.asyncpg, "connect", connect, raising=False)
         res = await pg_mod.PostgresDataExplorerProvider("postgresql://x").execute_async(ctx("DELETE FROM t"))
         assert res.success is False and "read-only transaction" in (res.error or "")
         assert conn.calls == ["BEGIN READ ONLY", "DELETE FROM t", "ROLLBACK", "close"]
@@ -768,7 +768,7 @@ class TestPostgresReadOnly:
         async def connect(*a: Any, **k: Any):
             return conn
 
-        monkeypatch.setattr(pg_mod.asyncpg, "connect", connect)
+        monkeypatch.setattr(pg_mod.asyncpg, "connect", connect, raising=False)
         await pg_mod.PostgresDataExplorerProvider("postgresql://x").execute_async(ctx("SELECT 1 AS id", read_only=False))
         assert conn.calls == ["SELECT 1 AS id", "close"]
 
@@ -779,7 +779,7 @@ class TestPostgresReadOnly:
         async def connect(*a: Any, **k: Any):
             return conn
 
-        monkeypatch.setattr(pg_mod.asyncpg, "connect", connect)
+        monkeypatch.setattr(pg_mod.asyncpg, "connect", connect, raising=False)
         res = await pg_mod.PostgresDataExplorerProvider("postgresql://x").execute_async(
             ctx("UPDATE t SET a = 1", read_only=False),
         )
@@ -830,7 +830,7 @@ class TestMysqlReadOnly:
         async def connect(*a: Any, **k: Any):
             return conn
 
-        monkeypatch.setattr(mysql_mod.aiomysql, "connect", connect)
+        monkeypatch.setattr(mysql_mod.aiomysql, "connect", connect, raising=False)
         res = await mysql_mod.MysqlDataExplorerProvider("mysql://u:p@h/db").execute_async(ctx("SELECT 1 AS id"))
         assert res.success is True
         assert conn.calls == ["START TRANSACTION READ ONLY", "SELECT 1 AS id", "ROLLBACK", "close"]
@@ -868,7 +868,7 @@ class _MssqlConnection:
 class TestMssqlReadOnly:
     async def test_transaction_is_rolled_back(self, monkeypatch) -> None:
         conn = _MssqlConnection()
-        monkeypatch.setattr(mssql_mod.pymssql, "connect", lambda **k: conn)
+        monkeypatch.setattr(mssql_mod.pymssql, "connect", lambda **k: conn, raising=False)
         provider = mssql_mod.MssqlDataExplorerProvider("Server=h;Database=d;User Id=u;Password=p")
         res = await provider.execute_async(ctx("SELECT 1 AS id"))
         assert res.success is True
@@ -876,7 +876,7 @@ class TestMssqlReadOnly:
 
     async def test_writable_commits(self, monkeypatch) -> None:
         conn = _MssqlConnection()
-        monkeypatch.setattr(mssql_mod.pymssql, "connect", lambda **k: conn)
+        monkeypatch.setattr(mssql_mod.pymssql, "connect", lambda **k: conn, raising=False)
         provider = mssql_mod.MssqlDataExplorerProvider("Server=h;Database=d;User Id=u;Password=p")
 
         class NoRows(_MssqlCursor):
