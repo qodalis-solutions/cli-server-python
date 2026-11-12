@@ -21,6 +21,7 @@ from .cli_job_scheduler import (
     InvalidOperationError,
     InvalidValueError,
     NotSupportedError,
+    job_has_tags,
 )
 from .interval_parser import parse_interval
 from .job_stats import (
@@ -37,6 +38,9 @@ class UpdateJobRequest(BaseModel):
 
     description: str | None = None
     group: str | None = None
+    #: Replaces the job's tags; ``null`` clears them, leaving it out keeps
+    #: them.  Validated by the scheduler (400 ``INVALID_VALUE``).
+    tags: Any = None
     schedule: str | None = None
     interval: str | None = None
     max_retries: int | None = Field(None, alias="maxRetries")
@@ -65,6 +69,7 @@ def _job_dto(reg: Any) -> dict[str, Any]:
         "name": reg.options.name,
         "description": reg.options.description,
         "group": reg.options.group,
+        "tags": list(reg.options.tags or []),
         "status": reg.status,
         "schedule": reg.options.schedule,
         "interval": reg.options.interval,
@@ -102,6 +107,11 @@ def _execution_item(e: JobExecution) -> dict[str, Any]:
     }
 
 
+def _query_tags(tag: list[str] | None) -> list[str]:
+    """The ``tag`` query parameter (repeated or comma-separated) as trimmed tags."""
+    return [t.strip() for value in (tag or []) for t in value.split(",") if t.strip()]
+
+
 def create_cli_jobs_router(
     scheduler: CliJobScheduler,
     storage: ICliJobStorageProvider,
@@ -109,28 +119,42 @@ def create_cli_jobs_router(
     """Create a FastAPI router with CRUD and control endpoints for jobs."""
     router = APIRouter()
 
-    def _resolve_job_ids(job: list[str] | None, group: str | None) -> list[str] | None:
+    def _resolve_job_ids(
+        job: list[str] | None, group: str | None, tag: list[str] | None = None,
+    ) -> list[str] | None:
         """The jobs named in ``job`` (repeated or comma-separated) and/or in
-        ``group`` (case-insensitive); ``None`` for every job, ``[]`` for none."""
+        ``group`` (case-insensitive) having every ``tag`` (repeated or
+        comma-separated, case-insensitive); ``None`` for every job, ``[]``
+        for none."""
         job_ids: list[str] | None = None
         if job is not None:
             job_ids = [j.strip() for value in job for j in value.split(",") if j.strip()]
-        if group is not None and group.strip():
-            in_group = [
+        tags = _query_tags(tag)
+        has_group = group is not None and bool(group.strip())
+        if has_group or tags:
+            matching = [
                 reg.id for reg in scheduler.registrations.values()
-                if (reg.options.group or "").lower() == group.lower()
+                if (not has_group or (reg.options.group or "").lower() == group.strip().lower())
+                and job_has_tags(reg.options.tags, tags)
             ]
-            job_ids = [j for j in job_ids if j in in_group] if job_ids else in_group
-        return job_ids if job_ids or group is not None else None
+            job_ids = [j for j in job_ids if j in matching] if job_ids else matching
+        return job_ids if job_ids or group is not None or tags else None
 
     @router.get("")
-    async def list_jobs() -> list[dict[str, Any]]:
-        return [_job_dto(reg) for reg in scheduler.registrations.values()]
+    async def list_jobs(tag: list[str] | None = Query(None)) -> list[dict[str, Any]]:
+        """The jobs; with ``tag`` (repeated or comma-separated) only those
+        that have every tag, ignoring case."""
+        tags = _query_tags(tag)
+        return [
+            _job_dto(reg) for reg in scheduler.registrations.values()
+            if job_has_tags(reg.options.tags, tags)
+        ]
 
     @router.get("/executions")
     async def list_executions(
         job: list[str] | None = Query(None),
         group: str | None = Query(None),
+        tag: list[str] | None = Query(None),
         status: str | None = Query(None),
         since: datetime.datetime | None = Query(None),
         limit: int = Query(20),
@@ -138,8 +162,8 @@ def create_cli_jobs_router(
     ) -> Any:
         """Executions across jobs, newest first: every job, the jobs named in
         ``job`` (repeat it or separate ids with commas), or the jobs of a
-        ``group``; optionally only those started ``since`` a time (ISO 8601)."""
-        job_ids = _resolve_job_ids(job, group)
+        ``group`` and/or with every ``tag``; optionally only those started ``since`` a time (ISO 8601)."""
+        job_ids = _resolve_job_ids(job, group, tag)
         query = JobExecutionQuery(
             job_ids=job_ids,
             status=status or None,
@@ -163,20 +187,21 @@ def create_cli_jobs_router(
     async def get_stats(
         job: list[str] | None = Query(None),
         group: str | None = Query(None),
+        tag: list[str] | None = Query(None),
         since: str | None = Query(None),
         until: str | None = Query(None),
         buckets: str | None = Query(None),
     ) -> Any:
         """Run statistics for the dashboard's charts: runs started in
         ``[since, until)`` (default: the last 24 hours) per time column by
-        outcome, totals and per-job figures.  ``job``/``group`` filter as in
+        outcome, totals and per-job figures.  ``job``/``group``/``tag`` filter as in
         ``GET /executions``.  Declared before ``/{job_id}``."""
         try:
             start, end = resolve_range(since, until)
             count = parse_buckets(buckets)
         except StatsRequestError as exc:
             return JSONResponse(status_code=400, content={"error": str(exc)})
-        job_ids = _resolve_job_ids(job, group)
+        job_ids = _resolve_job_ids(job, group, tag)
         # A group (or job list) without jobs gives empty stats, not every job
         runs = [] if job_ids is not None and not job_ids else await collect_runs(
             scheduler.query_executions, job_ids, start, end,
@@ -286,6 +311,7 @@ def create_cli_jobs_router(
                 timeout=body.timeout,
                 overlap_policy=body.overlap_policy,
                 max_concurrent_runs=body.max_concurrent_runs,
+                **({"tags": body.tags} if "tags" in body.model_fields_set else {}),
             )
             return {"message": "Job updated"}
         except KeyError:

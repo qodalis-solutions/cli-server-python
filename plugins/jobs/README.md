@@ -39,6 +39,7 @@ jobs_plugin = (
             name="health-check",
             description="Periodic health check",
             group="monitoring",
+            tags=["health", "nightly"],
             interval="30s",
         ),
     )
@@ -84,6 +85,7 @@ Python has no service container, so there is no per-run service scope (the .NET 
 | `name` | `str \| None` | Class name | Job display name |
 | `description` | `str \| None` | Name | Human-readable description |
 | `group` | `str \| None` | `None` | Logical grouping |
+| `tags` | `list[str]` | `[]` | Free-form labels to filter jobs by (`country:ro`, `bank`): each 1-64 characters without commas, at most 20, trimmed, duplicates (ignoring case) dropped. Job info always carries `tags` |
 | `schedule` | `str \| None` | `None` | Cron expression (5-field) |
 | `interval` | `str \| None` | `None` | Fixed interval (`30s`, `5m`, `1h`, `1d`); across restarts and pauses the next run is the last run plus the interval (right away when that has passed) |
 | `run_on_start` | `bool` | `False` | Run when the scheduler starts unless the job ran recently (active jobs only): an interval job when it never ran or its interval has passed, a cron job when it never ran or missed an occurrence, a job without a schedule on every start |
@@ -123,27 +125,28 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli/jobs`).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/` | List all jobs |
+| GET | `/` | List the jobs; `?tag=a&tag=b` (repeatable or comma-separated) lists only those that have every tag, ignoring case |
 | GET | `/{id}` | Get job details |
 | POST | `/{id}/trigger` | Trigger immediate execution |
 | POST | `/{id}/pause` | Pause scheduled execution |
 | POST | `/{id}/resume` | Resume a paused job |
 | POST | `/{id}/stop` | Stop job and cancel if running |
 | POST | `/{id}/cancel` | Cancel current execution only |
-| PUT | `/{id}` | Update job options (`description`, `group`, `schedule`, `interval`, `maxRetries`, `retryDelay`, `retryStrategy`, `timeout`, `overlapPolicy`, `maxConcurrentRuns`); an invalid value answers 400 (`INVALID_VALUE` for `maxConcurrentRuns`) |
+| PUT | `/{id}` | Update job options (`description`, `group`, `tags` (replaces them, `null` clears, invalid tags are 400 `INVALID_VALUE`), `schedule`, `interval`, `maxRetries`, `retryDelay`, `retryStrategy`, `timeout`, `overlapPolicy`, `maxConcurrentRuns`); an invalid value answers 400 (`INVALID_VALUE` for `maxConcurrentRuns`) |
 | GET | `/{id}/history` | Paginated execution history |
 | GET | `/{id}/history/{exec_id}` | Execution detail with logs |
 | DELETE | `/{id}/history/{exec_id}` | Delete one finished run and its logs |
 | DELETE | `/{id}/history` | Delete every finished run of the job: `?status=` deletes only the runs with that status (e.g. `failed`) |
-| GET | `/executions` | Executions across jobs, newest first: `?job=a,b&group=&status=&since=&limit=&offset=` |
-| GET | `/stats` | Run statistics for charts: `?since=&until=&buckets=&job=&group=` (default the last 24 h in 24 columns) |
+| GET | `/executions` | Executions across jobs, newest first: `?job=a,b&group=&tag=&status=&since=&limit=&offset=` |
+| GET | `/stats` | Run statistics for charts: `?since=&until=&buckets=&job=&group=&tag=` (default the last 24 h in 24 columns) |
 
-A job (`GET /`, `GET /{id}`, MCP `jobs_get`/`jobs_list`) has `maxConcurrentRuns`, `runningExecutionIds` (the running
+A job (`GET /`, `GET /{id}`, MCP `jobs_get`/`jobs_list`) has `tags`, `maxConcurrentRuns`, `runningExecutionIds` (the running
 runs' executions, oldest first; empty when idle), `currentExecutionId` (the newest of them, or `null`) and `queued`
 (a run waits for a slot).
 
 `job` may be repeated or comma separated; `group` selects the jobs of that group (case-insensitive, intersected with
-`job`); `since` is an ISO 8601 time; `limit` is clamped to 1..100. Executions carry `properties`, the job's own
+`job`); `tag` (repeated or comma separated) keeps the jobs that have every tag (case-insensitive); MCP `jobs_list` takes
+`tags` the same way; `since` is an ISO 8601 time; `limit` is clamped to 1..100. Executions carry `properties`, the job's own
 values. `GET /stats` counts every run started in `[since, until)` (it pages through the storage's execution query, so
 any storage works) per time column by outcome (`succeeded`, `failed`, `cancelled`, `running`), with totals and per-job
 figures (`successRate`, `avgDuration`, `p95Duration`, `maxDuration`, `lastFailureAt`, the 12 newest runs); `buckets` is

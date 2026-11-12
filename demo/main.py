@@ -283,6 +283,8 @@ def main() -> None:
         .add_job(SampleHealthCheckJob(), CliJobOptions(
             name="health-check",
             description="Periodic health check",
+            group="monitoring",
+            tags=["health", "demo"],
             interval="30s",
         ))
         .build()  # job:* events go to the server's event bus once mounted
