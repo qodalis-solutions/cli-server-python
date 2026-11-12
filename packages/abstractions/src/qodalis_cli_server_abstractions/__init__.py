@@ -5,7 +5,12 @@ from .cli_command_parameter_descriptor import (
     ICliCommandParameterDescriptor,
     CliCommandParameterDescriptor,
 )
-from .cli_command_processor import ICliCommandProcessor, CliCommandProcessor
+from .cli_command_processor import (
+    CliCommandExample,
+    CliCommandProcessor,
+    ICliCommandProcessor,
+    command_matches,
+)
 from .cli_paging import CliPageRequest, CliPaging, DEFAULT_TAKE, MAX_TAKE
 from .cli_module import ICliModule, CliModule
 from .cli_processor_filter import ICliProcessorFilter
@@ -39,6 +44,11 @@ from .data_explorer_types import (
     DataExplorerSchemaColumn,
     DataExplorerSchemaTable,
     DataExplorerSchemaResult,
+    DataExplorerRateLimit,
+    DataExplorerCaller,
+    DataExplorerAuditEntry,
+    DataExplorerErrorCode,
+    is_read_only_source,
 )
 from .data_explorer_provider import IDataExplorerProvider
 from .cli_stream_command_processor import ICliStreamCommandProcessor, is_stream_capable
@@ -56,6 +66,8 @@ __all__ = [
     "CliCommandParameterDescriptor",
     "ICliCommandProcessor",
     "CliCommandProcessor",
+    "CliCommandExample",
+    "command_matches",
     "CliPageRequest",
     "CliPaging",
     "DEFAULT_TAKE",
@@ -91,6 +103,11 @@ __all__ = [
     "DataExplorerSchemaColumn",
     "DataExplorerSchemaTable",
     "DataExplorerSchemaResult",
+    "DataExplorerRateLimit",
+    "DataExplorerCaller",
+    "DataExplorerAuditEntry",
+    "DataExplorerErrorCode",
+    "is_read_only_source",
     "IDataExplorerProvider",
     "ICliStreamCommandProcessor",
     "is_stream_capable",

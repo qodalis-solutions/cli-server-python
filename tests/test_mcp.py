@@ -152,7 +152,7 @@ def _server(mcp: Any = True, users: bool = False, fs: bool = False, jobs: bool =
     jobs_plugin = None
     if jobs:
         jobs_plugin = CliJobsBuilder().add_job(NoopJob(), CliJobOptions(
-            name="noop", description="Does nothing", interval="1h",
+            name="noop", description="Does nothing", interval="1h", tags=["Clock"],
         )).build()
         result.mount_plugin(jobs_plugin)
     users_plugin = None
@@ -652,7 +652,10 @@ class TestJobsTools:
             assert tools["jobs_list"]["annotations"] == {"readOnlyHint": True}
             listing = c.call("jobs_list")["result"]["structuredContent"]["jobs"]
             assert listing[0]["name"] == "noop"
+            assert listing[0]["tags"] == ["Clock"]
             job_id = listing[0]["id"]
+            assert c.call("jobs_list", {"tags": ["clock"]})["result"]["structuredContent"]["jobs"][0]["id"] == job_id
+            assert c.call("jobs_list", {"tags": ["nope"]})["result"]["structuredContent"]["jobs"] == []
             assert c.call("jobs_get", {"id": "noop"})["result"]["structuredContent"]["id"] == job_id
             assert c.call("jobs_pause", {"id": job_id})["result"] == {
                 "content": [{"type": "text", "text": "Job paused"}], "isError": False}

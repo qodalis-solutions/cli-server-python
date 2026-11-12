@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Callable, Literal
 
 
 class DataExplorerLanguage(str, Enum):
@@ -48,6 +48,15 @@ class DataExplorerParameterDescriptor:
 
 
 @dataclass
+class DataExplorerRateLimit:
+    """Rate limit of a data source: at most ``max_queries`` executes per
+    caller per ``window_seconds``."""
+
+    max_queries: int
+    window_seconds: float
+
+
+@dataclass
 class DataExplorerProviderOptions:
     """Configuration options for a data explorer provider."""
 
@@ -59,6 +68,64 @@ class DataExplorerProviderOptions:
     templates: list[DataExplorerTemplate] = field(default_factory=list)
     timeout: int = 30000
     max_rows: int = 1000
+    #: Permissions the caller must hold (all of them, besides ``data:query``)
+    #: to see and use the source.  Ignored on an open server.
+    required_permissions: list[str] | None = None
+    #: Queries may only read (default ``True``): the server checks the query
+    #: by language and SQL providers run it in a read-only transaction.  Set
+    #: ``False`` for a source that writes.
+    read_only: bool = True
+    #: Glob patterns (``*``, case-insensitive) of the tables (``schema.table``
+    #: or ``table``), collections, Redis keys or Elasticsearch indices the
+    #: source shows and accepts.  Best effort: the database account's
+    #: permissions are the real boundary.
+    allowed_objects: list[str] | None = None
+    #: Glob patterns of columns/fields whose values are replaced by ``***``.
+    mask_columns: list[str] | None = None
+    #: Glob patterns of columns/fields removed from results and the schema.
+    drop_columns: list[str] | None = None
+    #: Write every execute to the audit log when the server has one.
+    audit: bool = True
+    #: At most ``max_queries`` executes per caller per ``window_seconds``.
+    rate_limit: DataExplorerRateLimit | None = None
+    #: Permissions needed to export results (``json``/``csv`` output in the
+    #: web CLI).  Advisory.
+    export_permissions: list[str] | None = None
+
+
+#: Why the server refused a data explorer query.
+DataExplorerErrorCode = Literal[
+    "forbidden", "rate_limited", "read_only", "object_not_allowed", "masked_column", "unknown_source",
+]
+
+
+def is_read_only_source(options: Any) -> bool:
+    """Whether a source only reads (``read_only`` defaults to ``True``)."""
+    return getattr(options, "read_only", True) is not False
+
+
+@dataclass
+class DataExplorerCaller:
+    """Who runs a data explorer request, as the server knows it.
+
+    ``has_permission`` is ``None`` on an open server (no auth provider):
+    permission options are then not enforced."""
+
+    user_id: str | None = None
+    user_name: str | None = None
+    #: The client address, for rate limiting anonymous callers.
+    remote_address: str | None = None
+    has_permission: Callable[[str], bool] | None = None
+
+
+@dataclass
+class DataExplorerAuditEntry:
+    """An audit entry the data explorer writes (event ``data_query``)."""
+
+    event: str
+    user_id: str
+    user_name: str
+    metadata: dict[str, Any]
 
 
 @dataclass
@@ -84,6 +151,10 @@ class DataExplorerResult:
     row_count: int
     truncated: bool
     error: str | None
+    #: Why the server refused the query, when it did: ``forbidden`` (missing
+    #: permission, 403), ``rate_limited`` (429), ``read_only``,
+    #: ``object_not_allowed``, ``masked_column``, ``unknown_source``.
+    error_code: DataExplorerErrorCode | None = None
 
 
 @dataclass

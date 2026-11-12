@@ -16,6 +16,10 @@ class IDataExplorerProvider(abc.ABC):
     """Interface for data explorer providers that execute queries against a
     data source and return structured results."""
 
+    #: The provider can only read, whatever the query (e.g. a read-only API),
+    #: so the server skips its read-only query checks for read-only sources.
+    read_only_queries: bool = False
+
     @abc.abstractmethod
     async def execute_async(
         self, context: DataExplorerExecutionContext

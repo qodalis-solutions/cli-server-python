@@ -4,6 +4,64 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## 1.0.0b25
+
+- The admin plugin embeds dashboard 1.0.0-beta.20: job tags, command metadata, the terminal link page, API tokens, a data explorer page and audit details.
+
+- **Jobs: tags.** `tags` on a job (`CliJobOptions.tags`: free-form labels such as `country:ro`, `bank`; each 1-64
+  characters without commas, at most 20, duplicates ignoring case dropped), always present in job info (`[]` when
+  none). `GET /api/v1/qcli/jobs?tag=a&tag=b` (repeatable or comma-separated) lists the jobs that have every tag,
+  ignoring case; `/executions` and `/stats` take `tag=` too. `PUT /jobs/{id}` accepts `tags` (replaces them, `null`
+  clears, invalid ones are 400 `INVALID_VALUE`). MCP `jobs_list` takes `tags` and shows them. Same on the .NET and
+  Node servers.
+- **Commands as rich as web commands.** Processors may define `aliases`, `examples` (`CliCommandExample`),
+  `documentation`, `module` and `icon`, and parameters `allowed_values` and `examples` (example values); `GET /api/v1/qcli/commands` sends them
+  (absent when unset), so the web CLI's `help` shows examples and documentation, groups and decorates the command, and
+  completes and checks allowed values. The server resolves aliases of commands and sub-commands for `/execute`,
+  streaming and permission checks (a command name wins over another command's alias). MCP command tools list allowed
+  values as an `enum` (and parameter examples as `examples`) and refuse other values. The built-in processors and the weather plugin carry examples and
+  documentation (`hash --algorithm` its algorithms). Same on the .NET and Node servers (spec: web-cli
+  `docs/superpowers/specs/2026-11-12-server-command-metadata-design.md`).
+- **Data explorer: per-source permissions, read-only mode, masking, audit and limits**, the same on the .NET and Node servers
+  (spec: web-cli `docs/superpowers/specs/2026-11-12-data-explorer-hardening-design.md`):
+  - **Breaking:** sources are read-only by default. Writes, DDL and several statements are refused before the provider runs
+    (`errorCode: "read_only"`), and the SQL providers run queries in a read-only transaction (SQLite `PRAGMA query_only`,
+    Postgres `BEGIN READ ONLY`, MySQL `START TRANSACTION READ ONLY`, SQL Server a transaction that is always rolled back).
+    Set `read_only=False` on a source that must write.
+    The SQL check reads quotes and comments as MySQL (`--` before a space, `#`, `/*! ... */`, `"..."` strings), Postgres
+    (`E'...'`, `$$...$$`, nested comments), SQL Server (nested comments, `[...]`) and SQLite each do, and a query must
+    pass under every reading, so a quote or comment one database skips cannot hide a statement another runs.
+    `COMMIT`, `ROLLBACK` and `DENY` count as writes (SQL Server runs statements without `;`), a lone carriage return is
+    refused, and names may hold non-ASCII letters.
+  - `allowed_objects` reads every item of a `FROM`/`USING` list, CTE names only within their scope, `db..table`, and the
+    table after a leading `DESCRIBE`/`EXPLAIN`; MongoDB `$lookup`, `$graphLookup`, `$unionWith`, `$out` and `$merge`
+    (with `\uXXXX` escapes decoded); Elasticsearch paths cut at `?`/`#` and index names in the body; Redis keys split as
+    the provider splits them. The same rules as the Node and .NET servers.
+  - On SQL sources with `mask_columns` or `drop_columns`, those columns can only be selected by their own name (a plain
+    item of the outer select list, or `*`): aliases, expressions, filters, sorts, subqueries, set operations, Postgres
+    whole-row values and `U&"..."` names are refused before the query runs (`errorCode: "masked_column"`, `Masked column
+    'email' can only be selected by its own name`), and a result that returns such a column under another name is withheld.
+  - Masking also applies inside JSON text (a JSON column, an Elasticsearch answer): it is masked like a document.
+  - The Postgres provider runs queries only as prepared statements (one statement each, also when they return no rows).
+  - The schema's columns use camelCase keys (`primaryKey`) over HTTP and in MCP `data_schema`, as on the other servers.
+  - New `DataExplorerProviderOptions` fields: `required_permissions` (403, and the source is hidden from `/sources` and MCP
+    `data_sources`), `allowed_objects` (globs of tables, collections, keys or indices), `mask_columns` (`***`), `drop_columns`,
+    `audit` (default `True`: a `data_query` entry in the audit log per execute), `rate_limit=DataExplorerRateLimit(max_queries,
+    window_seconds)` (429) and `export_permissions`.
+  - `GET /sources` adds `readOnly` and `canExport` (and no longer lists the source's policy options); the schema lists only
+    allowed tables without dropped columns; results carry `errorCode` when refused. The MCP `data_*` tools apply the same rules.
+  - `DataExplorerExecutor(registry, audit=..., rate_limiter=...)`, `execute_async(request, caller=None)`,
+    `create_data_explorer_router(registry, executor, caller=...)`; new abstractions `DataExplorerCaller`,
+    `DataExplorerAuditEntry`, `DataExplorerRateLimit`, `is_read_only_source`; providers that only read can set
+    `read_only_queries = True`. The plugins read the new options with `getattr`, so they still work with older abstractions.
+- **Link a terminal through the browser** (users plugin), the same on the .NET and Node servers
+  (spec: web-cli `docs/superpowers/specs/2026-11-12-server-linking-design.md`): `POST /api/v1/qcli/link` (public,
+  rate limited) returns a code and the approval page, `GET /link/{linkId}` hands the terminal its API token once the
+  user approved at `/qcli/admin/link?code=…` (`GET /link/code/{code}`, `POST …/approve`, `POST …/deny`). The token is
+  the approver's, named `link <client>`, scoped to the requested permissions. `set_link_approval_url` points to a
+  host's own page; `link_approved` and `link_denied` are audited. A request is approved once (a parallel approval gets
+  404); one that expires while its token is created gets 404 and the token is revoked.
+
 ## 1.0.0b24
 
 - The admin plugin embeds dashboard 1.0.0-beta.19: a phone layout (below 768 px the sidebar is a drawer, stat cards wrap, panels stack and tables scroll in their container) and tests for the live log tail.

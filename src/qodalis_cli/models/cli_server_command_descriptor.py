@@ -14,6 +14,8 @@ class CliServerCommandParameterDescriptorDto(BaseModel):
     type: str = "string"
     aliases: list[str] | None = None
     default_value: Any = Field(alias="defaultValue", default=None)
+    allowed_values: list[str] | None = Field(alias="allowedValues", default=None)
+    examples: list[str] | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -24,6 +26,11 @@ class CliServerCommandDescriptor(BaseModel):
     command: str
     description: str
     version: str = "1.0.0"
+    aliases: list[str] | None = None
+    examples: list[dict[str, str]] | None = None
+    documentation: str | None = None
+    module: str | None = None
+    icon: str | None = None
 
     parameters: list[CliServerCommandParameterDescriptorDto] | None = None
     processors: list["CliServerCommandDescriptor"] | None = None

@@ -17,6 +17,7 @@ from .cli_job_scheduler import (
     ExecutionNotFoundError,
     InvalidOperationError,
     NotSupportedError,
+    job_has_tags,
 )
 from .cli_jobs_controller import _job_dto, _serialize_dt
 
@@ -54,10 +55,15 @@ class JobsMcpToolProvider:
         scheduler = self.scheduler
 
         async def jobs_list(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
-            jobs = [_job_dto(r) for r in scheduler.registrations.values()]
-            lines = ["NAME | ID | STATUS | NEXT RUN | LAST STATUS"]
+            tags = [t.strip() for t in args.get("tags") or [] if t.strip()]
+            jobs = [
+                _job_dto(r) for r in scheduler.registrations.values()
+                if job_has_tags(r.options.tags, tags)
+            ]
+            lines = ["NAME | ID | STATUS | NEXT RUN | LAST STATUS | TAGS"]
             lines += [
                 f"{j['name']} | {j['id']} | {j['status']} | {j['nextRunAt'] or '-'} | {j['lastRunStatus'] or '-'}"
+                f" | {', '.join(j['tags']) or '-'}"
                 for j in jobs
             ]
             return McpToolResult(text="\n".join(lines), structured={"jobs": jobs})
@@ -145,7 +151,17 @@ class JobsMcpToolProvider:
 
         id_only = object_schema({"id": _ID}, ["id"])
         return [
-            McpTool("jobs_list", "List background jobs", object_schema(), jobs_list, [JOBS_READ], dict(READ_ONLY)),
+            McpTool(
+                "jobs_list",
+                "List background jobs, optionally only those with every given tag",
+                object_schema({
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Only jobs that have every one of these tags (ignoring case)",
+                    },
+                }),
+                jobs_list, [JOBS_READ], dict(READ_ONLY)),
             McpTool("jobs_get", "Details of a background job", id_only, jobs_get, [JOBS_READ], dict(READ_ONLY)),
             McpTool(
                 "jobs_history",

@@ -104,6 +104,10 @@ Extend `CliCommandProcessor` and implement `command`, `description` and `handle_
 | `allow_unlisted_commands` | `bool \| None` | `None` | Accept sub-commands not in `processors` |
 | `value_required` | `bool \| None` | `None` | `True`: a positional value is required; `False`: optional |
 | `required_permissions` | `list[str] \| None` | `None` | Permissions enforced when the users plugin protects the server |
+| `aliases` | `list[str] \| None` | `None` | Other names; the server resolves them (and their permissions) like the command |
+| `examples` | `list[CliCommandExample] \| None` | `None` | Example lines (`CliCommandExample("time --utc", "UTC time")`) shown by `help <command>` in the web CLI |
+| `documentation` | `str \| None` | `None` | Longer help text for `help <command>` (paragraphs separated by a blank line) |
+| `module`, `icon` | `str \| None` | `server:<name>`, 🖥 | The group and emoji the web CLI's `help` lists the command under |
 | `version` | `str` | `"1.0.0"` | Processor version |
 | `author` | `ICliCommandAuthor` | library author | Author metadata |
 
@@ -123,7 +127,7 @@ Every processor receives a `CliProcessCommand`:
 
 ### Parameters
 
-Declare parameters with names, types, aliases, and defaults. The CLI client uses this metadata for autocompletion and validation.
+Declare parameters with names, types, aliases, and defaults. The CLI client uses this metadata for autocompletion and validation. `allowed_values` lists the only values a parameter takes: the web CLI shows them in help, completes them with Tab and refuses others before sending; MCP tools list them as an `enum`. `examples` lists example values, shown in help and as `examples` in MCP.
 
 ```python
 from qodalis_cli import (
@@ -405,7 +409,7 @@ Tools are collected from **tool providers** on every request, so registrations, 
 | commands (always) | one tool per command (below) | `commands:execute` + every `required_permissions` along the command chain |
 | filesystem (when `/api/qcli/fs` is enabled) | `fs_list {path}`, `fs_stat {path}`, `fs_read {path, maxBytes?=262144}` (UTF-8 text, longer files end with `[truncated: N of M bytes]`; binary files → error `binary file, N bytes`) | `files:read` |
 | | `fs_write {path, content}`, `fs_mkdir {path}`, `fs_delete {path, recursive?=false}` | `files:write` |
-| data explorer (when a provider is registered) | `data_sources`, `data_schema {source}`, `data_query {source, query, parameters?}` | `data:query` |
+| data explorer (when a provider is registered) | `data_sources`, `data_schema {source}`, `data_query {source, query, parameters?}` | `data:query` plus the source's `required_permissions` |
 | jobs (jobs plugin mounted) | `jobs_list`, `jobs_get {id}`, `jobs_history {id, limit?=20}` | `jobs:read` |
 | | `jobs_trigger` (answers `Job queued` when the run waits for a slot), `jobs_pause`, `jobs_resume`, `jobs_stop`, `jobs_cancel` (every running run) `{id}` | `jobs:manage` |
 | | `jobs_delete_runs {id, execution?, status?}`: one run, or every finished run (optionally of a status) | `jobs:manage` |
@@ -773,6 +777,8 @@ builder.set_file_storage_provider(MyProvider())
 
 Register data sources with `builder.add_data_explorer_provider(provider, options)`; the web terminal queries them through `/api/qcli/data-explorer` (`sources`, `schema`, `execute`). Each source type is a separate plugin implementing `IDataExplorerProvider` (`execute_async`, optional `get_schema_async`); one provider class can be registered several times under different names.
 
+Sources are **read-only by default**: set `read_only=False` on a source that must write. Per source you can also require permissions (`required_permissions`), limit the tables, collections or keys it shows (`allowed_objects`), mask or drop columns (`mask_columns`, `drop_columns`), limit queries per user (`rate_limit`) and gate exports (`export_permissions`). Every query is written to the audit log as `data_query` unless `audit=False`. See the [data explorer README](plugins/data-explorer/README.md#read-only-sources).
+
 ### SQL Provider
 
 ```python
@@ -908,7 +914,7 @@ The image runs the demo server (all plugins, users plugin with `root` / `admin`)
 
 ## Versioning
 
-Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b24` today (PEP 440 for `1.0.0-beta.24`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
+Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abstractions` and every `qodalis-cli-server-plugin-*`) has the same version, and so do the .NET and Node servers' packages: `1.0.0b25` today (PEP 440 for `1.0.0-beta.25`). A release bumps all of them together, even packages that did not change, so one version number describes a whole server release. Install the same version of every `qodalis-cli-server*` package you use.
 
 ## Development
 

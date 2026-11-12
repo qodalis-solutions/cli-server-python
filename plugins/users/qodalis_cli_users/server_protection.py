@@ -40,7 +40,7 @@ PUBLIC_PATHS: list[tuple[re.Pattern[str], frozenset[str] | None]] = [
 
 #: Routes of the users plugin itself — they authenticate in their own
 #: dependencies (with CSRF and password-change gating).
-SELF_PROTECTED = re.compile(r"^/api/v1/qcli/(sessions|users|groups|tokens)(/.*)?$")
+SELF_PROTECTED = re.compile(r"^/api/v1/qcli/(sessions|users|groups|tokens|link)(/.*)?$")
 
 #: HTTP permission rules, first match wins: (path, methods or None, permission).
 HTTP_RULES: list[Rule] = [

@@ -374,3 +374,82 @@ class TestDeleteRuns:
         resp = await client.delete("/api/v1/qcli/jobs/nonexistent/history")
         assert resp.status_code == 404
         assert resp.json() == {"error": "Job not found", "code": "JOB_NOT_FOUND"}
+
+
+# ---------------------------------------------------------------------------
+# Tags
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def tagged_plugin() -> CliJobsPlugin:
+    return (
+        CliJobsBuilder()
+        .add_job(QuickJob(), CliJobOptions(id="ro-bnr", name="bnr", interval="999s",
+                                           tags=["country:ro", "Official", " official "]))
+        .add_job(QuickJob(), CliJobOptions(id="ro-bt", name="bt", interval="999s",
+                                           tags=["country:ro", "bank"]))
+        .add_job(QuickJob(), CliJobOptions(id="md-maib", name="maib", group="banks", interval="999s",
+                                           tags=["country:md", "bank"]))
+        .add_job(QuickJob(), CliJobOptions(id="cleanup", name="cleanup", interval="999s"))
+        .build()
+    )
+
+
+@pytest.fixture()
+async def tag_client(tagged_plugin: CliJobsPlugin):
+    app = FastAPI()
+    app.include_router(tagged_plugin.router, prefix="/api/v1/qcli/jobs")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+
+
+class TestJobTags:
+    async def test_tags_in_job_info(self, tag_client: AsyncClient) -> None:
+        assert (await tag_client.get("/api/v1/qcli/jobs/ro-bnr")).json()["tags"] == ["country:ro", "Official"]
+        assert (await tag_client.get("/api/v1/qcli/jobs/cleanup")).json()["tags"] == []
+
+    async def test_list_filters_by_every_tag_ignoring_case(self, tag_client: AsyncClient) -> None:
+        async def ids(query: str) -> list[str]:
+            return sorted(j["id"] for j in (await tag_client.get(f"/api/v1/qcli/jobs{query}")).json())
+
+        assert await ids("") == ["cleanup", "md-maib", "ro-bnr", "ro-bt"]
+        assert await ids("?tag=COUNTRY:RO") == ["ro-bnr", "ro-bt"]
+        assert await ids("?tag=country:ro&tag=bank") == ["ro-bt"]
+        assert await ids("?tag=country:ro,bank") == ["ro-bt"]
+        assert await ids("?tag=missing") == []
+
+    async def test_executions_filter_by_tag_and_group(
+        self, tag_client: AsyncClient, tagged_plugin: CliJobsPlugin
+    ) -> None:
+        await tagged_plugin.scheduler.trigger("ro-bt")
+        await tagged_plugin.scheduler.trigger("md-maib")
+        await asyncio.sleep(0.1)
+        by_tag = (await tag_client.get("/api/v1/qcli/jobs/executions?tag=bank")).json()
+        assert sorted(e["jobId"] for e in by_tag["items"]) == ["md-maib", "ro-bt"]
+        with_group = (await tag_client.get("/api/v1/qcli/jobs/executions?tag=bank&group=banks")).json()
+        assert [e["jobId"] for e in with_group["items"]] == ["md-maib"]
+        none = (await tag_client.get("/api/v1/qcli/jobs/executions?tag=missing")).json()
+        assert none["items"] == [] and none["total"] == 0
+
+    async def test_put_replaces_clears_and_validates(self, tag_client: AsyncClient) -> None:
+        url = "/api/v1/qcli/jobs/cleanup"
+
+        async def tags() -> list[str]:
+            return (await tag_client.get(url)).json()["tags"]
+
+        assert (await tag_client.put(url, json={"tags": ["maintenance", "Maintenance", "nightly"]})).status_code == 200
+        assert await tags() == ["maintenance", "nightly"]
+        assert [j["id"] for j in (await tag_client.get("/api/v1/qcli/jobs?tag=nightly")).json()] == ["cleanup"]
+        await tag_client.put(url, json={"tags": None})
+        assert await tags() == []
+        for bad in ["nightly", ["a,b"], [""], [1], ["x" * 65], [f"t{i}" for i in range(21)]]:
+            resp = await tag_client.put(url, json={"tags": bad})
+            assert resp.status_code == 400, bad
+            assert resp.json()["code"] == "INVALID_VALUE"
+        await tag_client.put(url, json={"tags": ["kept"]})
+        await tag_client.put(url, json={"description": "d"})
+        assert await tags() == ["kept"]
+
+    def test_invalid_tags_refused_at_registration(self) -> None:
+        with pytest.raises(ValueError, match="Invalid tag"):
+            CliJobsBuilder().add_job(QuickJob(), CliJobOptions(name="x", tags=["a,b"])).build()
