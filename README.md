@@ -104,6 +104,10 @@ Extend `CliCommandProcessor` and implement `command`, `description` and `handle_
 | `allow_unlisted_commands` | `bool \| None` | `None` | Accept sub-commands not in `processors` |
 | `value_required` | `bool \| None` | `None` | `True`: a positional value is required; `False`: optional |
 | `required_permissions` | `list[str] \| None` | `None` | Permissions enforced when the users plugin protects the server |
+| `aliases` | `list[str] \| None` | `None` | Other names; the server resolves them (and their permissions) like the command |
+| `examples` | `list[CliCommandExample] \| None` | `None` | Example lines (`CliCommandExample("time --utc", "UTC time")`) shown by `help <command>` in the web CLI |
+| `documentation` | `str \| None` | `None` | Longer help text for `help <command>` (paragraphs separated by a blank line) |
+| `module`, `icon` | `str \| None` | `server:<name>`, 🖥 | The group and emoji the web CLI's `help` lists the command under |
 | `version` | `str` | `"1.0.0"` | Processor version |
 | `author` | `ICliCommandAuthor` | library author | Author metadata |
 
@@ -123,7 +127,7 @@ Every processor receives a `CliProcessCommand`:
 
 ### Parameters
 
-Declare parameters with names, types, aliases, and defaults. The CLI client uses this metadata for autocompletion and validation.
+Declare parameters with names, types, aliases, and defaults. The CLI client uses this metadata for autocompletion and validation. `allowed_values` lists the only values a parameter takes: the web CLI shows them in help, completes them with Tab and refuses others before sending; MCP tools list them as an `enum`.
 
 ```python
 from qodalis_cli import (

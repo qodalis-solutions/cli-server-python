@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import abc
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .cli_command_author import DEFAULT_LIBRARY_AUTHOR, ICliCommandAuthor
@@ -9,6 +10,23 @@ from .cli_command_author import DEFAULT_LIBRARY_AUTHOR, ICliCommandAuthor
 if TYPE_CHECKING:
     from .cli_command_parameter_descriptor import ICliCommandParameterDescriptor
     from .cli_process_command import CliProcessCommand
+
+
+@dataclass(frozen=True)
+class CliCommandExample:
+    """An example command line shown in a command's help."""
+
+    command: str
+    description: str | None = None
+
+
+def command_matches(processor: Any, name: str) -> bool:
+    """Whether ``name`` is the processor's command or one of its aliases
+    (ignoring case)."""
+    lower = name.lower()
+    if processor.command.lower() == lower:
+        return True
+    return any(a.lower() == lower for a in (getattr(processor, "aliases", None) or []))
 
 
 class ICliCommandProcessor(abc.ABC):
@@ -25,6 +43,34 @@ class ICliCommandProcessor(abc.ABC):
     def description(self) -> str:
         """Short human-readable description of the command."""
         ...
+
+    @property
+    def aliases(self) -> list[str] | None:
+        """Other names of the command (root or sub-command).  The server
+        resolves them like the command itself, for execution and
+        permissions."""
+        return None
+
+    @property
+    def examples(self) -> list[CliCommandExample] | None:
+        """Example command lines for the command's help."""
+        return None
+
+    @property
+    def documentation(self) -> str | None:
+        """Longer help text for ``help <command>``: plain text, paragraphs
+        separated by a blank line."""
+        return None
+
+    @property
+    def module(self) -> str | None:
+        """The group the command is listed under in the web CLI's help."""
+        return None
+
+    @property
+    def icon(self) -> str | None:
+        """One emoji shown next to the command in the web CLI's help."""
+        return None
 
     @property
     def author(self) -> ICliCommandAuthor:

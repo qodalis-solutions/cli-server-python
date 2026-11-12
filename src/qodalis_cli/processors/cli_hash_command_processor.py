@@ -10,6 +10,7 @@ from ..abstractions import (
     ICliCommandParameterDescriptor,
     get_positional_text,
 )
+from ..abstractions import CliCommandExample
 
 SUPPORTED_ALGORITHMS = ["md5", "sha1", "sha256", "sha512"]
 
@@ -31,6 +32,19 @@ class CliHashCommandProcessor(CliCommandProcessor):
         return "Computes hash of the input text"
 
     @property
+    def examples(self) -> list[CliCommandExample]:
+        return [
+            CliCommandExample("hash hello", "SHA-256 digest of hello"),
+            CliCommandExample("hash hello --algorithm md5", "MD5 digest of hello"),
+        ]
+
+    @property
+    def documentation(self) -> str:
+        return (
+            "Computes a digest of the text on the server and prints it in hexadecimal. The default algorithm is sha256."
+        )
+
+    @property
     def parameters(self) -> list[ICliCommandParameterDescriptor]:
         return [
             CliCommandParameterDescriptor(
@@ -39,6 +53,7 @@ class CliHashCommandProcessor(CliCommandProcessor):
                 aliases=["-a"],
                 default_value="sha256",
                 type="string",
+                allowed_values=list(SUPPORTED_ALGORITHMS),
             ),
         ]
 

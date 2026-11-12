@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..abstractions import ICliCommandProcessor
+from ..abstractions import ICliCommandProcessor, command_matches
 from ..abstractions.cli_process_command import CliProcessCommand
 from qodalis_cli_server_abstractions import is_stream_capable
 from ..models import CliServerCommandDescriptor, CliServerCommandParameterDescriptorDto, CliServerResponse
@@ -58,6 +58,7 @@ def _map_to_descriptor(processor: ICliCommandProcessor) -> dict[str, Any]:
                 type=p.type,
                 aliases=p.aliases,
                 defaultValue=p.default_value,
+                allowedValues=list(getattr(p, "allowed_values", None) or []) or None,
             ).model_dump(by_alias=True, exclude_none=True)
             for p in processor.parameters
         ]
@@ -72,6 +73,14 @@ def _map_to_descriptor(processor: ICliCommandProcessor) -> dict[str, Any]:
         version=processor.version,
         parameters=params if params else None,
         processors=subs if subs else None,
+        aliases=list(getattr(processor, "aliases", None) or []) or None,
+        examples=[
+            {"command": e.command, **({"description": e.description} if e.description else {})}
+            for e in (getattr(processor, "examples", None) or [])
+        ] or None,
+        documentation=getattr(processor, "documentation", None) or None,
+        module=getattr(processor, "module", None) or None,
+        icon=getattr(processor, "icon", None) or None,
         allowUnlistedCommands=processor.allow_unlisted_commands,
         valueRequired=processor.value_required,
         author={"name": processor.author.name, "email": processor.author.email},
@@ -88,9 +97,9 @@ def _chain_processors(root: ICliCommandProcessor | None, chain: list[str]) -> li
     for name in chain or []:
         if current is None or not isinstance(name, str):
             break
-        current = next(
-            (p for p in (current.processors or []) if p.command.lower() == name.lower()),
-            None,
+        subs = current.processors or []
+        current = next((p for p in subs if p.command.lower() == name.lower()), None) or next(
+            (p for p in subs if command_matches(p, name)), None,
         )
         if current is not None:
             out.append(current)
