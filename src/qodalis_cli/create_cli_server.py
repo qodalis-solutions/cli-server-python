@@ -31,7 +31,7 @@ from .mcp import (
     resolve_mcp_options,
 )
 from .security import WebSocketOriginMiddleware, get_auth_context, origins_regex
-from .shell_security import CliShellOptions, ShellAccessProvider
+from .shell_security import CliShellOptions, ShellAccessProvider, remote_address
 from .services import (
     CliCommandExecutorService,
     CliEventBus,
@@ -247,6 +247,9 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         app.include_router(fs_router, prefix="/api/qcli/fs")
         mcp_tools.add_provider(FilesystemMcpToolProvider(fs_provider), builtin=True)
 
+    #: Set to the result below: the data explorer reads its audit log per query.
+    server_ref: list[CliServerResult] = []
+
     if builder.data_explorer_registrations:
         from qodalis_cli_data_explorer import (
             DataExplorerRegistry,
@@ -257,13 +260,29 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         data_explorer_registry = DataExplorerRegistry()
         for reg in builder.data_explorer_registrations:
             data_explorer_registry.register(reg.provider, reg.options)
-        data_explorer_executor = DataExplorerExecutor(data_explorer_registry)
+        # The audit plugin can be mounted later (mount_plugin): read it per query
+        data_explorer_executor = DataExplorerExecutor(
+            data_explorer_registry,
+            audit=lambda: _data_explorer_audit_sink(server_ref[0] if server_ref else None),
+        )
         data_explorer_router = create_data_explorer_router(
-            data_explorer_registry, data_explorer_executor
+            data_explorer_registry,
+            data_explorer_executor,
+            caller=lambda request: data_explorer_caller(
+                get_auth_context(request), remote_address(request, opts.shell.trust_proxy),
+            ),
         )
         app.include_router(data_explorer_router, prefix="/api/qcli/data-explorer")
         mcp_tools.add_provider(
-            DataExplorerMcpToolProvider(data_explorer_registry, data_explorer_executor), builtin=True,
+            DataExplorerMcpToolProvider(
+                data_explorer_registry,
+                data_explorer_executor,
+                caller=lambda context: data_explorer_caller(
+                    context.auth,
+                    remote_address(context.request, opts.shell.trust_proxy) if context.request is not None else None,
+                ),
+            ),
+            builtin=True,
         )
 
     mcp_tools.add_provider(CommandsMcpToolProvider(registry, executor))
@@ -308,7 +327,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     async def websocket_shell(websocket: WebSocket) -> None:
         await shell_session_manager.handle_connection(websocket)
 
-    return CliServerResult(
+    result = CliServerResult(
         app=app,
         registry=registry,
         builder=builder,
@@ -320,6 +339,48 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         mcp=mcp_tools,
         event_bus=event_bus,
     )
+    server_ref.append(result)
+    return result
+
+
+def data_explorer_caller(auth: Any, remote: str | None = None) -> Any:
+    """The data explorer's caller for a server auth context (``None`` without
+    an auth provider: the source's permission options are then not enforced)."""
+    try:
+        from qodalis_cli_server_abstractions import DataExplorerCaller
+    except ImportError:  # pragma: no cover - older abstractions package
+        from types import SimpleNamespace as DataExplorerCaller  # type: ignore[assignment]
+
+    user = getattr(auth, "user", None)
+    return DataExplorerCaller(
+        user_id=getattr(auth, "user_id", None) or getattr(user, "id", None),
+        user_name=getattr(auth, "user_name", None) or getattr(user, "name", None),
+        remote_address=remote,
+        has_permission=(lambda p: bool(auth.can(p))) if auth is not None else None,
+    )
+
+
+def _data_explorer_audit_sink(server: Any) -> Any:
+    """Writes data explorer audit entries to the server's audit log (the
+    audit plugin, mounted by the users plugin), or ``None`` without one."""
+    plugin = getattr(server, "_qcli_audit_plugin", None) if server is not None else None
+    if plugin is None:
+        return None
+
+    async def sink(entry: Any) -> None:
+        from qodalis_cli_server_abstractions.audit import AuditEntry
+
+        await plugin.log(AuditEntry(
+            event=entry.event,
+            username=entry.user_name,
+            details=str(entry.metadata.get("source", "")),
+            actor=entry.user_name,
+            metadata=entry.metadata,
+            user_id=entry.user_id or None,
+            actor_id=entry.user_id or None,
+        ))
+
+    return sink
 
 
 def _package_version() -> str:

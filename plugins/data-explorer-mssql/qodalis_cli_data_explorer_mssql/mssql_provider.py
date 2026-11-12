@@ -75,6 +75,11 @@ class MssqlDataExplorerProvider(IDataExplorerProvider):
         """Synchronous query execution, called via ``asyncio.to_thread``."""
         start = time.monotonic()
         conn: pymssql.Connection | None = None
+        # Read-only sources (the default): SQL Server has no read-only
+        # transaction, so the query runs in a transaction that is always
+        # rolled back (pymssql opens one implicitly; getattr: older
+        # abstractions have no read_only option)
+        read_only = getattr(context.options, "read_only", True) is not False
         try:
             conn = self._connect()
             cursor = conn.cursor()
@@ -97,7 +102,8 @@ class MssqlDataExplorerProvider(IDataExplorerProvider):
                     error=None,
                 )
             else:
-                conn.commit()
+                if not read_only:
+                    conn.commit()
                 return DataExplorerResult(
                     success=True,
                     source=context.options.name,
@@ -125,6 +131,11 @@ class MssqlDataExplorerProvider(IDataExplorerProvider):
             )
         finally:
             if conn is not None:
+                if read_only:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
                 conn.close()
 
     def _get_schema_sync(

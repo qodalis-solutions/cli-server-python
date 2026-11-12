@@ -227,40 +227,51 @@ class DataExplorerMcpToolProvider:
     mcp_tier = TIER_BUILTIN
     name = "data-explorer"
 
-    def __init__(self, registry: Any, executor: Any) -> None:
+    def __init__(
+        self,
+        registry: Any,
+        executor: Any,
+        caller: Callable[[McpCallContext], Any] | None = None,
+    ) -> None:
         self.registry = registry
         self.executor = executor
+        #: Who makes a call (the source's permissions, rate limit and audit apply to it).
+        self.caller = caller or (lambda _context: None)
 
     def get_tools(self, context: McpCallContext) -> list[McpTool]:
-        registry, executor = self.registry, self.executor
+        registry, executor, caller_of = self.registry, self.executor, self.caller
+        from qodalis_cli_data_explorer import filter_schema, missing_permissions, result_to_dict
 
-        async def data_sources(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
-            sources = json.loads(json.dumps(_camel_keys(registry.get_sources()), default=_plain))
+        async def data_sources(args: dict[str, Any], ctx: McpCallContext) -> McpToolResult:
+            sources = json.loads(json.dumps(_camel_keys(registry.get_sources(caller_of(ctx))), default=_plain))
             lines = [f"{s.get('name')}: {s.get('description', '')} ({s.get('language')})" for s in sources]
             return McpToolResult(text="\n".join(lines), structured={"sources": sources})
 
-        async def data_schema(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
+        async def data_schema(args: dict[str, Any], ctx: McpCallContext) -> McpToolResult:
             entry = registry.get(args["source"])
             if entry is None:
                 return McpToolResult.error(f"Unknown data source: '{args['source']}'")
             provider, options = entry
+            missing = missing_permissions(getattr(options, "required_permissions", None), caller_of(ctx))
+            if missing:
+                return McpToolResult.error(f"forbidden: missing permission {', '.join(missing)}")
             schema = await provider.get_schema_async(options)
             if schema is None:
                 return McpToolResult.error("Schema introspection is not supported by this data source.")
-            data = _camel_keys(asdict(schema))
+            data = _camel_keys(asdict(filter_schema(schema, options)))
             lines = []
             for table in data.get("tables", []):
                 cols = ", ".join(f"{c['name']} {c['type']}" for c in table.get("columns", []))
                 lines.append(f"{table['name']} ({table['type']}): {cols}")
             return McpToolResult(text="\n".join(lines), structured=data)
 
-        async def data_query(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
+        async def data_query(args: dict[str, Any], ctx: McpCallContext) -> McpToolResult:
             result = await executor.execute_async({
                 "source": args["source"],
                 "query": args["query"],
                 "parameters": args.get("parameters"),
-            })
-            data = json.loads(json.dumps(_camel_keys(asdict(result)), default=_plain))
+            }, caller_of(ctx))
+            data = json.loads(json.dumps(_camel_keys(result_to_dict(result)), default=_plain))
             if not result.success:
                 return McpToolResult(text=result.error or "query failed", structured=data, is_error=True)
             columns = list(result.columns or [])

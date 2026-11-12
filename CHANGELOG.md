@@ -20,6 +20,22 @@ PEP 440 for `1.0.0-beta.19`).
   values as an `enum` (and parameter examples as `examples`) and refuse other values. The built-in processors and the weather plugin carry examples and
   documentation (`hash --algorithm` its algorithms). Same on the .NET and Node servers (spec: web-cli
   `docs/superpowers/specs/2026-11-12-server-command-metadata-design.md`).
+- **Data explorer: per-source permissions, read-only mode, masking, audit and limits**, the same on the .NET and Node servers
+  (spec: web-cli `docs/superpowers/specs/2026-11-12-data-explorer-hardening-design.md`):
+  - **Breaking:** sources are read-only by default. Writes, DDL and several statements are refused before the provider runs
+    (`errorCode: "read_only"`), and the SQL providers run queries in a read-only transaction (SQLite `PRAGMA query_only`,
+    Postgres `BEGIN READ ONLY`, MySQL `START TRANSACTION READ ONLY`, SQL Server a transaction that is always rolled back).
+    Set `read_only=False` on a source that must write.
+  - New `DataExplorerProviderOptions` fields: `required_permissions` (403, and the source is hidden from `/sources` and MCP
+    `data_sources`), `allowed_objects` (globs of tables, collections, keys or indices), `mask_columns` (`***`), `drop_columns`,
+    `audit` (default `True`: a `data_query` entry in the audit log per execute), `rate_limit=DataExplorerRateLimit(max_queries,
+    window_seconds)` (429) and `export_permissions`.
+  - `GET /sources` adds `readOnly` and `canExport` (and no longer lists the source's policy options); the schema lists only
+    allowed tables without dropped columns; results carry `errorCode` when refused. The MCP `data_*` tools apply the same rules.
+  - `DataExplorerExecutor(registry, audit=..., rate_limiter=...)`, `execute_async(request, caller=None)`,
+    `create_data_explorer_router(registry, executor, caller=...)`; new abstractions `DataExplorerCaller`,
+    `DataExplorerAuditEntry`, `DataExplorerRateLimit`, `is_read_only_source`; providers that only read can set
+    `read_only_queries = True`. The plugins read the new options with `getattr`, so they still work with older abstractions.
 
 ## 1.0.0b24
 

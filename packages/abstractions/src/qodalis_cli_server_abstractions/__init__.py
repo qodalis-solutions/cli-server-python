@@ -44,6 +44,11 @@ from .data_explorer_types import (
     DataExplorerSchemaColumn,
     DataExplorerSchemaTable,
     DataExplorerSchemaResult,
+    DataExplorerRateLimit,
+    DataExplorerCaller,
+    DataExplorerAuditEntry,
+    DataExplorerErrorCode,
+    is_read_only_source,
 )
 from .data_explorer_provider import IDataExplorerProvider
 from .cli_stream_command_processor import ICliStreamCommandProcessor, is_stream_capable
@@ -98,6 +103,11 @@ __all__ = [
     "DataExplorerSchemaColumn",
     "DataExplorerSchemaTable",
     "DataExplorerSchemaResult",
+    "DataExplorerRateLimit",
+    "DataExplorerCaller",
+    "DataExplorerAuditEntry",
+    "DataExplorerErrorCode",
+    "is_read_only_source",
     "IDataExplorerProvider",
     "ICliStreamCommandProcessor",
     "is_stream_capable",

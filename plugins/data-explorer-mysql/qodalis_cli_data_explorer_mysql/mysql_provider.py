@@ -35,6 +35,9 @@ class MysqlDataExplorerProvider(IDataExplorerProvider):
         """Execute a SQL query against the MySQL database."""
         start = time.monotonic()
         conn: aiomysql.Connection | None = None
+        # Read-only sources (the default): a read-only transaction, always
+        # rolled back (getattr: older abstractions have no read_only option)
+        read_only = getattr(context.options, "read_only", True) is not False
         try:
             conn = await aiomysql.connect(
                 host=self._host,
@@ -44,6 +47,8 @@ class MysqlDataExplorerProvider(IDataExplorerProvider):
                 db=self._db,
             )
             async with conn.cursor() as cursor:
+                if read_only:
+                    await cursor.execute("START TRANSACTION READ ONLY")
                 await cursor.execute(context.query, context.parameters or None)
 
                 if cursor.description:
@@ -63,7 +68,8 @@ class MysqlDataExplorerProvider(IDataExplorerProvider):
                         error=None,
                     )
                 else:
-                    await conn.commit()
+                    if not read_only:
+                        await conn.commit()
                     return DataExplorerResult(
                         success=True,
                         source=context.options.name,
@@ -91,6 +97,11 @@ class MysqlDataExplorerProvider(IDataExplorerProvider):
             )
         finally:
             if conn is not None:
+                if read_only:
+                    try:
+                        await conn.rollback()
+                    except Exception:
+                        pass
                 conn.close()
 
     async def get_schema_async(
