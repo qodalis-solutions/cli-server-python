@@ -59,6 +59,7 @@ def _map_to_descriptor(processor: ICliCommandProcessor) -> dict[str, Any]:
                 aliases=p.aliases,
                 defaultValue=p.default_value,
                 allowedValues=list(getattr(p, "allowed_values", None) or []) or None,
+                examples=list(getattr(p, "examples", None) or []) or None,
             ).model_dump(by_alias=True, exclude_none=True)
             for p in processor.parameters
         ]

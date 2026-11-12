@@ -15,6 +15,7 @@ class CliServerCommandParameterDescriptorDto(BaseModel):
     aliases: list[str] | None = None
     default_value: Any = Field(alias="defaultValue", default=None)
     allowed_values: list[str] | None = Field(alias="allowedValues", default=None)
+    examples: list[str] | None = None
 
     model_config = {"populate_by_name": True}
 

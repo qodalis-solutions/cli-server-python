@@ -52,6 +52,9 @@ def command_input_schema(proc: ICliCommandProcessor) -> dict[str, Any]:
         allowed = getattr(param, "allowed_values", None)
         if allowed and json_type == "string":
             prop["enum"] = list(allowed)
+        examples = getattr(param, "examples", None)
+        if examples:
+            prop["examples"] = list(examples)
         properties[name] = prop
         if getattr(param, "required", False):
             required.append(name)

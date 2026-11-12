@@ -13,11 +13,11 @@ PEP 440 for `1.0.0-beta.19`).
   clears, invalid ones are 400 `INVALID_VALUE`). MCP `jobs_list` takes `tags` and shows them. Same on the .NET and
   Node servers.
 - **Commands as rich as web commands.** Processors may define `aliases`, `examples` (`CliCommandExample`),
-  `documentation`, `module` and `icon`, and parameters `allowed_values`; `GET /api/v1/qcli/commands` sends them
+  `documentation`, `module` and `icon`, and parameters `allowed_values` and `examples` (example values); `GET /api/v1/qcli/commands` sends them
   (absent when unset), so the web CLI's `help` shows examples and documentation, groups and decorates the command, and
   completes and checks allowed values. The server resolves aliases of commands and sub-commands for `/execute`,
   streaming and permission checks (a command name wins over another command's alias). MCP command tools list allowed
-  values as an `enum` and refuse other values. The built-in processors and the weather plugin carry examples and
+  values as an `enum` (and parameter examples as `examples`) and refuse other values. The built-in processors and the weather plugin carry examples and
   documentation (`hash --algorithm` its algorithms). Same on the .NET and Node servers (spec: web-cli
   `docs/superpowers/specs/2026-11-12-server-command-metadata-design.md`).
 

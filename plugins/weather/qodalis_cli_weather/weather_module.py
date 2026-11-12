@@ -88,6 +88,7 @@ _location_param = CliCommandParameterDescriptor(
     type="string",
     aliases=["-l"],
     default_value="London",
+    examples=["Paris", "New York"],
 )
 
 

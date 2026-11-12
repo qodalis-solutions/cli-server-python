@@ -106,6 +106,7 @@ class _HttpPostProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
                 description="Request body (JSON string)",
                 aliases=["-b"],
                 type="string",
+                examples=['{"name":"qodalis"}'],
             ),
             CliCommandParameterDescriptor(
                 name="headers",

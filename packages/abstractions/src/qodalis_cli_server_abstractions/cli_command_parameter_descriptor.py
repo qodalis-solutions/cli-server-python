@@ -16,6 +16,9 @@ class ICliCommandParameterDescriptor(Protocol):
     #: The only values the parameter takes (help, completion and a check in
     #: the web CLI, ``enum`` in MCP); optional on custom descriptors.
     allowed_values: list[str] | None
+    #: Example values (``["Paris", "New York"]``): shown in help, ``examples``
+    #: in MCP; optional on custom descriptors.
+    examples: list[str] | None
 
 
 class CliCommandParameterDescriptor:
@@ -30,6 +33,7 @@ class CliCommandParameterDescriptor:
         aliases: list[str] | None = None,
         default_value: Any = None,
         allowed_values: list[str] | None = None,
+        examples: list[str] | None = None,
     ) -> None:
         self.name = name
         self.description = description
@@ -38,3 +42,4 @@ class CliCommandParameterDescriptor:
         self.aliases = aliases
         self.default_value = default_value
         self.allowed_values = allowed_values
+        self.examples = examples
