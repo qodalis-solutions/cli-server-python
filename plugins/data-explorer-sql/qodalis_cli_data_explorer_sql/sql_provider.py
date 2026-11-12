@@ -31,6 +31,11 @@ class SqlDataExplorerProvider(IDataExplorerProvider):
         try:
             conn = sqlite3.connect(self._filename)
             conn.row_factory = sqlite3.Row
+            # Read-only sources (the default): SQLite refuses every write on
+            # this connection (read with getattr: older abstractions have no
+            # read_only option)
+            if getattr(context.options, "read_only", True) is not False:
+                conn.execute("PRAGMA query_only = ON")
             cursor = conn.cursor()
             cursor.execute(context.query, context.parameters or {})
 

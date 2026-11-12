@@ -409,7 +409,7 @@ Tools are collected from **tool providers** on every request, so registrations, 
 | commands (always) | one tool per command (below) | `commands:execute` + every `required_permissions` along the command chain |
 | filesystem (when `/api/qcli/fs` is enabled) | `fs_list {path}`, `fs_stat {path}`, `fs_read {path, maxBytes?=262144}` (UTF-8 text, longer files end with `[truncated: N of M bytes]`; binary files → error `binary file, N bytes`) | `files:read` |
 | | `fs_write {path, content}`, `fs_mkdir {path}`, `fs_delete {path, recursive?=false}` | `files:write` |
-| data explorer (when a provider is registered) | `data_sources`, `data_schema {source}`, `data_query {source, query, parameters?}` | `data:query` |
+| data explorer (when a provider is registered) | `data_sources`, `data_schema {source}`, `data_query {source, query, parameters?}` | `data:query` plus the source's `required_permissions` |
 | jobs (jobs plugin mounted) | `jobs_list`, `jobs_get {id}`, `jobs_history {id, limit?=20}` | `jobs:read` |
 | | `jobs_trigger` (answers `Job queued` when the run waits for a slot), `jobs_pause`, `jobs_resume`, `jobs_stop`, `jobs_cancel` (every running run) `{id}` | `jobs:manage` |
 | | `jobs_delete_runs {id, execution?, status?}`: one run, or every finished run (optionally of a status) | `jobs:manage` |
@@ -776,6 +776,8 @@ builder.set_file_storage_provider(MyProvider())
 ## Data Explorer
 
 Register data sources with `builder.add_data_explorer_provider(provider, options)`; the web terminal queries them through `/api/qcli/data-explorer` (`sources`, `schema`, `execute`). Each source type is a separate plugin implementing `IDataExplorerProvider` (`execute_async`, optional `get_schema_async`); one provider class can be registered several times under different names.
+
+Sources are **read-only by default**: set `read_only=False` on a source that must write. Per source you can also require permissions (`required_permissions`), limit the tables, collections or keys it shows (`allowed_objects`), mask or drop columns (`mask_columns`, `drop_columns`), limit queries per user (`rate_limit`) and gate exports (`export_permissions`). Every query is written to the audit log as `data_query` unless `audit=False`. See the [data explorer README](plugins/data-explorer/README.md#read-only-sources).
 
 ### SQL Provider
 
