@@ -943,6 +943,31 @@ def filter_schema(schema: Any, options: Any) -> Any:
     return replace(schema, tables=tables)
 
 
+# PostgreSQL: 'relation "users" does not exist', 'column "countrycode" does not exist', 'column u.countrycode does not exist'
+_MISSING_NAME = re.compile(r'\b(relation|column) (?:"?[^"\s.]+"?\.)?"?([^"\s.]+)"? does not exist')
+
+
+def name_case_hint(error: str, schema: Any) -> str | None:
+    """For an error saying a table or column does not exist (PostgreSQL folds
+    unquoted names to lower case): the hint naming the same name with its
+    capitals, from ``schema`` as the source shows it (:func:`filter_schema`),
+    so a hidden table or dropped column is never named.  ``None`` when nothing
+    matches."""
+    if schema is None:
+        return None
+    match = _MISSING_NAME.search(error)
+    if match is None:
+        return None
+    kind, name = match.group(1), match.group(2)
+    if kind == "relation":
+        candidates = [t.name.split(".")[-1] for t in schema.tables]
+    else:
+        candidates = [c.name for t in schema.tables for c in t.columns]
+    lower = name.lower()
+    found = next((c for c in candidates if c.lower() == lower and c != name), None)
+    return None if found is None else f'Names with capital letters need double quotes: "{found}"'
+
+
 _SHOW_COLLECTIONS = re.compile(r"^show\s+collections", re.IGNORECASE)
 
 
@@ -999,6 +1024,7 @@ __all__ = [
     "can_use_source",
     "filter_listing",
     "filter_schema",
+    "name_case_hint",
     "glob_to_regex",
     "is_object_allowed",
     "is_read_only",

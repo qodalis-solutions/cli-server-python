@@ -174,7 +174,10 @@ class CliAdminBuilder:
         in external sign-in mode (users plugin with an external auth adapter)
         and returned by ``GET /api/v1/qcli/auth/mode``.  An absolute
         ``http(s)`` URL or a root-relative path (``/sign-in``); anything else
-        raises :class:`ValueError` in :meth:`build`."""
+        raises :class:`ValueError` in :meth:`build`.  The dashboard fills
+        ``{returnTo}`` in it, or appends ``returnTo=``, with the dashboard page
+        to come back to; the host opens that URL with ``#token=`` after
+        signing the user in."""
         self._sign_in_url = url
         return self
 

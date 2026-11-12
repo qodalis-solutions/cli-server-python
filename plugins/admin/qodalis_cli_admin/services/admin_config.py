@@ -29,6 +29,10 @@ class AdminConfig:
     #: external sign-in mode and returned by ``GET /api/v1/qcli/auth/mode``.
     #: An absolute ``http(s)`` URL or a root-relative path (``/sign-in``).
     #: ``None``: the dashboard tells users to sign in through the host app.
+    #: The dashboard sends users back: it fills ``{returnTo}`` in the URL, or
+    #: appends ``returnTo=``, with the dashboard page they were on (e.g. a
+    #: terminal link's approval page); after signing in, the host opens that
+    #: URL with ``#token=<bearer token>``.
     sign_in_url: str | None = None
 
     # Mutable runtime settings

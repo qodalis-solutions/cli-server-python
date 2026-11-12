@@ -67,12 +67,14 @@ def scope_permissions(ctx: AuthContext, raw: Any) -> list[str] | None:
     return perms
 
 
-def ensure_can_create_tokens(ctx: AuthContext) -> None:
+def ensure_can_create_tokens(ctx: AuthContext, allow_external: bool = False) -> None:
     """Only a signed-in session creates tokens: 403 for API tokens (a leaked
-    token must not mint more), 501 for external auth (no sessions)."""
+    token must not mint more), 501 for external auth (no sessions) unless the
+    host allows API tokens next to its sign-in (``allow_external``,
+    ``api_tokens_with_external_auth``)."""
     if ctx.api_token is not None:
         raise forbidden(API_TOKENS_CANNOT_CREATE)
-    if ctx.session is None or ctx.external:
+    if ctx.session is None or (ctx.external and not allow_external):
         raise UsersApiError(501, MANAGED_BY_HOST)
 
 
@@ -163,7 +165,7 @@ def create_tokens_router(
 
     @collection(router, "POST", status_code=201)
     async def create_token(body: CreateApiTokenRequest, ctx: AuthContext = Depends(get_auth)):
-        ensure_can_create_tokens(ctx)
+        ensure_can_create_tokens(ctx, auth_service.options.api_tokens_with_external_auth)
         name = _validate_name(body.name)
         expires_at = _expires_at(body, auth_service.options.allow_non_expiring_tokens, now_ms())
         permissions = scope_permissions(ctx, body.permissions)

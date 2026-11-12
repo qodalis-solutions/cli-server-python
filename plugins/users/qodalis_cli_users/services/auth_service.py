@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable, Optional, Union
 
 from qodalis_cli_server_abstractions.events import CliEventAudience, ICliEventBus
 
-from .._http import forwarded_client_ip
+from .._http import bearer_token, forwarded_client_ip
 from ..external_request import ExternalRequestSnapshot
 from ..errors import UsersApiError, forbidden, unauthorized
 from ..models import (
@@ -189,6 +189,16 @@ class AuthServiceOptions:
     #: The host owns the groups: group writes answer 501 and the built-in
     #: groups are not seeded.
     read_only_groups: bool = False
+    #: With an external auth adapter, also accept the plugin's API tokens
+    #: (``qcli_pat_…`` bearer tokens, checked before the adapter), so users
+    #: signed in by the host create tokens (``POST /tokens``) and approve
+    #: terminal links (``server add``).  Off by default: the host owns
+    #: sign-in.  The token's user is read from the user store by id on every
+    #: request and socket re-check, so the store must find the adapter's
+    #: users and report ``disabled``; keep the tokens in a persistent
+    #: ``IApiTokenStore`` (the default store forgets them on restart).
+    #: Ignored without an adapter (tokens are always on).
+    api_tokens_with_external_auth: bool = False
 
 
 class AuthService:
@@ -252,6 +262,12 @@ class AuthService:
     @property
     def external_auth(self) -> bool:
         return self.auth_adapter is not None
+
+    @property
+    def api_tokens_enabled(self) -> bool:
+        """Whether API tokens are accepted: always without an adapter, with
+        one only with ``api_tokens_with_external_auth``."""
+        return not self.external_auth or self.options.api_tokens_with_external_auth
 
     # ------------------------------------------------------------------
     # Passwords
@@ -744,7 +760,15 @@ class AuthService:
 
         401 when the adapter returns no user, 401 ``account disabled`` for a
         disabled user.  The context keeps a snapshot of ``request`` so open
-        sockets can be re-checked against it (:meth:`revalidate_external`)."""
+        sockets can be re-checked against it (:meth:`revalidate_external`).
+
+        With ``api_tokens_with_external_auth`` a ``qcli_pat_`` bearer token is
+        the plugin's own: it is checked against the token store and the
+        adapter never sees it."""
+        if self.options.api_tokens_with_external_auth:
+            token = bearer_token(request.headers)
+            if token is not None and token.startswith(API_TOKEN_PREFIX):
+                return await self.authenticate_api_token(token)
         result = await self.run_auth_adapter(request)
         if not isinstance(result, ExternalAuthResult) or result.user is None:
             raise unauthorized()

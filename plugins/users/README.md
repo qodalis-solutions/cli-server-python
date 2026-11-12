@@ -45,6 +45,7 @@ result.app.router.lifespan_context = lifespan
 |--------|---------|-------------|
 | `set_user_store` / `set_session_store` / `set_credential_store` / `set_group_store` / `set_audit_store` / `set_api_token_store` | in-memory | Storage implementations |
 | `set_allow_non_expiring_tokens(bool)` | `False` | Allow API tokens that never expire (`expiresInDays: null`) |
+| `set_allow_api_tokens(bool)` | `False` | With an external auth adapter, also accept API tokens and terminal links (see [API tokens](#api-tokens)) |
 | `set_link_approval_url(url)` | `/qcli/admin/link` | The page where users approve a terminal's link request (absolute or root-relative; `{code}` is replaced, otherwise `?code=` is appended) |
 | `set_default_admin_password(str)` | generated | Password of the seeded `root` user |
 | `set_session_timeout(ms)` | `1800000` (30 min) | Idle timeout, checked on every request |
@@ -161,7 +162,7 @@ The admin dashboard plugin keeps its own login at `/auth/login`; both plugins ca
 Long-lived, revocable bearer tokens for MCP clients, CI and scripts (sessions expire and need a password sign-in). A token is `qcli_pat_` + 32 random bytes (base64url, no padding); it is shown **once** at creation and only its SHA-256 hash is stored (`IApiTokenStore`, in-memory by default — replace it with `set_api_token_store`).
 
 ```bash
-# create (needs a session: an API token gets 403, an external-adapter identity 501)
+# create (needs a session: an API token gets 403, an external-adapter identity 501 unless set_allow_api_tokens())
 curl -X POST http://localhost:8048/api/v1/qcli/tokens \
   -H "Authorization: Bearer <session token>" -H "Content-Type: application/json" \
   -d '{"name": "claude", "expiresInDays": 30, "permissions": ["commands:execute", "files:read"]}'
@@ -174,6 +175,8 @@ curl -X POST http://localhost:8048/api/v1/qcli/tokens \
 - Views never contain the token or its hash; `lastUsedAt` is `null` until first use and updated at most once a minute.
 
 `Authorization: Bearer qcli_pat_…` is accepted everywhere a session token is (HTTP routes, `POST /sessions/ws-ticket`, the MCP endpoint). An unknown, revoked or expired token, or one whose user is disabled or deleted, gets `401`; `mustChangePassword` applies as for sessions. With a token, `GET`/`DELETE /sessions/current` answer `404 not a session` and password changes `403 forbidden: API tokens cannot change passwords`. Sockets opened with a token's ticket are closed with 4401 `session ended` when the token is revoked or expires or the user is disabled.
+
+With an external auth adapter (`set_auth_adapter`) tokens are off: `POST /tokens` and link approval answer `501` and `qcli_pat_` bearer tokens go to the adapter. `set_allow_api_tokens()` turns them on next to the host's sign-in: `qcli_pat_` bearer tokens are checked against the token store before the adapter (which never sees them), and users signed in by the host create tokens and approve terminal links. The token's user is read from the user store by id, so the store must find the adapter's users and report `disabled`; keep the tokens in a persistent `IApiTokenStore` (the default one forgets them on restart).
 
 Deleting a user deletes their tokens; disabling a user makes their tokens fail (they work again after re-enabling). Creation and revocation are audited as `token_created` / `token_revoked` (details: token name and id).
 
