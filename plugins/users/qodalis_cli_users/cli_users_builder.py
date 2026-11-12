@@ -31,6 +31,7 @@ from qodalis_cli_audit import CliAuditBuilder, CliAuditPlugin
 from qodalis_cli_server_abstractions.events import ICliEventBus
 
 from .controllers.groups_controller import create_groups_router
+from .controllers.link_controller import create_link_router
 from .controllers.sessions_controller import create_sessions_router
 from .controllers.tokens_controller import create_tokens_router
 from .controllers.users_controller import create_users_router
@@ -50,6 +51,12 @@ from .services.auth_service import (
     AuthService,
     AuthServiceOptions,
     BroadcastFn,
+)
+from .services.link_service import (
+    DEFAULT_LINK_APPROVAL_URL,
+    LinkRateLimiter,
+    LinkService,
+    validate_link_approval_url,
 )
 from .services.users_service import UsersService
 from .stores.in_memory_api_token_store import InMemoryApiTokenStore
@@ -117,6 +124,9 @@ class CliUsersPlugin:
     #: The audit plugin the users plugin records its events in, mounted with
     #: it (or joining the audit plugin the host mounted, see :meth:`on_mount`).
     audit_plugin: Optional[CliAuditPlugin] = None
+    #: Link requests (``/link``): terminals linked through the browser.
+    link_service: Optional[LinkService] = None
+    _link_limiter: Optional[LinkRateLimiter] = field(default=None, repr=False)
     _seeded: bool = field(default=False, repr=False)
     _seed_lock: Optional[asyncio.Lock] = field(default=None, repr=False)
 
@@ -311,10 +321,21 @@ class CliUsersPlugin:
             except Exception:
                 logger.exception("External-auth socket check error")
 
+    def sweep_links(self) -> None:
+        """Drop expired link requests and stale rate-limit windows."""
+        try:
+            if self.link_service is not None:
+                self.link_service.sweep()
+            if self._link_limiter is not None:
+                self._link_limiter.sweep()
+        except Exception:
+            logger.exception("Link request cleanup error")
+
     async def _cleanup_loop(self) -> None:
         interval = max(self.cleanup_interval_ms, 1) / 1000
         while True:
             await asyncio.sleep(interval)
+            self.sweep_links()
             try:
                 await self.auth_service.cleanup_sessions()
             except Exception:
@@ -347,6 +368,7 @@ class CliUsersBuilder:
         self._max_login_attempts = DEFAULT_MAX_LOGIN_ATTEMPTS
         self._lockout_ms = DEFAULT_LOCKOUT_MS
         self._cleanup_interval_ms = DEFAULT_CLEANUP_INTERVAL_MS
+        self._link_approval_url = DEFAULT_LINK_APPROVAL_URL
 
     def set_user_store(self, store: IUserStore) -> CliUsersBuilder:
         self._user_store = store
@@ -396,6 +418,15 @@ class CliUsersBuilder:
         groups are not seeded, and the current session reports
         ``groupsReadOnly: true``."""
         self._read_only_groups = read_only
+        return self
+
+    def set_link_approval_url(self, url: str) -> CliUsersBuilder:
+        """The page where users approve a terminal's link request
+        (``server add`` in the web CLI): an http(s) URL or a root-relative
+        path, ``{code}`` replaced by the code (otherwise ``?code=`` is
+        appended).  Defaults to the admin dashboard's ``/qcli/admin/link``.
+        Raises ``ValueError`` for anything else (e.g. ``//host``)."""
+        self._link_approval_url = validate_link_approval_url(url)
         return self
 
     def set_auth_adapter(self, adapter: ExternalAuthAdapter | None) -> CliUsersBuilder:
@@ -561,4 +592,9 @@ class CliUsersBuilder:
             auth_service, users_service, get_auth, require_permission,
         ))
         router.include_router(create_tokens_router(auth_service, get_auth))
+        plugin.link_service = LinkService(auth_service, self._link_approval_url)
+        plugin._link_limiter = LinkRateLimiter()
+        router.include_router(create_link_router(
+            auth_service, plugin.link_service, get_auth, plugin._link_limiter,
+        ))
         return plugin

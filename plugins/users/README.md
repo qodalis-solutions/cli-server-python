@@ -45,6 +45,7 @@ result.app.router.lifespan_context = lifespan
 |--------|---------|-------------|
 | `set_user_store` / `set_session_store` / `set_credential_store` / `set_group_store` / `set_audit_store` / `set_api_token_store` | in-memory | Storage implementations |
 | `set_allow_non_expiring_tokens(bool)` | `False` | Allow API tokens that never expire (`expiresInDays: null`) |
+| `set_link_approval_url(url)` | `/qcli/admin/link` | The page where users approve a terminal's link request (absolute or root-relative; `{code}` is replaced, otherwise `?code=` is appended) |
 | `set_default_admin_password(str)` | generated | Password of the seeded `root` user |
 | `set_session_timeout(ms)` | `1800000` (30 min) | Idle timeout, checked on every request |
 | `set_max_session_lifetime(ms)` | `43200000` (12 h) | Absolute session lifetime |
@@ -137,6 +138,10 @@ All routes are mounted under `/api/v1/qcli`; collections accept paths with and w
 | `GET /tokens?all=true` | `tokens:read` | Every user's API tokens (`all` must be `true`/`false`, else 400) |
 | `POST /tokens` | authenticated, **session only** | `{ name, expiresInDays?, permissions? }` → `201 { token, apiToken }` |
 | `DELETE /tokens/{id}` | owner or `tokens:revoke` | Revoke (204); unknown or not yours → 404 |
+| `POST /link` | public, 10 per minute per address | `{ client, permissions? }` → `201 { linkId, userCode, verificationUrl, expiresIn, interval }` (see [Linking a terminal](#linking-a-terminal)) |
+| `GET /link/{linkId}` | public | `{ status: 'pending' \| 'denied' }`, or `{ status: 'approved', token, userName, expiresAt }` once; 404 `{ status: 'expired' }` |
+| `GET /link/code/{userCode}` | authenticated | The request the approval page shows |
+| `POST /link/code/{userCode}/approve` \| `deny` | **session only** (approve) | Approve creates the approver's API token for the terminal; deny → 204 |
 
 The admin dashboard plugin keeps its own login at `/auth/login`; both plugins can be mounted at the same prefix.
 
@@ -178,6 +183,16 @@ Use a token with the server's MCP endpoint — see the main README, [*Using the 
 claude mcp add --transport http qcli http://localhost:8048/api/qcli/mcp \
   --header "Authorization: Bearer <token>"
 ```
+
+## Linking a terminal
+
+`server add` in the web CLI links a terminal to the server through the browser, like the OAuth device flow:
+
+1. The terminal sends `POST /link` with its name (`{ "client": "Qodalis CLI on Pixel 7" }`, optionally `permissions` for a scoped token) and gets a `linkId` (secret), a code such as `ABCD-2345` and the approval page (`/qcli/admin/link?code=ABCD-2345`, the admin dashboard).
+2. The user opens the page, signs in, compares the code and approves. Approving creates an API token for that user named `link <client>`, with the requested permissions (never more than the user has), listed and revocable like any token.
+3. The terminal polls `GET /link/{linkId}` every `interval` seconds and receives the token once.
+
+Requests expire after 10 minutes, are single-use and live in memory. Approvals and denials are audited (`link_approved`, `link_denied`). Hosts with their own page set `set_link_approval_url`.
 
 ## Server events
 

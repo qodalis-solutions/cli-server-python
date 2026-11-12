@@ -29,8 +29,16 @@ class PostgresDataExplorerProvider(IDataExplorerProvider):
         """Execute a SQL query against the PostgreSQL database."""
         start = time.monotonic()
         conn: asyncpg.Connection | None = None
+        # Read-only sources (the default): a read-only transaction, always
+        # rolled back (getattr: older abstractions have no read_only option)
+        read_only = getattr(context.options, "read_only", True) is not False
         try:
             conn = await asyncpg.connect(self._connection_string)
+            if read_only:
+                await conn.execute("BEGIN READ ONLY")
+            # Only through a prepared statement (the extended protocol): it
+            # refuses several statements, so a hidden "COMMIT; ..." cannot end
+            # the read-only transaction
             stmt = await conn.prepare(context.query)
             attributes = stmt.get_attributes()
 
@@ -51,7 +59,8 @@ class PostgresDataExplorerProvider(IDataExplorerProvider):
                     error=None,
                 )
             else:
-                status = await conn.execute(context.query, *( context.parameters or []))
+                await stmt.fetch(*( context.parameters or []))
+                status = stmt.get_statusmsg() or ""
                 try:
                     affected = int(status.split()[-1])
                 except (ValueError, IndexError):
@@ -83,6 +92,11 @@ class PostgresDataExplorerProvider(IDataExplorerProvider):
             )
         finally:
             if conn is not None:
+                if read_only:
+                    try:
+                        await conn.execute("ROLLBACK")
+                    except Exception:
+                        pass
                 await conn.close()
 
     async def get_schema_async(

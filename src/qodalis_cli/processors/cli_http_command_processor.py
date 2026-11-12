@@ -16,6 +16,7 @@ from ..abstractions import (
     ICliCommandProcessor,
     get_positionals,
 )
+from ..abstractions import CliCommandExample
 
 
 def _url(command: CliProcessCommand) -> str | None:
@@ -105,6 +106,7 @@ class _HttpPostProcessor(CliCommandProcessor, ICliStreamCommandProcessor):
                 description="Request body (JSON string)",
                 aliases=["-b"],
                 type="string",
+                examples=['{"name":"qodalis"}'],
             ),
             CliCommandParameterDescriptor(
                 name="headers",
@@ -268,6 +270,19 @@ class CliHttpCommandProcessor(CliCommandProcessor):
     @property
     def description(self) -> str:
         return "Makes HTTP requests from the server"
+
+    @property
+    def examples(self) -> list[CliCommandExample]:
+        return [
+            CliCommandExample("http get https://example.com", "Fetches a page from the server"),
+            CliCommandExample("http post https://httpbin.org/post --body '{\"a\":1}'", "Posts JSON from the server"),
+        ]
+
+    @property
+    def documentation(self) -> str:
+        return (
+            "Sends the request from the server, not from the browser, so it reaches hosts on the server's network and is not limited by the browser's CORS rules. Prints the status and the body; --headers adds the response headers."
+        )
 
     @property
     def allow_unlisted_commands(self) -> bool:
