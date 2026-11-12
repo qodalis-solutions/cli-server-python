@@ -4,6 +4,12 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## 1.0.0b26
+
+- The admin plugin embeds dashboard 1.0.0-beta.22: built with Qodalis CLI 2.5.1 (touch scrolling of the terminal page on phones, page no longer scrolls under the panel).
+
+- Fix: data explorer sources with `AllowedObjects` or `MaskColumns` refused ordinary queries on quoted names, such as PostgreSQL's mixed-case tables: `SELECT "Id" FROM "Users" WHERE ...` answered `'WHERE' is not available on this source` (and `FROM "Users" u` named `u`). Under the MySQL reading, where `"..."` is a string, the string was dropped, so the next word was taken as the table. It now stays one name token, so the table is checked by its name, and a quoted masked column in `WHERE` is still refused.
+
 ## 1.0.0b25
 
 - The admin plugin embeds dashboard 1.0.0-beta.20: job tags, command metadata, the terminal link page, API tokens, a data explorer page and audit details.
