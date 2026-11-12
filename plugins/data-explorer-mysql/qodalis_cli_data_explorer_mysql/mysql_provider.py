@@ -29,6 +29,11 @@ class MysqlDataExplorerProvider(IDataExplorerProvider):
         self._password = parsed.password or ""
         self._db = parsed.path.lstrip("/") if parsed.path else None
 
+    def quote_name(self, name: str) -> str:
+        """MySQL quotes names in backticks (double quotes are strings without
+        ``ANSI_QUOTES``)."""
+        return "`" + name.replace("`", "``") + "`"
+
     async def execute_async(
         self, context: DataExplorerExecutionContext
     ) -> DataExplorerResult:

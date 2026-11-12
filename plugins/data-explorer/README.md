@@ -65,6 +65,7 @@ The Data Explorer endpoints are automatically mounted when providers are registe
 | `audit` | `bool` | `True` | Writes a `data_query` entry to the server's audit log for every execute |
 | `rate_limit` | `DataExplorerRateLimit(max_queries, window_seconds)` | -- | Executes allowed per caller and window; more answer 429 |
 | `export_permissions` | `list[str]` | -- | Permissions needed to export results (`canExport` in `/sources`; advisory) |
+| `fix_name_case` | `bool` | `True` | A read-only SQL query failing on an unquoted name that differs only in case runs again with the name quoted as the schema spells it (`executedQuery` in the result); off: only a hint is added to the error |
 
 Over HTTP the options keep the camelCase names of the other servers (`readOnly`, `canExport`, `errorCode`).
 
