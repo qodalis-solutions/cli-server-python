@@ -72,15 +72,26 @@ Over HTTP the options keep the camelCase names of the other servers (`readOnly`,
 
 Sources are read-only unless they set `read_only=False`. The server checks each query before the provider runs it:
 
-- SQL: one statement starting with `SELECT`, `WITH`, `EXPLAIN`, `SHOW`, `DESCRIBE`, `VALUES` or `TABLE`, without write keywords (comments and strings ignored).
+- SQL: one statement starting with `SELECT`, `WITH`, `EXPLAIN`, `SHOW`, `DESCRIBE`, `VALUES` or `TABLE`, without write keywords (comments and strings ignored, as MySQL, Postgres, SQL Server and SQLite each read them: a query must pass under every reading).
 - MongoDB (`shell` or `json` language): `show collections` or `db.<collection>.find|findOne|countDocuments|estimatedDocumentCount|distinct|aggregate(...)` without `$out`/`$merge`.
 - Redis: read commands only (`GET`, `HGETALL`, `LRANGE`, `KEYS`, `SCAN`, ...).
 - Elasticsearch: `GET`/`HEAD`, or `POST` to `_search`, `_count`, `_msearch`, `_mget`, `_field_caps`, `_validate/query`.
 - Other languages are refused unless the provider sets `read_only_queries = True` (it can only read).
 
-The SQL providers also run the query in a read-only transaction (SQLite `PRAGMA query_only`, Postgres `BEGIN READ ONLY`, MySQL `START TRANSACTION READ ONLY`, SQL Server a transaction that is always rolled back).
+The SQL providers also run the query in a read-only transaction (SQLite `PRAGMA query_only`, Postgres `BEGIN READ ONLY`, MySQL `START TRANSACTION READ ONLY`, SQL Server a transaction that is always rolled back). Postgres runs the query only as a prepared statement, which refuses several statements, so none can end the transaction. MySQL and SQL Server cannot do that: aiomysql always turns multi-statements on and has no option to turn them off, and SQL Server runs a whole batch. On these the server's one-statement check is the guard (a statement after a `COMMIT`, or DDL, which MySQL commits implicitly, would escape the transaction).
 
 `allowed_objects` and the read-only check are a convenience filter. Give the source a database account that can only read what staff may see: that account is the real boundary.
+
+### Masked columns
+
+`mask_columns` and `drop_columns` match the column names of the result, so on SQL sources with either option a masked or dropped column may only be selected by its own name: as a plain item of the outer select list (`SELECT email`, `SELECT u.email, name`, `SELECT *`). Anything else is refused before the query runs with `errorCode: "masked_column"` and `Masked column 'email' can only be selected by its own name`:
+
+- an alias or a computation (`SELECT email AS e`, `upper(email)`, `email || ''`),
+- a filter, sort or join on it (`WHERE email = ...`, `ORDER BY email`), a subquery or CTE that names it, `UNION`/`EXCEPT`/`INTERSECT`;
+- a whole row used as a value (Postgres `SELECT u FROM users u`, `row_to_json(u)`): `'u' is a whole row and this source masks columns: select its columns by name`;
+- a Unicode-escaped name (`U&"..."`).
+
+A result that names a selected masked column under another name (SQL Server `FOR JSON`) is withheld with the same error. Other languages (MongoDB, Redis, Elasticsearch) mask by field name only. This is still a filter on the query text: keep data that must stay hidden out of the database account's reach (a view, column grants).
 
 ```python
 from qodalis_cli_server_abstractions import DataExplorerProviderOptions, DataExplorerRateLimit
@@ -100,7 +111,7 @@ builder.add_data_explorer_provider(
 )
 ```
 
-Queries run in order: permissions, rate limit (per user id, or client address when anonymous), read-only check, allowed objects, the provider, `max_rows`, masking, then the audit entry (refused queries are audited too, with the refusal as `error`). A failing audit log never fails the query.
+Queries run in order: permissions, rate limit (per user id, or client address when anonymous), read-only check, allowed objects, masked columns, the provider, `max_rows`, masking, then the audit entry (refused queries are audited too, with the refusal as `error`). A failing audit log never fails the query.
 
 ## Available Providers
 

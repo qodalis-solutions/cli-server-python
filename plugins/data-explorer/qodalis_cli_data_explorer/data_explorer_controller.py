@@ -24,20 +24,21 @@ def _to_camel(snake: str) -> str:
     return parts[0] + "".join(w.capitalize() for w in parts[1:])
 
 
-def _camel_keys(obj: Any, *, _depth: int = 0) -> Any:
-    """Convert dict keys from snake_case to camelCase, preserving row data as-is."""
+def _camel_keys(obj: Any, *, max_depth: int = 2, _depth: int = 0) -> Any:
+    """Convert dict keys from snake_case to camelCase down to ``max_depth``
+    levels of objects, preserving row data as-is."""
     if isinstance(obj, dict):
         result: dict[str, Any] = {}
         for k, v in obj.items():
-            new_key = _to_camel(k) if _depth < 2 else k
+            new_key = _to_camel(k) if _depth < max_depth else k
             # Don't recurse into "rows" — that's user data
             if new_key == "rows":
                 result[new_key] = v
             else:
-                result[new_key] = _camel_keys(v, _depth=_depth + 1)
+                result[new_key] = _camel_keys(v, max_depth=max_depth, _depth=_depth + 1)
         return result
     if isinstance(obj, list):
-        return [_camel_keys(item, _depth=_depth) for item in obj]
+        return [_camel_keys(item, max_depth=max_depth, _depth=_depth) for item in obj]
     return obj
 
 
@@ -96,6 +97,7 @@ def create_data_explorer_router(
         if schema is None:
             raise HTTPException(status_code=404, detail="Schema introspection is not supported by this data source.")
 
-        return _camel_keys(asdict(filter_schema(schema, options)))
+        # Three levels: schema → tables → columns (``primaryKey``)
+        return _camel_keys(asdict(filter_schema(schema, options)), max_depth=3)
 
     return router

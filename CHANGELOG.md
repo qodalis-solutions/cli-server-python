@@ -26,6 +26,22 @@ PEP 440 for `1.0.0-beta.19`).
     (`errorCode: "read_only"`), and the SQL providers run queries in a read-only transaction (SQLite `PRAGMA query_only`,
     Postgres `BEGIN READ ONLY`, MySQL `START TRANSACTION READ ONLY`, SQL Server a transaction that is always rolled back).
     Set `read_only=False` on a source that must write.
+    The SQL check reads quotes and comments as MySQL (`--` before a space, `#`, `/*! ... */`, `"..."` strings), Postgres
+    (`E'...'`, `$$...$$`, nested comments), SQL Server (nested comments, `[...]`) and SQLite each do, and a query must
+    pass under every reading, so a quote or comment one database skips cannot hide a statement another runs.
+    `COMMIT`, `ROLLBACK` and `DENY` count as writes (SQL Server runs statements without `;`), a lone carriage return is
+    refused, and names may hold non-ASCII letters.
+  - `allowed_objects` reads every item of a `FROM`/`USING` list, CTE names only within their scope, `db..table`, and the
+    table after a leading `DESCRIBE`/`EXPLAIN`; MongoDB `$lookup`, `$graphLookup`, `$unionWith`, `$out` and `$merge`
+    (with `\uXXXX` escapes decoded); Elasticsearch paths cut at `?`/`#` and index names in the body; Redis keys split as
+    the provider splits them. The same rules as the Node and .NET servers.
+  - On SQL sources with `mask_columns` or `drop_columns`, those columns can only be selected by their own name (a plain
+    item of the outer select list, or `*`): aliases, expressions, filters, sorts, subqueries, set operations, Postgres
+    whole-row values and `U&"..."` names are refused before the query runs (`errorCode: "masked_column"`, `Masked column
+    'email' can only be selected by its own name`), and a result that returns such a column under another name is withheld.
+  - Masking also applies inside JSON text (a JSON column, an Elasticsearch answer): it is masked like a document.
+  - The Postgres provider runs queries only as prepared statements (one statement each, also when they return no rows).
+  - The schema's columns use camelCase keys (`primaryKey`) over HTTP and in MCP `data_schema`, as on the other servers.
   - New `DataExplorerProviderOptions` fields: `required_permissions` (403, and the source is hidden from `/sources` and MCP
     `data_sources`), `allowed_objects` (globs of tables, collections, keys or indices), `mask_columns` (`***`), `drop_columns`,
     `audit` (default `True`: a `data_query` entry in the audit log per execute), `rate_limit=DataExplorerRateLimit(max_queries,

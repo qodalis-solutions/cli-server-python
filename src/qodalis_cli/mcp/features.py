@@ -204,16 +204,16 @@ def _camel(name: str) -> str:
     return parts[0] + "".join(w.capitalize() for w in parts[1:])
 
 
-def _camel_keys(obj: Any, depth: int = 0) -> Any:
+def _camel_keys(obj: Any, depth: int = 0, max_depth: int = 2) -> Any:
     """Same key conversion as the data-explorer HTTP API (row data kept)."""
     if isinstance(obj, dict):
         out: dict[str, Any] = {}
         for k, v in obj.items():
-            key = _camel(k) if depth < 2 else k
-            out[key] = v if key == "rows" else _camel_keys(v, depth + 1)
+            key = _camel(k) if depth < max_depth else k
+            out[key] = v if key == "rows" else _camel_keys(v, depth + 1, max_depth)
         return out
     if isinstance(obj, list):
-        return [_camel_keys(item, depth) for item in obj]
+        return [_camel_keys(item, depth, max_depth) for item in obj]
     return obj
 
 
@@ -258,7 +258,7 @@ class DataExplorerMcpToolProvider:
             schema = await provider.get_schema_async(options)
             if schema is None:
                 return McpToolResult.error("Schema introspection is not supported by this data source.")
-            data = _camel_keys(asdict(filter_schema(schema, options)))
+            data = _camel_keys(asdict(filter_schema(schema, options)), max_depth=3)
             lines = []
             for table in data.get("tables", []):
                 cols = ", ".join(f"{c['name']} {c['type']}" for c in table.get("columns", []))
