@@ -46,6 +46,7 @@ from qodalis_cli_data_explorer import (  # noqa: E402
     is_object_allowed,
     masked_column_error,
     masked_result_error,
+    name_case_hint,
     objects_error,
     read_only_error,
     sql_objects,
@@ -442,6 +443,67 @@ class TestMaskedColumns:
         assert masked_result_error(self.O, "SELECT email FROM users", ["EMAIL"]) is None
         assert masked_result_error(self.O, "SELECT email FROM users FOR JSON PATH", ["JSON_F52E"]) is not None
         assert masked_result_error(self.O, "SELECT * FROM users", ["x"]) is None
+
+
+class TestNameCaseHint:
+    SCHEMA = DataExplorerSchemaResult(source="db", tables=[
+        DataExplorerSchemaTable("public.Users", "table", [DataExplorerSchemaColumn("CountryCode", "text")]),
+        DataExplorerSchemaTable("job_states", "table", [DataExplorerSchemaColumn("status", "text")]),
+    ])
+
+    @pytest.mark.parametrize("error,quoted", [
+        ('42P01: relation "users" does not exist\n\nPOSITION: 22', '"Users"'),
+        ('42703: column "countrycode" does not exist', '"CountryCode"'),
+        ("42703: column u.countrycode does not exist", '"CountryCode"'),
+    ])
+    def test_names_the_table_or_column_with_its_capitals(self, error: str, quoted: str) -> None:
+        assert name_case_hint(error, self.SCHEMA) == f"Names with capital letters need double quotes: {quoted}"
+
+    @pytest.mark.parametrize("error", [
+        # Nothing differs only in case, or the name is not shown (a hidden table is never named)
+        'relation "job_states" does not exist',
+        'relation "onetimecodes" does not exist',
+        'syntax error at or near "FORM"',
+    ])
+    def test_says_nothing_else(self, error: str) -> None:
+        assert name_case_hint(error, self.SCHEMA) is None
+
+    def test_no_schema(self) -> None:
+        assert name_case_hint('relation "users" does not exist', None) is None
+
+    async def test_executor_appends_the_hint_from_the_visible_schema(self) -> None:
+        class Failing(FakeProvider):
+            error = ""
+
+            async def execute_async(self, context: DataExplorerExecutionContext) -> DataExplorerResult:
+                raise RuntimeError(self.error)
+
+            async def get_schema_async(self, options: DataExplorerProviderOptions) -> DataExplorerSchemaResult:
+                return DataExplorerSchemaResult(source="db", tables=[
+                    DataExplorerSchemaTable("public.Users", "table", [DataExplorerSchemaColumn("Secret", "text")]),
+                    DataExplorerSchemaTable("Hidden", "table", []),
+                ])
+
+        o = opts(allowed_objects=["Users"], drop_columns=["Secret"])
+        provider = Failing()
+        executor, _, _, _ = executor_for(o, provider)
+
+        async def run(error: str) -> DataExplorerResult:
+            provider.error = error
+            return await executor.execute_async({"source": "db", "query": "SELECT 1"})
+
+        missing = await run('relation "users" does not exist ')
+        assert missing.success is False
+        assert missing.error == 'relation "users" does not exist\nNames with capital letters need double quotes: "Users"'
+        # A table the source hides and a dropped column are never named
+        assert (await run('relation "hidden" does not exist')).error == 'relation "hidden" does not exist'
+        assert (await run('column "secret" does not exist')).error == 'column "secret" does not exist'
+        # Only SQL sources
+        failing = Failing()
+        failing.error = 'relation "users" does not exist'
+        shell, _, _, _ = executor_for(opts(language=L.SHELL, read_only=False), failing)
+        res = await shell.execute_async({"source": "db", "query": "db.users.find()"})
+        assert res.error == 'relation "users" does not exist'
 
 
 def executor_for(o: DataExplorerProviderOptions, provider: FakeProvider | None = None, **kw: Any):

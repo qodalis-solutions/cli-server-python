@@ -4,6 +4,12 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## Unreleased
+
+- **API tokens and terminal links with an external auth adapter (opt-in).** `CliUsersBuilder.set_allow_api_tokens()` (`AuthServiceOptions.api_tokens_with_external_auth`): a host that signs users in itself (`set_auth_adapter`) can also accept the plugin's API tokens. `qcli_pat_` bearer tokens are checked before the adapter, users signed in by the host create tokens (`POST /tokens`) and approve terminal links (`POST /link/code/{code}/approve`); both answered 501 before and still do without the option. The token's user comes from the user store by id (it must find the adapter's users and report `disabled`); keep tokens in a persistent `IApiTokenStore`.
+- Admin: `set_sign_in_url()` / `AdminConfig.sign_in_url` documents how the dashboard (1.0.0-beta.23) sends users back after the host's sign-in: `{returnTo}` in the URL, or a `returnTo=` parameter, to open again with `#token=`.
+- **Data explorer: a hint for names that need quotes.** When a SQL source answers that a table or column does not exist (PostgreSQL folds unquoted names to lower case: `SELECT count(*) FROM Users` looks for `users`), the error adds `Names with capital letters need double quotes: "Users"` when the source's schema has that name with capitals. Only tables the source shows and columns it does not drop are named.
+
 ## 1.0.0b26
 
 - The admin plugin embeds dashboard 1.0.0-beta.22: built with Qodalis CLI 2.5.1 (touch scrolling of the terminal page on phones, page no longer scrolls under the panel).

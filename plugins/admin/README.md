@@ -111,6 +111,11 @@ example `javascript:` or `//host`) raises `ValueError` in `build()`. The mode is
 `mount_plugin` hands them to the plugin; when you include the router yourself, pass
 `AdminBuildDeps(server_options=result.options, ...)`.
 
+**Coming back.** The dashboard (1.0.0-beta.23 and later) sends users to the sign-in URL with the dashboard page they
+were on (for example a terminal link's approval page): it fills `{returnTo}` in the URL
+(`https://app.example.com/sign-in?next={returnTo}`), or appends a `returnTo=` parameter. After signing the user in,
+the host opens that URL with `#token=<host bearer token>` (see the handoff below).
+
 **Handoff.** Send signed-in users to the dashboard with your bearer token in the URL fragment:
 
 ```

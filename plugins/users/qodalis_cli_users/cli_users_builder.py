@@ -353,6 +353,7 @@ class CliUsersBuilder:
         self._group_store: IGroupStore | None = None
         self._api_token_store: IApiTokenStore | None = None
         self._allow_non_expiring_tokens = False
+        self._allow_api_tokens = False
         self._read_only_users = False
         self._read_only_groups = False
         self._auth_adapter: ExternalAuthAdapter | None = None
@@ -401,6 +402,19 @@ class CliUsersBuilder:
         """Allow API tokens that never expire (``expiresInDays: null``;
         default ``False``)."""
         self._allow_non_expiring_tokens = allow
+        return self
+
+    def set_allow_api_tokens(self, allow: bool = True) -> CliUsersBuilder:
+        """With an external auth adapter (:meth:`set_auth_adapter`), also
+        accept the plugin's API tokens: ``qcli_pat_`` bearer tokens are checked
+        before the adapter, and users signed in by the host create tokens
+        (``POST /tokens``) and approve terminal links
+        (``POST /link/code/{code}/approve``); both answer ``501`` without it.
+        The token's user is read from the user store by id, so the store must
+        find the adapter's users and report ``disabled``; keep the tokens in a
+        persistent store (:meth:`set_api_token_store`).  Ignored without an
+        adapter (tokens are always on).  Default ``False``."""
+        self._allow_api_tokens = allow
         return self
 
     def set_read_only_users(self, read_only: bool = True) -> CliUsersBuilder:
@@ -536,6 +550,7 @@ class CliUsersBuilder:
                 trust_proxy=self._trust_proxy,
                 allowed_origins=self._allowed_origins,
                 allow_non_expiring_tokens=self._allow_non_expiring_tokens,
+                api_tokens_with_external_auth=self._allow_api_tokens,
                 read_only_users=self._read_only_users,
                 read_only_groups=self._read_only_groups,
             ),

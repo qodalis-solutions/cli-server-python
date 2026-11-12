@@ -17,10 +17,12 @@ from .data_explorer_policy import (
     DataExplorerRateLimiter,
     apply_column_policy,
     filter_listing,
+    filter_schema,
     is_read_only,
     masked_column_error,
     masked_result_error,
     missing_permissions,
+    name_case_hint,
     objects_error,
     rate_limit_of,
     read_only_error,
@@ -121,7 +123,12 @@ class DataExplorerExecutor:
         except asyncio.TimeoutError:
             result = _failure(source, options, f"Query timed out after {options.timeout}ms", options.timeout)
         except Exception as exc:
-            result = _failure(source, options, str(exc), _elapsed_ms(start))
+            error = str(exc)
+            hint = (
+                name_case_hint(error, await self._visible_schema(provider, options))
+                if _language_of(options) == "sql" else None
+            )
+            result = _failure(source, options, error if hint is None else f"{error.rstrip()}\n{hint}", _elapsed_ms(start))
         else:
             if result.row_count > options.max_rows:
                 result.rows = result.rows[: options.max_rows]
@@ -142,6 +149,16 @@ class DataExplorerExecutor:
         result = _failure(request.get("source", ""), options, error, 0, code)
         await self._write_audit(request, options, caller, result, 0)
         return result
+
+    async def _visible_schema(self, provider: Any, options: Any) -> Any:
+        """The source's schema as its callers see it, or ``None`` when the
+        provider cannot give one."""
+        try:
+            schema = await provider.get_schema_async(options)
+            return filter_schema(schema, options) if schema is not None else None
+        except Exception:
+            logger.debug("No schema for the name hint on source '%s'", getattr(options, "name", ""), exc_info=True)
+            return None
 
     async def _write_audit(self, request: dict[str, Any], options: Any, caller: Any, result: DataExplorerResult, duration_ms: int) -> None:
         """Writes the ``data_query`` audit entry; a failing audit log does not fail the query."""
@@ -174,6 +191,11 @@ class DataExplorerExecutor:
             ))
         except Exception:
             logger.exception("Failed to write the data_query audit entry")
+
+
+def _language_of(options: Any) -> str:
+    language = getattr(options, "language", "sql")
+    return str(getattr(language, "value", language))
 
 
 def _elapsed_ms(start: float) -> int:

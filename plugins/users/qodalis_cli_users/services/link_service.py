@@ -253,7 +253,10 @@ class LinkService:
         link = self._find_pending(user_code)
         if link is None:
             raise not_found(NOT_FOUND)
-        ensure_can_create_tokens(ctx)
+        # Adapter identities approve only when the host allows API tokens.
+        ensure_can_create_tokens(
+            ctx, bool(ctx.external) and self.auth_service.options.api_tokens_with_external_auth,
+        )
         permissions = scope_permissions(ctx, link.permissions)
         # Claimed before the token exists, so a parallel approval or deny gets 404
         # instead of leaving a second token behind.
