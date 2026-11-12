@@ -39,6 +39,12 @@ class ICliModule(abc.ABC):
         """Command processors provided by this module."""
         ...
 
+    @property
+    def icon(self) -> str | None:
+        """One emoji or an image URL shown for the module (the admin
+        dashboard's plugins page); ``None`` = none."""
+        return None
+
 
 class CliModule(ICliModule):
     """Base class for CLI modules providing sensible defaults."""

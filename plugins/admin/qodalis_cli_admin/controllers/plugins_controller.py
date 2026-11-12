@@ -15,8 +15,8 @@ def create_plugins_router(
     auth_dependency: Any,
     builder: Any = None,
 ) -> APIRouter:
-    """Create a router with ``GET /plugins``, ``GET /plugins/installed`` and
-    ``POST /plugins/{id}/toggle``."""
+    """Create a router with ``GET /plugins``, ``GET /plugins/installed``,
+    ``GET /plugins/{id}`` and ``POST /plugins/{id}/toggle``."""
     router = APIRouter()
 
     @router.get("/plugins/installed")
@@ -33,6 +33,19 @@ def create_plugins_router(
         _user: dict[str, Any] = Depends(auth_dependency),
     ) -> list[dict[str, Any]]:
         return module_registry.list()
+
+    @router.get("/plugins/{plugin_id}")
+    async def get_plugin(
+        plugin_id: str,
+        _user: dict[str, Any] = Depends(auth_dependency),
+    ) -> Any:
+        try:
+            return module_registry.get(plugin_id)
+        except KeyError:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "Plugin not found", "code": "PLUGIN_NOT_FOUND"},
+            )
 
     @router.post("/plugins/{plugin_id}/toggle")
     async def toggle_plugin(

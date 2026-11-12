@@ -64,6 +64,7 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli`). Exce
 | GET | `/status/history?minutes=` | Status samples (every 15 s, kept 24 h in memory), oldest first: `memoryMb`, `cpuPercent`, `activeWsConnections`, `activeShellSessions`; `minutes` defaults to 60, clamped to 1..1440 |
 | GET | `/plugins` | List registered plugin modules |
 | GET | `/plugins/installed` | List the installed server plugin packages (`id`, `name`, `version`, `description`) |
+| GET | `/plugins/{id}` | One plugin module by name (ignoring case); 404 `PLUGIN_NOT_FOUND` |
 | POST | `/plugins/{id}/toggle` | Enable or disable a plugin module |
 | GET | `/config` | Get server configuration sections |
 | PUT | `/config` | Update mutable runtime settings |
@@ -149,6 +150,27 @@ window.location.href = `/qcli/admin/#token=${encodeURIComponent(accessToken)}`;
 
 When the token expires, the next API call answers 401 and the dashboard shows the sign-in screen; after signing in
 again, the host repeats the handoff.
+
+## Command modules
+
+The Plugins page also lists the command modules, each with its commands and a switch that disables them
+(`/api/v1/qcli/plugins`). A module added with `builder.add_module(...)` is listed with its name, version, description
+and `icon` (one emoji or an image URL). Commands registered on their own (`builder.add_processor(...)`) are listed
+under the module their `module` attribute names (ignoring case); without such a module, the group takes its version
+and description from the commands' package (empty for the application's own code). To describe such a group, add a
+module of the same name with no processors of its own:
+
+```python
+class ShopModule(CliModule):
+    name = "shop"
+    version = "1.0.0"
+    description = "Shop administration"
+    icon = "🛒"
+    processors = []  # StatsCommand etc. set module = "shop"
+
+
+builder.add_module(ShopModule()).add_processor(StatsCommand()).add_processor(OrdersCommand())
+```
 
 ## Installed plugins
 

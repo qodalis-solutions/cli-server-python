@@ -107,6 +107,12 @@ class CliBuilder:
         """Return a copy of all registered modules."""
         return list(self._modules)
 
+    @property
+    def processors(self) -> list[ICliCommandProcessor]:
+        """Every registered command processor (modules' and those added on
+        their own), as the command registry holds them."""
+        return list(self._registry.processors)
+
     def add_filesystem(self, options: FileSystemOptions) -> CliBuilder:
         """Enable the filesystem API with the given options (legacy)."""
         self._filesystem_options = options
