@@ -224,6 +224,15 @@ class TestAllowedObjects:
         assert "secret" in sql_objects(q)
         assert objects_error(opts(allowed_objects=["allowed"]), q) == "'secret' is not available on this source"
 
+    @pytest.mark.parametrize("q", [
+        # MySQL without ANSI_QUOTES reads "Users" as a string; the table is still Users, never WHERE or the alias
+        """SELECT "Id" FROM "Users" WHERE "CountryCode" = 'RO'""",
+        """SELECT u."Id" FROM "Users" u WHERE u."CountryCode" = 'RO' ORDER BY 1""",
+        'SELECT * FROM "Users" AS u JOIN "Bots" b ON b."UserId" = u."Id"',
+    ])
+    def test_quoted_names_of_allowed_tables(self, q: str) -> None:
+        assert objects_error(opts(allowed_objects=["Users", "Bots"]), q) is None
+
     def test_patterns(self) -> None:
         assert is_object_allowed("public.users", ["users"])
         assert is_object_allowed("public.users", ["public.*"])
@@ -405,6 +414,8 @@ class TestMaskedColumns:
         "SELECT password_hash AS h FROM users",
         # under the MySQL reading the # comment hides nothing: the alias counts
         "SELECT email # x\nAS e FROM users",
+        """SELECT "id" FROM "users" WHERE "email" LIKE '%a%'""",
+        """SELECT "id" FROM "users" u WHERE u."email" = 'x'""",
     ])
     def test_other_uses_are_refused(self, q: str) -> None:
         assert masked_column_error(self.O, q) is not None
