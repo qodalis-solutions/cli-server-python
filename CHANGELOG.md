@@ -52,6 +52,13 @@ PEP 440 for `1.0.0-beta.19`).
     `create_data_explorer_router(registry, executor, caller=...)`; new abstractions `DataExplorerCaller`,
     `DataExplorerAuditEntry`, `DataExplorerRateLimit`, `is_read_only_source`; providers that only read can set
     `read_only_queries = True`. The plugins read the new options with `getattr`, so they still work with older abstractions.
+- **Link a terminal through the browser** (users plugin), the same on the .NET and Node servers
+  (spec: web-cli `docs/superpowers/specs/2026-11-12-server-linking-design.md`): `POST /api/v1/qcli/link` (public,
+  rate limited) returns a code and the approval page, `GET /link/{linkId}` hands the terminal its API token once the
+  user approved at `/qcli/admin/link?code=…` (`GET /link/code/{code}`, `POST …/approve`, `POST …/deny`). The token is
+  the approver's, named `link <client>`, scoped to the requested permissions. `set_link_approval_url` points to a
+  host's own page; `link_approved` and `link_denied` are audited. A request is approved once (a parallel approval gets
+  404); one that expires while its token is created gets 404 and the token is revoked.
 
 ## 1.0.0b24
 

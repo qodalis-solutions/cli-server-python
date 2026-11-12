@@ -53,7 +53,7 @@ def _expires_at(body: CreateApiTokenRequest, allow_never: bool, now: int) -> int
     return now + days * DAY_MS
 
 
-def _scope(ctx: AuthContext, raw: Any) -> list[str] | None:
+def scope_permissions(ctx: AuthContext, raw: Any) -> list[str] | None:
     """``None`` (omitted/null) = unscoped; ``[]`` = an empty scope.  Field
     errors (400) are raised before the coverage check (403)."""
     if raw is None:
@@ -65,6 +65,82 @@ def _scope(ctx: AuthContext, raw: Any) -> list[str] | None:
         if not ctx.can(perm):
             raise forbidden(f"forbidden: cannot grant {sanitize(perm, 128)}")
     return perms
+
+
+def ensure_can_create_tokens(ctx: AuthContext) -> None:
+    """Only a signed-in session creates tokens: 403 for API tokens (a leaked
+    token must not mint more), 501 for external auth (no sessions)."""
+    if ctx.api_token is not None:
+        raise forbidden(API_TOKENS_CANNOT_CREATE)
+    if ctx.session is None or ctx.external:
+        raise UsersApiError(501, MANAGED_BY_HOST)
+
+
+async def revoke_api_token(auth_service: AuthService, ctx: AuthContext, record: ApiToken) -> None:
+    """Delete an API token as ``ctx`` (``DELETE /tokens/{id}`` and link
+    approvals the terminal can no longer collect); audited
+    (``token_revoked``) and published (``token:revoked``)."""
+    await auth_service.api_token_store.delete_token(record.id)
+    owner = await auth_service.user_store.get_user(record.user_id)
+    # The audit also notifies change listeners: sockets opened with this
+    # token are re-checked and closed (4401 "session ended").
+    await auth_service.audit(
+        "token_revoked", owner.name if owner else record.user_id,
+        details=f"{record.name} ({record.id})",
+        actor=ctx.user.name, actor_id=ctx.user.id, user_id=record.user_id,
+        metadata={"tokenId": record.id, "tokenName": record.name},
+    )
+    await auth_service.publish("token:revoked", {
+        "tokenId": record.id, "name": record.name, "userId": record.user_id, "actor": ctx.user.name,
+    }, permission=TOKENS_READ, user_id=record.user_id)
+
+
+def default_token_expiry(now: int | None = None) -> int:
+    """Expiry of a token created without ``expiresInDays`` (90 days)."""
+    return (now if now is not None else now_ms()) + DEFAULT_EXPIRES_IN_DAYS * DAY_MS
+
+
+async def create_api_token(
+    auth_service: AuthService,
+    ctx: AuthContext,
+    name: str,
+    permissions: list[str] | None,
+    expires_at: int | None,
+) -> tuple[str, ApiToken]:
+    """Create an API token for the caller (``POST /tokens`` and link
+    approvals): the name is unique per user (409), at most
+    ``MAX_TOKENS_PER_USER`` unexpired tokens (400); audited
+    (``token_created``) and published (``token:created``).  The caller
+    validated the session, the name, the expiry and the scope.  Returns the
+    raw token (shown once) and the stored record."""
+    store = auth_service.api_token_store
+    now = now_ms()
+    existing = await store.get_tokens(ctx.user.id)
+    if any(t.name.lower() == name.lower() for t in existing):
+        raise conflict(f"token '{name}' already exists")
+    # Expired tokens stay listed but do not count toward the limit.
+    if sum(1 for t in existing if not t.is_expired(now)) >= MAX_TOKENS_PER_USER:
+        raise bad_request(f"a user may have at most {MAX_TOKENS_PER_USER} tokens")
+    token = auth_service.generate_api_token()
+    record = await store.create_token(ApiToken(
+        id=uuid.uuid4().hex,
+        user_id=ctx.user.id,
+        name=name,
+        token_hash=hash_token(token),
+        created_at=now,
+        expires_at=expires_at,
+        permissions=permissions,
+    ))
+    await auth_service.audit(
+        "token_created", ctx.user.name,
+        details=f"{record.name} ({record.id})",
+        actor=ctx.user.name, actor_id=ctx.user.id, user_id=ctx.user.id,
+        metadata={"tokenId": record.id, "tokenName": record.name},
+    )
+    await auth_service.publish("token:created", {
+        "tokenId": record.id, "name": record.name, "userId": record.user_id, "actor": ctx.user.name,
+    }, permission=TOKENS_READ, user_id=record.user_id)
+    return token, record
 
 
 def create_tokens_router(
@@ -87,40 +163,11 @@ def create_tokens_router(
 
     @collection(router, "POST", status_code=201)
     async def create_token(body: CreateApiTokenRequest, ctx: AuthContext = Depends(get_auth)):
-        # A leaked token must not be able to mint more tokens.
-        if ctx.api_token is not None:
-            raise forbidden(API_TOKENS_CANNOT_CREATE)
-        if ctx.session is None or ctx.external:
-            raise UsersApiError(501, MANAGED_BY_HOST)
+        ensure_can_create_tokens(ctx)
         name = _validate_name(body.name)
-        now = now_ms()
-        expires_at = _expires_at(body, auth_service.options.allow_non_expiring_tokens, now)
-        permissions = _scope(ctx, body.permissions)
-        existing = await store.get_tokens(ctx.user.id)
-        if any(t.name.lower() == name.lower() for t in existing):
-            raise conflict(f"token '{name}' already exists")
-        # Expired tokens stay listed but do not count toward the limit.
-        if sum(1 for t in existing if not t.is_expired(now)) >= MAX_TOKENS_PER_USER:
-            raise bad_request(f"a user may have at most {MAX_TOKENS_PER_USER} tokens")
-        token = auth_service.generate_api_token()
-        record = await store.create_token(ApiToken(
-            id=uuid.uuid4().hex,
-            user_id=ctx.user.id,
-            name=name,
-            token_hash=hash_token(token),
-            created_at=now,
-            expires_at=expires_at,
-            permissions=permissions,
-        ))
-        await auth_service.audit(
-            "token_created", ctx.user.name,
-            details=f"{record.name} ({record.id})",
-            actor=ctx.user.name, actor_id=ctx.user.id, user_id=ctx.user.id,
-            metadata={"tokenId": record.id, "tokenName": record.name},
-        )
-        await auth_service.publish("token:created", {
-            "tokenId": record.id, "name": record.name, "userId": record.user_id, "actor": ctx.user.name,
-        }, permission=TOKENS_READ, user_id=record.user_id)
+        expires_at = _expires_at(body, auth_service.options.allow_non_expiring_tokens, now_ms())
+        permissions = scope_permissions(ctx, body.permissions)
+        token, record = await create_api_token(auth_service, ctx, name, permissions, expires_at)
         return {"token": token, "apiToken": record.to_view(ctx.user.name)}
 
     @router.delete("/{token_id}", status_code=204)
@@ -128,19 +175,7 @@ def create_tokens_router(
         record = await store.get_token(token_id)
         if record is None or (record.user_id != ctx.user.id and not ctx.can(TOKENS_REVOKE)):
             raise not_found("token not found")
-        await store.delete_token(record.id)
-        owner = await auth_service.user_store.get_user(record.user_id)
-        # The audit also notifies change listeners: sockets opened with this
-        # token are re-checked and closed (4401 "session ended").
-        await auth_service.audit(
-            "token_revoked", owner.name if owner else record.user_id,
-            details=f"{record.name} ({record.id})",
-            actor=ctx.user.name, actor_id=ctx.user.id, user_id=record.user_id,
-            metadata={"tokenId": record.id, "tokenName": record.name},
-        )
-        await auth_service.publish("token:revoked", {
-            "tokenId": record.id, "name": record.name, "userId": record.user_id, "actor": ctx.user.name,
-        }, permission=TOKENS_READ, user_id=record.user_id)
+        await revoke_api_token(auth_service, ctx, record)
         return Response(status_code=204)
 
     return router
