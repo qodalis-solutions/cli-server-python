@@ -12,6 +12,7 @@ from qodalis_cli_server_abstractions.jobs import (
     CliJobOptions,
     ICliJob,
     ICliJobStorageProvider,
+    JobHistoryRetention,
 )
 
 from .cli_job_scheduler import CliJobScheduler, BroadcastFn
@@ -47,6 +48,7 @@ class CliJobsBuilder:
     def __init__(self) -> None:
         self._registrations: list[tuple[ICliJob, CliJobOptions]] = []
         self._storage_provider: ICliJobStorageProvider | None = None
+        self._history_retention: JobHistoryRetention | None = None
 
     def add_job(self, job: ICliJob, options: CliJobOptions) -> CliJobsBuilder:
         """Register a background job with the given options."""
@@ -56,6 +58,16 @@ class CliJobsBuilder:
     def set_storage_provider(self, provider: ICliJobStorageProvider) -> CliJobsBuilder:
         """Set a custom storage provider for job execution history."""
         self._storage_provider = provider
+        return self
+
+    def set_history_retention(self, retention: JobHistoryRetention) -> CliJobsBuilder:
+        """Keep the job history bounded (off by default): runs older than
+        ``max_age`` or beyond the newest ``max_runs_per_job`` of their job are
+        deleted every ``prune_interval`` by the system job
+        ``jobs:prune-history``.  A job's ``CliJobOptions.history`` overrides
+        these limits for that job."""
+        retention.validate()
+        self._history_retention = retention
         return self
 
     def build(
@@ -69,7 +81,12 @@ class CliJobsBuilder:
         mounted); ``broadcast_fn`` (JSON strings to every socket) is only used
         without a bus."""
         storage = self._storage_provider or InMemoryJobStorageProvider()
-        scheduler = CliJobScheduler(storage, broadcast_fn=broadcast_fn, event_bus=event_bus)
+        scheduler = CliJobScheduler(
+            storage,
+            broadcast_fn=broadcast_fn,
+            event_bus=event_bus,
+            history_retention=self._history_retention,
+        )
 
         for job, opts in self._registrations:
             scheduler.register(job, opts)

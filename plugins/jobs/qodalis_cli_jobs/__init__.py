@@ -13,6 +13,7 @@ from .cli_job_scheduler import (
     MAX_JOB_TAG_LENGTH,
     MAX_JOB_TAGS,
     NotSupportedError,
+    PRUNE_HISTORY_JOB_ID,
     job_has_tags,
     normalize_job_tags,
 )
@@ -20,6 +21,7 @@ from .cli_jobs_builder import CliJobsBuilder, CliJobsPlugin
 from .cli_jobs_controller import create_cli_jobs_router
 from .in_memory_job_storage_provider import InMemoryJobStorageProvider
 from .interval_parser import parse_interval
+from .prune_history_job import PruneJobHistoryJob
 
 __all__ = [
     "BroadcastFn",
@@ -37,6 +39,8 @@ __all__ = [
     "MAX_JOB_TAGS",
     "MAX_JOB_TAG_LENGTH",
     "NotSupportedError",
+    "PRUNE_HISTORY_JOB_ID",
+    "PruneJobHistoryJob",
     "create_cli_jobs_router",
     "job_has_tags",
     "normalize_job_tags",

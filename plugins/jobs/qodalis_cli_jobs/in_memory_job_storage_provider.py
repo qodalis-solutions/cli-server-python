@@ -8,6 +8,7 @@ from qodalis_cli_server_abstractions.jobs import (
     ICliJobStorageProvider,
     JobExecution,
     JobExecutionQuery,
+    JobHistoryLimits,
     JobState,
 )
 from qodalis_cli_server_abstractions.jobs.job_execution_query import as_utc
@@ -64,6 +65,19 @@ class InMemoryJobStorageProvider(ICliJobStorageProvider):
         for execution_id in old:
             await self.delete_execution(execution_id)
         return len(old)
+
+    async def prune_history(
+        self, job_id: str, limits: JobHistoryLimits, now: datetime.datetime,
+    ) -> int:
+        """Delete the runs of ``job_id`` that break ``limits`` (never a
+        running one or the job's latest)."""
+        job_list = self._executions.get(job_id, [])
+        expired = set(limits.expired_ids(job_list, as_utc(now)))
+        if expired:
+            job_list[:] = [e for e in job_list if e.id not in expired]
+            for execution_id in expired:
+                self._executions_by_id.pop(execution_id, None)
+        return len(expired)
 
     async def delete_execution(self, execution_id: str) -> bool:
         """Delete one execution; ``False`` when there is none."""

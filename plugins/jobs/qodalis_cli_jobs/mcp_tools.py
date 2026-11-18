@@ -57,7 +57,7 @@ class JobsMcpToolProvider:
         async def jobs_list(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
             tags = [t.strip() for t in args.get("tags") or [] if t.strip()]
             jobs = [
-                _job_dto(r) for r in scheduler.registrations.values()
+                _job_dto(r, scheduler.history_retention) for r in scheduler.registrations.values()
                 if job_has_tags(r.options.tags, tags)
             ]
             lines = ["NAME | ID | STATUS | NEXT RUN | LAST STATUS | TAGS"]
@@ -72,7 +72,7 @@ class JobsMcpToolProvider:
             job_id = self._resolve(args["id"])
             if job_id is None:
                 return McpToolResult.error(JOB_NOT_FOUND)
-            dto = _job_dto(scheduler.registrations[job_id])
+            dto = _job_dto(scheduler.registrations[job_id], scheduler.history_retention)
             return McpToolResult(text=_json(dto), structured=dto)
 
         async def jobs_history(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
