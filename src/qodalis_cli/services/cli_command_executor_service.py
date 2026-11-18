@@ -6,6 +6,7 @@ import logging
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Any, Iterator, Sequence
 
 from qodalis_cli_server_abstractions.events import CliEventAudience, ICliEventBus
@@ -26,6 +27,43 @@ AUDIT_READ = "audit:read"
 #: set by the REST API and the MCP endpoint around an execution.
 command_user_id: ContextVar[str | None] = ContextVar("qcli_command_user_id", default=None)
 
+#: The auth context of the current command's caller (see :func:`get_cli_caller`).
+command_auth: ContextVar[Any] = ContextVar("qcli_command_auth", default=None)
+
+
+@dataclass(frozen=True)
+class CliCaller:
+    """The caller of the CLI request being handled (see :func:`get_cli_caller`)."""
+
+    user_id: str
+    user_name: str
+    permissions: list[str] = field(default_factory=list)
+    session_id: str | None = None
+    #: Set when an API token signed the caller in (e.g. a terminal linked with ``server add``).
+    token_id: str | None = None
+
+
+def get_cli_caller() -> CliCaller | None:
+    """The caller of the CLI request being handled, as the auth provider (e.g. the users plugin) authenticated it:
+    a session, an API token or the host's adapter. Lets host code, such as a processor's services, read the
+    signed-in user, e.g. for a host command run from a terminal linked with an API token; ``token_id`` tells
+    token sign-ins apart. ``None`` outside an authenticated CLI request (an unprotected server, a background job).
+    """
+    auth = command_auth.get()
+    user_id = caller_user_id(auth)
+    if user_id is None:
+        return None
+    user = getattr(auth, "user", None)
+    session = getattr(auth, "session", None)
+    api_token = getattr(auth, "api_token", None)
+    return CliCaller(
+        user_id=user_id,
+        user_name=str(getattr(user, "name", "") or ""),
+        permissions=list(getattr(auth, "permissions", None) or []),
+        session_id=getattr(session, "id", None),
+        token_id=getattr(api_token, "id", None),
+    )
+
 
 def caller_user_id(auth: Any) -> str | None:
     """The user id of an auth context (``None`` without one)."""
@@ -38,9 +76,11 @@ def caller_user_id(auth: Any) -> str | None:
 def executing_as(auth: Any) -> Iterator[None]:
     """Run commands in this block as the caller of ``auth`` (an auth context)."""
     token = command_user_id.set(caller_user_id(auth))
+    auth_token = command_auth.set(auth)
     try:
         yield
     finally:
+        command_auth.reset(auth_token)
         command_user_id.reset(token)
 
 
