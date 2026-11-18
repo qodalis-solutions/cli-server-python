@@ -40,6 +40,8 @@ from .services import (
     CliResponseBuilder,
     ICliCommandExecutorService,
     CliCommandExecutorService,
+    CliCaller,
+    get_cli_caller,
     CliEventBus,
     CliEventSocketManager,
     CliShellSessionManager,
@@ -85,6 +87,8 @@ from .shell_security import CliShellOptions, ShellAccessProvider, ShellPrincipal
 from .security import RedactingLogFilter, install_log_redaction, redact
 
 __all__ = [
+    "CliCaller",
+    "get_cli_caller",
     "CliMcpOptions",
     "IMcpToolProvider",
     "McpTool",

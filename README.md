@@ -636,6 +636,24 @@ The order matters: `mount_plugin(users_plugin)` installs the users protection as
 
 Details: [plugins/users/README.md](plugins/users/README.md#external-auth-adapter).
 
+### The caller in your own code (`get_cli_caller`)
+
+Code that a CLI request runs (a processor and the services it calls) reads the authenticated caller with
+`get_cli_caller()`: a `CliCaller(user_id, user_name, permissions, session_id, token_id)`, the identity your
+sign-in adapter or the users plugin established, whether it came from a session, an API token (`token_id` set,
+e.g. a terminal linked with `server add`) or your adapter. It is `None` outside an authenticated CLI request (an
+unprotected server, a background job). A command's `required_permissions` are checked against the caller's
+permissions before it runs.
+
+```python
+from qodalis_cli import get_cli_caller
+
+class MyCommand(CliCommandProcessor):
+    async def handle_async(self, command, cancellation_event=None) -> str:
+        caller = get_cli_caller()
+        return f"hello {caller.user_name}" if caller else "not signed in"
+```
+
 ## Remote Shell Security
 
 The PTY shell (`/ws/v1/qcli/shell`, `/ws/qcli/shell`) gives OS-level access. It is **off** unless `enable_shell=True`, and once enabled every connection must pass exactly one access mode (reported as `shellAuth` by `/capabilities`):

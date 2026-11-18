@@ -18,6 +18,7 @@ from ..models import CliServerCommandDescriptor, CliServerCommandParameterDescri
 from ..services.cli_command_executor_service import (
     ICliCommandExecutorService,
     caller_user_id,
+    command_auth,
     command_user_id,
     executing_as,
 )
@@ -221,12 +222,14 @@ def create_cli_router(
         )
 
         cancellation_event = asyncio.Event()
-        user_id = caller_user_id(get_auth_context(http_request))
+        caller_auth = get_auth_context(http_request)
+        user_id = caller_user_id(caller_auth)
 
         async def event_generator():
             # The generator runs in the response's own task: the executor
             # reads the caller from there.
             command_user_id.set(user_id)
+            command_auth.set(caller_auth)
             def sse_event(event_type: str, data: dict) -> str:
                 return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
