@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import abc
 import datetime
+from collections.abc import Mapping
 
 from .job_execution import JobExecution
 from .job_execution_query import JobExecutionQuery
@@ -62,16 +63,22 @@ class ICliJobStorageProvider(abc.ABC):
 
     async def prune_history(
         self,
-        job_id: str,
-        limits: JobHistoryLimits,
+        limits: Mapping[str, JobHistoryLimits | None],
+        default: JobHistoryLimits | None,
         now: datetime.datetime,
-    ) -> int:
-        """Deletes the runs of ``job_id`` (and their logs) that break
-        ``limits`` at ``now`` and returns how many: older than the max age, or
-        not among the newest max runs; failed (and timed-out) runs use the
-        ``failed_*`` limits when set.  Never deletes a running execution or the
-        job's latest run.  ``JobHistoryLimits.expired_ids`` selects them in
-        memory; a database store should delete set-based instead.
+    ) -> dict[str, int]:
+        """Deletes the runs (and their logs) that break their job's history
+        retention at ``now``; returns how many per job id (jobs with none
+        deleted may be left out).
+
+        ``limits`` holds the limits of each registered job (``None``: keep
+        every run of that job); runs of any other job id (jobs no longer
+        registered) follow ``default`` (``None``: keep them).  A run breaks the
+        limits when older than the max age or not among the newest max runs of
+        its job; failed runs (status ``failed``) use the ``failed_*`` limits
+        when set.  A running execution or a job's latest run is never deleted.
+        ``JobHistoryLimits.expired_ids`` selects them in memory; a database
+        store should delete set-based instead.
 
         Optional: the jobs plugin's history retention calls it, and falls back
         to :meth:`prune` with the global max age (no count limits, per-job

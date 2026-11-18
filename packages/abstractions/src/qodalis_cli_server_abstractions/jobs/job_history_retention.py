@@ -15,20 +15,21 @@ Duration = Union[str, datetime.timedelta]
 _DURATION = re.compile(r"^(\d+)(s|m|h|d)$")
 _UNIT_SECONDS = {"d": 86400, "h": 3600, "m": 60, "s": 1}
 
-#: Statuses of the runs the ``failed_*`` limits apply to.
-FAILED_STATUSES = frozenset({"failed", "timed_out"})
+#: Status of the runs the ``failed_*`` limits apply to (timed-out and
+#: cancelled runs follow the normal limits).
+FAILED_STATUS = "failed"
 
 
 def parse_duration(value: Duration | None) -> datetime.timedelta | None:
     """``value`` as a :class:`datetime.timedelta` (``None`` stays ``None``).
 
     Raises ``ValueError`` for a string that is not a number followed by
-    ``s``, ``m``, ``h`` or ``d``, or a negative duration."""
+    ``s``, ``m``, ``h`` or ``d``, or a duration that is not positive."""
     if value is None:
         return None
     if isinstance(value, datetime.timedelta):
-        if value < datetime.timedelta(0):
-            raise ValueError(f"Invalid duration: {value!r} is negative")
+        if value <= datetime.timedelta(0):
+            raise ValueError(f"Invalid duration: {value!r} must be positive")
         return value
     match = _DURATION.match(str(value).strip())
     if not match:
@@ -36,7 +37,10 @@ def parse_duration(value: Duration | None) -> datetime.timedelta | None:
             f"Invalid duration: {value!r}. "
             "Expected a number followed by s, m, h, or d (e.g. '30s', '30d')."
         )
-    return datetime.timedelta(seconds=int(match.group(1)) * _UNIT_SECONDS[match.group(2)])
+    amount = int(match.group(1))
+    if amount == 0:
+        raise ValueError(f"Invalid duration: {value!r} must be positive")
+    return datetime.timedelta(seconds=amount * _UNIT_SECONDS[match.group(2)])
 
 
 def format_duration(value: datetime.timedelta | None) -> str | None:
@@ -61,14 +65,16 @@ class JobHistoryRetention:
 
     A finished run is deleted when it breaks any limit that is set: older than
     ``max_age``, or not among the newest ``max_runs_per_job`` runs of its job.
-    Failed (and timed-out) runs use ``failed_max_age`` /
+    Failed runs (status ``failed``) use ``failed_max_age`` /
     ``failed_max_runs_per_job`` when set (else the normal limits); with
     ``failed_max_runs_per_job`` they are counted apart from the other runs.
-    Running executions and the latest run of each job are never deleted.
+    Running executions and the latest run of each job are never deleted
+    (they still take a place in the count).  Runs of jobs that are no longer
+    registered follow these limits.
 
-    With any limit set the plugin registers the system job
-    ``jobs:prune-history`` (group ``system``), which prunes every
-    ``prune_interval``."""
+    With any limit in effect (here or in a job's ``CliJobOptions.history``)
+    the plugin registers the system job ``jobs:prune-history`` (group
+    ``system``), which prunes every ``prune_interval`` and on start when due."""
 
     max_age: Duration | None = None
     max_runs_per_job: int | None = None
@@ -81,8 +87,7 @@ class JobHistoryRetention:
         """Raises ``ValueError`` for an invalid duration or count."""
         parse_duration(self.max_age)
         parse_duration(self.failed_max_age)
-        interval = parse_duration(self.prune_interval)
-        if not interval:
+        if parse_duration(self.prune_interval) is None:
             raise ValueError("prune_interval must be a positive duration")
         _validate_count("max_runs_per_job", self.max_runs_per_job)
         _validate_count("failed_max_runs_per_job", self.failed_max_runs_per_job)
@@ -201,7 +206,7 @@ class JobHistoryLimits:
         rank_other = 0
         expired: list[str] = []
         for execution in ordered:
-            failed = execution.status in FAILED_STATUSES
+            failed = execution.status == FAILED_STATUS
             if failed and separate_failed:
                 rank, rank_failed = rank_failed, rank_failed + 1
                 max_runs = self.failed_max_runs_per_job

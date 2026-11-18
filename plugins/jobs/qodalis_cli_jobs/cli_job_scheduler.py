@@ -184,15 +184,30 @@ class CliJobScheduler:
         self.event_bus = event_bus
         self._registrations: dict[str, JobRegistration] = {}
         self._running = False
-        if history_retention is not None and history_retention.is_configured:
-            self._register_prune_history_job(history_retention)
 
-    def _register_prune_history_job(self, retention: JobHistoryRetention) -> None:
-        """The system job ``jobs:prune-history``: prunes every
-        ``prune_interval``; pausable and triggerable like any job, its own
-        history following the global limits."""
+    def ensure_prune_history_job(self) -> bool:
+        """Registers the system job ``jobs:prune-history`` when a history
+        limit is in effect (the global retention, or a job's ``history`` with
+        a limit; ``keep_all`` alone does not count) and it is not registered
+        yet; returns whether it is registered.  It prunes every
+        ``prune_interval`` (default one day) and on start when due; pausable
+        and triggerable like any job, its own history following the global
+        limits.  Called by the builder and by :meth:`start`."""
+        if PRUNE_HISTORY_JOB_ID in self._registrations:
+            return True
+        retention = self.history_retention
+        if not (
+            (retention is not None and retention.is_configured)
+            or any(
+                (limits := JobHistoryLimits.resolve(None, reg.options.history)) is not None
+                and limits.has_limits
+                for reg in self._registrations.values()
+            )
+        ):
+            return False
         from .prune_history_job import PruneJobHistoryJob
 
+        interval = retention.prune_interval if retention is not None else JobHistoryRetention().prune_interval
         self.register(
             PruneJobHistoryJob(self),
             CliJobOptions(
@@ -201,10 +216,12 @@ class CliJobScheduler:
                 description="Deletes the job runs that break the history retention",
                 group="system",
                 tags=["system"],
-                interval=format_duration(parse_duration(retention.prune_interval)),
+                interval=format_duration(parse_duration(interval)),
                 max_retries=0,
+                run_on_start=True,
             ),
         )
+        return True
 
     @property
     def registrations(self) -> dict[str, JobRegistration]:
@@ -268,6 +285,7 @@ class CliJobScheduler:
     async def start(self) -> None:
         """Finish runs a previous process left running, load persisted states
         and start timers for active jobs."""
+        self.ensure_prune_history_job()
         self._running = True
         await self._finish_interrupted_runs()
         persisted = await self._storage.get_all_job_states()
@@ -560,25 +578,26 @@ class CliJobScheduler:
         return JobHistoryLimits.resolve(self.history_retention, reg.options.history)
 
     async def prune_history(self, now: datetime.datetime | None = None) -> int:
-        """Deletes the runs of the registered jobs that break their history
-        retention (running runs and each job's latest run are kept) and
-        returns how many.  A store without ``prune_history`` gets
-        ``prune(before)`` with the global max age instead."""
+        """Deletes the runs that break their job's history retention (runs of
+        jobs no longer registered follow the global limits; running runs and
+        each job's latest run are kept) and returns how many.  A store
+        without ``prune_history`` gets ``prune(before)`` with the global max
+        age instead."""
         now = as_utc(now) if now is not None else datetime.datetime.now(datetime.UTC)
         retention = self.history_retention
-        deleted = 0
-        for reg in list(self._registrations.values()):
-            limits = JobHistoryLimits.resolve(retention, reg.options.history)
-            if limits is None or not limits.has_limits:
-                continue
-            try:
-                count = await self._storage.prune_history(reg.id, limits, now)
-            except NotImplementedError:
-                return await self._prune_by_age(now)
+        limits = {
+            reg.id: JobHistoryLimits.resolve(retention, reg.options.history)
+            for reg in self._registrations.values()
+        }
+        default = JobHistoryLimits.resolve(retention, None)
+        try:
+            deleted = await self._storage.prune_history(limits, default, now)
+        except NotImplementedError:
+            return await self._prune_by_age(now)
+        for job_id, count in deleted.items():
             if count:
-                deleted += count
-                await self._broadcast({"type": "job:runs-deleted", "jobId": reg.id, "count": count})
-        return deleted
+                await self._broadcast({"type": "job:runs-deleted", "jobId": job_id, "count": count})
+        return sum(deleted.values())
 
     async def _prune_by_age(self, now: datetime.datetime) -> int:
         """Age-only fallback for stores without ``prune_history``: the global

@@ -64,8 +64,10 @@ class CliJobsBuilder:
         """Keep the job history bounded (off by default): runs older than
         ``max_age`` or beyond the newest ``max_runs_per_job`` of their job are
         deleted every ``prune_interval`` by the system job
-        ``jobs:prune-history``.  A job's ``CliJobOptions.history`` overrides
-        these limits for that job."""
+        ``jobs:prune-history`` (also registered when only a job's
+        ``CliJobOptions.history`` sets limits).  A job's ``history`` overrides
+        these limits for that job; runs of jobs no longer registered follow
+        them."""
         retention.validate()
         self._history_retention = retention
         return self
@@ -90,6 +92,7 @@ class CliJobsBuilder:
 
         for job, opts in self._registrations:
             scheduler.register(job, opts)
+        scheduler.ensure_prune_history_job()
 
         router = create_cli_jobs_router(scheduler, storage)
 

@@ -144,23 +144,28 @@ plugin = (
 )
 ```
 
-- Durations take the `interval` format (`30s`, `5m`, `12h`, `30d`) or a `datetime.timedelta`; counts are integers >= 1.
-  Invalid values raise `ValueError`.
+- Durations take the `interval` format (`30s`, `5m`, `12h`, `30d`) or a `datetime.timedelta` and must be positive;
+  counts are integers >= 1. Invalid values raise `ValueError` (at `set_history_retention`, or when the job registers).
 - A run is deleted when it breaks **any** limit that is set: older than `max_age`, or not among the newest
   `max_runs_per_job` runs of its job.
-- Failed and timed-out runs use `failed_max_age` / `failed_max_runs_per_job` when set, else the normal limits. With
-  `failed_max_runs_per_job` they are counted apart from the job's other runs.
-- **Never deleted:** running executions and the latest run of each job.
+- Failed runs (status `failed`) use `failed_max_age` / `failed_max_runs_per_job` when set, else the normal limits;
+  timed-out and cancelled runs follow the normal limits. With `failed_max_runs_per_job` the newest N failed runs are
+  kept and the other runs counted on their own against `max_runs_per_job`; without it every run of the job counts
+  against `max_runs_per_job`, newest first.
+- **Never deleted:** running executions and the latest run of each job (they still take a place in the count).
+- Runs of job ids that are no longer registered follow the global limits, so the history of removed jobs does not grow.
 - **Per job:** `CliJobOptions.history` (`CliJobHistoryOptions`, the same four limits plus `keep_all`). A field set there
   replaces the global one for that job; `keep_all=True` keeps every run. Per-job limits work without global ones.
-- With any global limit set, the plugin registers the system job **`jobs:prune-history`** (id and name, group
-  `system`, tag `system`, interval `prune_interval`). Each run deletes the runs that break the limits, sets its
+- With any limit in effect (global, or a job's `history` with a limit; `keep_all` alone does not count), the plugin
+  registers the system job **`jobs:prune-history`** (id and name, group `system`, tag `system`, interval
+  `prune_interval`, default one day, and `run_on_start`: it runs at startup when due or never ran). Each run deletes the runs that break the limits, sets its
   `deleted` property to how many and logs it, and publishes `job:runs-deleted` (`count`) per job it pruned. Pause,
   resume or trigger it like any job; its own history follows the global limits. Call
   `await scheduler.prune_history()` to prune from your own code.
 - Job info (`GET /`, `GET /{id}`, `jobs_list`, `jobs_get`) carries `historyRetention`: the limits in effect,
   `{ "maxAge": "30d", "maxRunsPerJob": 50, "failedMaxAge": "90d", "failedMaxRunsPerJob": null, "overridden": true,
-  "keepAll": false }`, or `null` when no limit applies.
+  "keepAll": false }` (unset limits are `null`; a `keep_all` job has every limit `null` with `overridden` and `keepAll`
+  `true`), or `null` when nothing applies.
 
 ## REST API
 
@@ -237,9 +242,10 @@ across jobs; the default merges `get_executions` per job and raises `NotImplemen
 scheduler merges the registered jobs instead), `delete_execution(id)` (deletes the run and its logs, for `discard()` and the `DELETE .../history` routes; the
 default keeps the run, and the routes then answer `501 NOT_SUPPORTED`),
 `prune(before)` (delete executions older than `before`; the default keeps everything) and
-`prune_history(job_id, limits, now)` (delete the job's runs that break `limits`, a `JobHistoryLimits`, never a running
-run or the job's latest; `limits.expired_ids(executions, now)` selects them in memory, a database store should delete
-set-based). History retention uses `prune_history`; for a store without it, it falls back to `prune(before)` with the
+`prune_history(limits, default, now)` (delete the runs that break their job's limits: `limits` maps each registered
+job id to its `JobHistoryLimits`, `None` to keep all; other job ids use `default`, the global limits; never a running run
+or a job's latest; returns the count per job id. `JobHistoryLimits.expired_ids(executions, now)` selects one job's runs
+in memory, a database store should delete set-based). History retention uses `prune_history`; for a store without it, it falls back to `prune(before)` with the
 global `max_age` (the longer `failed_max_age` when set), without count limits, per-job overrides or the kept latest run.
 
 ## License
