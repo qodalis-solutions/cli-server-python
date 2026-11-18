@@ -29,6 +29,11 @@ class AwsModule(CliModule):
         return "Provides AWS cloud resource management commands"
 
     @property
+    def icon(self) -> str | None:
+        """One emoji or an image URL shown for the module."""
+        return "☁️"
+
+    @property
     def processors(self) -> Sequence[ICliCommandProcessor]:
         """Returns the command processors provided by this module."""
         return [AwsCommandProcessor()]

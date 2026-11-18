@@ -3,6 +3,9 @@ and when), its in-memory store and its API at ``/api/v1/qcli/audit``."""
 
 from __future__ import annotations
 
+#: The package's icon on the admin dashboard's plugins page (``CliInstalledPlugin.icon``).
+__plugin_icon__ = "🛡️"
+
 from qodalis_cli_server_abstractions.audit import (
     AuditEntry,
     AuditMetadata,

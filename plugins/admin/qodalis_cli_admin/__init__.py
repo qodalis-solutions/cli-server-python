@@ -1,5 +1,8 @@
 """Qodalis CLI admin plugin — admin dashboard for CLI servers."""
 
+#: The package's icon on the admin dashboard's plugins page (``CliInstalledPlugin.icon``).
+__plugin_icon__ = "🎛️"
+
 from .cli_admin_builder import CliAdminBuilder, CliAdminPlugin, AdminBuildDeps, BroadcastFn
 from .auth.jwt_service import JwtService
 from .auth.auth_middleware import create_auth_dependency

@@ -1,5 +1,8 @@
 """Qodalis CLI Data Explorer plugin — registry, executor, and controller."""
 
+#: The package's icon on the admin dashboard's plugins page (``CliInstalledPlugin.icon``).
+__plugin_icon__ = "📊"
+
 from .data_explorer_registry import DataExplorerRegistry
 from .data_explorer_executor import (
     AUDIT_QUERY_MAX_LENGTH,

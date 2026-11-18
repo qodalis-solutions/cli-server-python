@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+#: The package's icon on the admin dashboard's plugins page (``CliInstalledPlugin.icon``).
+__plugin_icon__ = "📁"
+
 from .errors import (
     FileStorageExistsError,
     FileStorageIsADirectoryError,

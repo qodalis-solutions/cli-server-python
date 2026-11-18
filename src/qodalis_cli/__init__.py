@@ -1,5 +1,8 @@
 """Qodalis CLI Server - A Python CLI server framework for the Qodalis CLI ecosystem."""
 
+#: The package's icon on the admin dashboard's plugins page (``CliInstalledPlugin.icon``).
+__plugin_icon__ = "🖥️"
+
 from .abstractions import (
     ICliCommandAuthor,
     CliCommandAuthor,

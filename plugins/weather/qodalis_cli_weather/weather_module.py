@@ -206,5 +206,9 @@ class WeatherModule(CliModule):
         return "Provides weather information commands"
 
     @property
+    def icon(self) -> str | None:
+        return "🌤️"
+
+    @property
     def processors(self) -> list[ICliCommandProcessor]:
         return [_CliWeatherCommandProcessor()]

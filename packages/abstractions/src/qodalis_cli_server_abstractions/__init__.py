@@ -1,3 +1,6 @@
+#: The package's icon on the admin dashboard's plugins page (``CliInstalledPlugin.icon``).
+__plugin_icon__ = "🧱"
+
 from .cli_command_author import ICliCommandAuthor, CliCommandAuthor, DEFAULT_LIBRARY_AUTHOR
 from .cli_process_command import CliProcessCommand
 from .shell_words import split_shell_words, join_shell_words, get_positionals, get_positional_text
