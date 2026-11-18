@@ -94,6 +94,7 @@ Python has no service container, so there is no per-run service scope (the .NET 
 | `timeout` | `str \| None` | `None` | Max execution duration (same format as interval) |
 | `overlap_policy` | `str` | `skip` | What a due run does when every slot is taken: `skip`, `queue` or `cancel` (see [Concurrency](#concurrency)) |
 | `max_concurrent_runs` | `int` | `1` | Runs of the job at the same time (an integer >= 1) |
+| `history` | `CliJobHistoryOptions \| None` | `None` | The job's own history retention (see [History Retention](#history-retention)) |
 
 ## Concurrency
 
@@ -118,6 +119,48 @@ timer that fires early never runs one occurrence twice. When the scheduler start
 still has as `running` (cut off by a previous process) are finished as `cancelled` with the error
 `Interrupted: the server stopped during the run`, completed at their last log entry (else their start); no events are
 published for them.
+
+## History Retention
+
+The plugin keeps every run unless history retention is configured (off by default). Set it on the builder:
+
+```python
+from qodalis_cli_server_abstractions.jobs import CliJobHistoryOptions, JobHistoryRetention
+
+plugin = (
+    CliJobsBuilder()
+    .set_history_retention(JobHistoryRetention(
+        max_age="30d",              # delete runs older than this
+        max_runs_per_job=500,       # keep at most this many runs per job (newest kept)
+        failed_max_age="90d",       # optional: failed runs kept longer
+        failed_max_runs_per_job=None,
+        prune_interval="6h",        # how often the plugin prunes (default "1d")
+    ))
+    .add_job(FetchJob(), CliJobOptions(id="fetch", interval="30m",
+                                       history=CliJobHistoryOptions(max_runs_per_job=50)))
+    .add_job(ReportJob(), CliJobOptions(id="monthly-report", schedule="0 0 1 * *",
+                                        history=CliJobHistoryOptions(keep_all=True)))
+    .build()
+)
+```
+
+- Durations take the `interval` format (`30s`, `5m`, `12h`, `30d`) or a `datetime.timedelta`; counts are integers >= 1.
+  Invalid values raise `ValueError`.
+- A run is deleted when it breaks **any** limit that is set: older than `max_age`, or not among the newest
+  `max_runs_per_job` runs of its job.
+- Failed and timed-out runs use `failed_max_age` / `failed_max_runs_per_job` when set, else the normal limits. With
+  `failed_max_runs_per_job` they are counted apart from the job's other runs.
+- **Never deleted:** running executions and the latest run of each job.
+- **Per job:** `CliJobOptions.history` (`CliJobHistoryOptions`, the same four limits plus `keep_all`). A field set there
+  replaces the global one for that job; `keep_all=True` keeps every run. Per-job limits work without global ones.
+- With any global limit set, the plugin registers the system job **`jobs:prune-history`** (id and name, group
+  `system`, tag `system`, interval `prune_interval`). Each run deletes the runs that break the limits, sets its
+  `deleted` property to how many and logs it, and publishes `job:runs-deleted` (`count`) per job it pruned. Pause,
+  resume or trigger it like any job; its own history follows the global limits. Call
+  `await scheduler.prune_history()` to prune from your own code.
+- Job info (`GET /`, `GET /{id}`, `jobs_list`, `jobs_get`) carries `historyRetention`: the limits in effect,
+  `{ "maxAge": "30d", "maxRunsPerJob": 50, "failedMaxAge": "90d", "failedMaxRunsPerJob": null, "overridden": true,
+  "keepAll": false }`, or `null` when no limit applies.
 
 ## REST API
 
@@ -192,9 +235,12 @@ plugin = (
 Besides saving and reading executions and states, a store may implement `query_executions(query)` (executions
 across jobs; the default merges `get_executions` per job and raises `NotImplementedError` for every job, where the
 scheduler merges the registered jobs instead), `delete_execution(id)` (deletes the run and its logs, for `discard()` and the `DELETE .../history` routes; the
-default keeps the run, and the routes then answer `501 NOT_SUPPORTED`)
-and `prune(before)` (delete executions older than `before`; the default keeps everything). Call `prune` on a
-schedule, for example from a job, to keep the history bounded.
+default keeps the run, and the routes then answer `501 NOT_SUPPORTED`),
+`prune(before)` (delete executions older than `before`; the default keeps everything) and
+`prune_history(job_id, limits, now)` (delete the job's runs that break `limits`, a `JobHistoryLimits`, never a running
+run or the job's latest; `limits.expired_ids(executions, now)` selects them in memory, a database store should delete
+set-based). History retention uses `prune_history`; for a store without it, it falls back to `prune(before)` with the
+global `max_age` (the longer `failed_max_age` when set), without count limits, per-job overrides or the kept latest run.
 
 ## License
 

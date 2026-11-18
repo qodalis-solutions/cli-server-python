@@ -5,6 +5,7 @@ import datetime
 
 from .job_execution import JobExecution
 from .job_execution_query import JobExecutionQuery
+from .job_history_retention import JobHistoryLimits
 from .job_state import JobState
 
 
@@ -58,6 +59,25 @@ class ICliJobStorageProvider(abc.ABC):
         ``before``; returns how many.  Run it on a schedule to keep the history
         bounded.  The default keeps everything and returns 0."""
         return 0
+
+    async def prune_history(
+        self,
+        job_id: str,
+        limits: JobHistoryLimits,
+        now: datetime.datetime,
+    ) -> int:
+        """Deletes the runs of ``job_id`` (and their logs) that break
+        ``limits`` at ``now`` and returns how many: older than the max age, or
+        not among the newest max runs; failed (and timed-out) runs use the
+        ``failed_*`` limits when set.  Never deletes a running execution or the
+        job's latest run.  ``JobHistoryLimits.expired_ids`` selects them in
+        memory; a database store should delete set-based instead.
+
+        Optional: the jobs plugin's history retention calls it, and falls back
+        to :meth:`prune` with the global max age (no count limits, per-job
+        overrides or kept latest run) for a store that keeps this default,
+        which raises :class:`NotImplementedError`."""
+        raise NotImplementedError("This store does not prune by retention limits")
 
     async def delete_execution(self, execution_id: str) -> bool:
         """Deletes an execution and its logs (a run the job discarded, see

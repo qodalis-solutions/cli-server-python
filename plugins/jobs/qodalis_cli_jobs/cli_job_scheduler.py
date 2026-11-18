@@ -20,8 +20,12 @@ from qodalis_cli_server_abstractions.jobs import (
     ICliJobStorageProvider,
     JobExecution,
     JobExecutionQuery,
+    JobHistoryLimits,
+    JobHistoryRetention,
     JobLogEntry,
     JobState,
+    format_duration,
+    parse_duration,
 )
 from qodalis_cli_server_abstractions.jobs.job_execution_query import as_utc
 from qodalis_cli_server_abstractions.events import CliEventAudience, ICliEventBus
@@ -40,6 +44,9 @@ _UNSAFE_ID_CHARS = frozenset("/\\?#")
 #: Marks an ``update_options`` argument that was not given (``None`` is a value for ``tags``).
 _UNSET: Any = object()
 
+
+#: Id and name of the built-in job that prunes the job history.
+PRUNE_HISTORY_JOB_ID = "jobs:prune-history"
 
 #: Error of a run left ``running`` by a previous process (finished at start).
 INTERRUPTED_ERROR = "Interrupted: the server stopped during the run"
@@ -165,13 +172,39 @@ class CliJobScheduler:
         storage: ICliJobStorageProvider,
         broadcast_fn: BroadcastFn | None = None,
         event_bus: ICliEventBus | None = None,
+        history_retention: JobHistoryRetention | None = None,
     ) -> None:
+        if history_retention is not None:
+            history_retention.validate()
         self._storage = storage
+        #: Global job history retention (``None``: keep every run).
+        self.history_retention = history_retention
         self._broadcast_fn = broadcast_fn
         #: The server's event bus (``job:*`` events, audience ``jobs:read``).
         self.event_bus = event_bus
         self._registrations: dict[str, JobRegistration] = {}
         self._running = False
+        if history_retention is not None and history_retention.is_configured:
+            self._register_prune_history_job(history_retention)
+
+    def _register_prune_history_job(self, retention: JobHistoryRetention) -> None:
+        """The system job ``jobs:prune-history``: prunes every
+        ``prune_interval``; pausable and triggerable like any job, its own
+        history following the global limits."""
+        from .prune_history_job import PruneJobHistoryJob
+
+        self.register(
+            PruneJobHistoryJob(self),
+            CliJobOptions(
+                id=PRUNE_HISTORY_JOB_ID,
+                name=PRUNE_HISTORY_JOB_ID,
+                description="Deletes the job runs that break the history retention",
+                group="system",
+                tags=["system"],
+                interval=format_duration(parse_duration(retention.prune_interval)),
+                max_retries=0,
+            ),
+        )
 
     @property
     def registrations(self) -> dict[str, JobRegistration]:
@@ -200,6 +233,8 @@ class CliJobScheduler:
             InvalidOperationError: a job with ``options.id`` is registered.
         """
         _validate_max_concurrent_runs(options.max_concurrent_runs)
+        if options.history is not None:
+            options.history.validate()
         options.tags = normalize_job_tags(options.tags)
         if not options.name:
             options.name = type(job).__name__
@@ -517,6 +552,42 @@ class CliJobScheduler:
         if deleted:
             await self._broadcast({"type": "job:runs-deleted", "jobId": job_id, "count": deleted})
         return deleted
+
+    def history_limits(self, job_id: str) -> JobHistoryLimits | None:
+        """The history retention in effect for the job (the global limits
+        with its ``history`` overrides), or ``None`` when none applies."""
+        reg = self._get_registration(job_id)
+        return JobHistoryLimits.resolve(self.history_retention, reg.options.history)
+
+    async def prune_history(self, now: datetime.datetime | None = None) -> int:
+        """Deletes the runs of the registered jobs that break their history
+        retention (running runs and each job's latest run are kept) and
+        returns how many.  A store without ``prune_history`` gets
+        ``prune(before)`` with the global max age instead."""
+        now = as_utc(now) if now is not None else datetime.datetime.now(datetime.UTC)
+        retention = self.history_retention
+        deleted = 0
+        for reg in list(self._registrations.values()):
+            limits = JobHistoryLimits.resolve(retention, reg.options.history)
+            if limits is None or not limits.has_limits:
+                continue
+            try:
+                count = await self._storage.prune_history(reg.id, limits, now)
+            except NotImplementedError:
+                return await self._prune_by_age(now)
+            if count:
+                deleted += count
+                await self._broadcast({"type": "job:runs-deleted", "jobId": reg.id, "count": count})
+        return deleted
+
+    async def _prune_by_age(self, now: datetime.datetime) -> int:
+        """Age-only fallback for stores without ``prune_history``: the global
+        ``max_age`` (or the longer ``failed_max_age``, so no failed run goes
+        early); nothing without a global ``max_age``."""
+        limits = JobHistoryLimits.resolve(self.history_retention, None)
+        if limits is None or limits.max_age is None:
+            return 0
+        return await self._storage.prune(now - max(limits.max_age, limits.failed_max_age or limits.max_age))
 
     def _is_running(self, execution: JobExecution) -> bool:
         reg = self._registrations.get(execution.job_id)

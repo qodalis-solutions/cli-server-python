@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .job_history_retention import CliJobHistoryOptions
+
 
 @dataclass
 class CliJobOptions:
@@ -41,3 +43,7 @@ class CliJobOptions:
     #: jobs.  An interval job keeps its rhythm across restarts: the next run
     #: is the last run plus the interval (right away when that has passed).
     run_on_start: bool = False
+    #: The job's own history retention: a field set here replaces the global
+    #: ``JobHistoryRetention`` one for this job; ``keep_all=True`` keeps
+    #: every run (e.g. a monthly report).  ``None`` follows the global limits.
+    history: CliJobHistoryOptions | None = None

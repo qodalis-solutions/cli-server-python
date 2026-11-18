@@ -13,6 +13,8 @@ from qodalis_cli_server_abstractions.jobs import (
     ICliJobStorageProvider,
     JobExecution,
     JobExecutionQuery,
+    JobHistoryLimits,
+    JobHistoryRetention,
 )
 
 from .cli_job_scheduler import (
@@ -62,8 +64,10 @@ def _serialize_dt(dt: datetime.datetime | None) -> str | None:
     return dt.isoformat().replace("+00:00", "Z") if dt.tzinfo else dt.isoformat() + "Z"
 
 
-def _job_dto(reg: Any) -> dict[str, Any]:
-    """Convert a job registration to a JSON-serialisable DTO."""
+def _job_dto(reg: Any, retention: JobHistoryRetention | None = None) -> dict[str, Any]:
+    """Convert a job registration to a JSON-serialisable DTO; ``retention``
+    is the scheduler's global history retention."""
+    limits = JobHistoryLimits.resolve(retention, reg.options.history)
     return {
         "id": reg.id,
         "name": reg.options.name,
@@ -87,6 +91,7 @@ def _job_dto(reg: Any) -> dict[str, Any]:
         "lastRunAt": _serialize_dt(reg.last_run_at),
         "lastRunStatus": reg.last_run_status,
         "lastRunDuration": reg.last_run_duration,
+        "historyRetention": limits.to_dict() if limits is not None else None,
     }
 
 
@@ -146,7 +151,7 @@ def create_cli_jobs_router(
         that have every tag, ignoring case."""
         tags = _query_tags(tag)
         return [
-            _job_dto(reg) for reg in scheduler.registrations.values()
+            _job_dto(reg, scheduler.history_retention) for reg in scheduler.registrations.values()
             if job_has_tags(reg.options.tags, tags)
         ]
 
@@ -217,7 +222,7 @@ def create_cli_jobs_router(
                 status_code=404,
                 content={"error": "Job not found", "code": "JOB_NOT_FOUND"},
             )
-        return _job_dto(reg)
+        return _job_dto(reg, scheduler.history_retention)
 
     @router.post("/{job_id}/trigger")
     async def trigger_job(job_id: str) -> Any:
