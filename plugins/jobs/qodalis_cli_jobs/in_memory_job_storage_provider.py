@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+from collections.abc import Mapping
 
 from qodalis_cli_server_abstractions.jobs import (
     ICliJobStorageProvider,
@@ -67,17 +68,27 @@ class InMemoryJobStorageProvider(ICliJobStorageProvider):
         return len(old)
 
     async def prune_history(
-        self, job_id: str, limits: JobHistoryLimits, now: datetime.datetime,
-    ) -> int:
-        """Delete the runs of ``job_id`` that break ``limits`` (never a
-        running one or the job's latest)."""
-        job_list = self._executions.get(job_id, [])
-        expired = set(limits.expired_ids(job_list, as_utc(now)))
-        if expired:
+        self,
+        limits: Mapping[str, JobHistoryLimits | None],
+        default: JobHistoryLimits | None,
+        now: datetime.datetime,
+    ) -> dict[str, int]:
+        """Delete the runs that break their job's limits (``default`` for
+        jobs not in ``limits``); never a running run or a job's latest."""
+        now = as_utc(now)
+        deleted: dict[str, int] = {}
+        for job_id, job_list in self._executions.items():
+            job_limits = limits[job_id] if job_id in limits else default
+            if job_limits is None:
+                continue
+            expired = set(job_limits.expired_ids(job_list, now))
+            if not expired:
+                continue
             job_list[:] = [e for e in job_list if e.id not in expired]
             for execution_id in expired:
                 self._executions_by_id.pop(execution_id, None)
-        return len(expired)
+            deleted[job_id] = len(expired)
+        return deleted
 
     async def delete_execution(self, execution_id: str) -> bool:
         """Delete one execution; ``False`` when there is none."""

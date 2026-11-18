@@ -119,14 +119,13 @@ class TestRetentionLimits:
     async def test_failed_max_age_keeps_failed_runs_longer(self) -> None:
         storage = await store_with(
             run("a", 1), run("a", 40), run("a", 40, "failed"), run("a", 100, "failed"),
-            run("a", 40, "timed_out"),
+            run("a", 40, "timed_out"), run("a", 40, "cancelled"),
         )
         retention = JobHistoryRetention(max_age="30d", failed_max_age="90d")
 
-        assert await scheduler_with(storage, retention, a=None).prune_history(NOW) == 2
-        assert await ids(storage, "a") == {
-            "a-completed-1-0", "a-failed-40-0", "a-timed_out-40-0",
-        }
+        # Only status "failed" gets the longer age; timed-out and cancelled follow max_age
+        assert await scheduler_with(storage, retention, a=None).prune_history(NOW) == 4
+        assert await ids(storage, "a") == {"a-completed-1-0", "a-failed-40-0"}
 
     async def test_failed_max_runs_counts_failed_runs_apart(self) -> None:
         storage = await store_with(
@@ -139,6 +138,48 @@ class TestRetentionLimits:
         assert await ids(storage, "a") == {
             "a-completed-1-0", "a-failed-4-0", "a-failed-5-0",
         }
+
+    async def test_timed_out_runs_count_with_the_other_runs(self) -> None:
+        storage = await store_with(
+            run("a", 1), run("a", 2, "timed_out"), run("a", 3, "failed"), run("a", 4, "failed"),
+        )
+        retention = JobHistoryRetention(max_runs_per_job=1, failed_max_runs_per_job=1)
+
+        assert await scheduler_with(storage, retention, a=None).prune_history(NOW) == 2
+        assert await ids(storage, "a") == {"a-completed-1-0", "a-failed-3-0"}
+
+    async def test_without_failed_max_runs_every_run_counts_together(self) -> None:
+        storage = await store_with(run("a", 1), run("a", 2, "failed"), run("a", 3, "failed"))
+        retention = JobHistoryRetention(max_runs_per_job=2, failed_max_age="90d")
+
+        assert await scheduler_with(storage, retention, a=None).prune_history(NOW) == 1
+        assert await ids(storage, "a") == {"a-completed-1-0", "a-failed-2-0"}
+
+    async def test_running_and_latest_take_a_place_in_the_count(self) -> None:
+        storage = await store_with(run("a", 1, "running"), run("a", 2), run("a", 3))
+        retention = JobHistoryRetention(max_runs_per_job=2)
+
+        assert await scheduler_with(storage, retention, a=None).prune_history(NOW) == 1
+        assert await ids(storage, "a") == {"a-running-1-0", "a-completed-2-0"}
+
+    async def test_orphan_runs_follow_the_global_limits(self) -> None:
+        storage = await store_with(
+            *(run("gone", d) for d in (1, 2, 40)), *(run("kept", d) for d in (1, 40)),
+        )
+        scheduler = scheduler_with(
+            storage, JobHistoryRetention(max_age="30d"), kept=CliJobHistoryOptions(keep_all=True),
+        )
+
+        assert await scheduler.prune_history(NOW) == 1
+        assert await ids(storage, "gone") == {"gone-completed-1-0", "gone-completed-2-0"}
+        assert len(await ids(storage, "kept")) == 2
+
+    async def test_orphan_runs_are_kept_without_global_limits(self) -> None:
+        storage = await store_with(*(run("gone", d) for d in (1, 2, 3)), *(run("a", d) for d in (1, 2)))
+        scheduler = scheduler_with(storage, None, a=CliJobHistoryOptions(max_runs_per_job=1))
+
+        assert await scheduler.prune_history(NOW) == 1
+        assert len(await ids(storage, "gone")) == 3
 
     async def test_without_failed_limits_failed_runs_follow_normal_ones(self) -> None:
         storage = await store_with(run("a", 1), run("a", 40, "failed"))
@@ -221,6 +262,15 @@ class TestPerJobOverride:
             CliJobsBuilder().set_history_retention(JobHistoryRetention(max_runs_per_job=0))
         with pytest.raises(ValueError):
             scheduler_with(InMemoryJobStorageProvider(), None, a=CliJobHistoryOptions(failed_max_runs_per_job=-1))
+        for zero in ("0d", datetime.timedelta(0)):
+            with pytest.raises(ValueError):
+                CliJobsBuilder().set_history_retention(JobHistoryRetention(max_age=zero))
+            with pytest.raises(ValueError):
+                CliJobsBuilder().set_history_retention(JobHistoryRetention(max_age="1d", prune_interval=zero))
+        with pytest.raises(ValueError):
+            CliJobsBuilder().add_job(
+                NoopJob(), CliJobOptions(id="a", history=CliJobHistoryOptions(failed_max_age="0s"))
+            ).build()
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +300,7 @@ class TestAgeOnlyFallback:
 
         assert await scheduler_with(storage, retention, a=None).prune_history(NOW) == 1
         assert storage.pruned_before == NOW - datetime.timedelta(days=60)
+        assert await ids(storage, "a") == {"a-completed-1-0", "a-completed-40-0"}
 
     async def test_without_a_global_max_age_nothing_is_pruned(self) -> None:
         storage = AgeOnlyStorage()
@@ -268,6 +319,34 @@ class TestPruneHistoryJob:
         assert PRUNE_HISTORY_JOB_ID not in CliJobsBuilder().build().scheduler.jobs
         plugin = CliJobsBuilder().set_history_retention(JobHistoryRetention()).build()
         assert PRUNE_HISTORY_JOB_ID not in plugin.scheduler.jobs
+        keep_all_only = CliJobsBuilder().add_job(
+            NoopJob(), CliJobOptions(id="a", history=CliJobHistoryOptions(keep_all=True))
+        ).build()
+        assert PRUNE_HISTORY_JOB_ID not in keep_all_only.scheduler.jobs
+
+    def test_registered_for_a_per_job_limit_alone(self) -> None:
+        plugin = CliJobsBuilder().add_job(
+            NoopJob(), CliJobOptions(id="a", history=CliJobHistoryOptions(max_runs_per_job=10))
+        ).build()
+        reg = plugin.scheduler.jobs[PRUNE_HISTORY_JOB_ID]
+        assert reg.options.interval == "1d"
+        assert reg.options.run_on_start is True
+
+    async def test_registered_by_start_for_a_scheduler_built_directly(self) -> None:
+        storage = await store_with(run("a", 1), run("a", 2))
+        scheduler = scheduler_with(storage, None, a=CliJobHistoryOptions(max_runs_per_job=1))
+        assert PRUNE_HISTORY_JOB_ID not in scheduler.jobs
+        await scheduler.start()
+        try:
+            assert PRUNE_HISTORY_JOB_ID in scheduler.jobs
+            # run on start: never ran, so it prunes right away
+            for _ in range(50):
+                if len(await ids(storage, "a")) == 1:
+                    break
+                await asyncio.sleep(0.02)
+            assert len(await ids(storage, "a")) == 1
+        finally:
+            await scheduler.stop()
 
     def test_registered_as_a_system_job(self) -> None:
         plugin = (
@@ -281,6 +360,7 @@ class TestPruneHistoryJob:
         assert reg.options.group == "system"
         assert "system" in reg.options.tags
         assert reg.options.interval == "6h"
+        assert reg.options.run_on_start is True
 
     def test_default_interval_and_timedelta_interval(self) -> None:
         default = CliJobsBuilder().set_history_retention(JobHistoryRetention(max_runs_per_job=5)).build()
@@ -302,7 +382,7 @@ class TestPruneHistoryJob:
         scheduler = plugin.scheduler
         await scheduler.start()
         try:
-            assert await scheduler.trigger(PRUNE_HISTORY_JOB_ID) == "started"
+            # run on start (it never ran) prunes right away
             for _ in range(50):
                 items, _ = await storage.get_executions(PRUNE_HISTORY_JOB_ID)
                 if items and items[0].status != "running":
@@ -313,6 +393,7 @@ class TestPruneHistoryJob:
             assert any("3" in entry.message for entry in items[0].logs)
             assert len(await ids(storage, "a")) == 1
 
+            assert await scheduler.trigger(PRUNE_HISTORY_JOB_ID) == "started"
             await scheduler.pause(PRUNE_HISTORY_JOB_ID)
             assert scheduler.jobs[PRUNE_HISTORY_JOB_ID].status == "paused"
         finally:
