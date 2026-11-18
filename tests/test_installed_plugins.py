@@ -61,6 +61,25 @@ class TestCliBuilderInstalledPlugins:
             "qodalis-cli-server-plugin-filesystem",
         ]
 
+    def test_packages_declare_their_icons(self) -> None:
+        builder = CliBuilder(CliCommandRegistry())
+        builder.add_module(WeatherModule())
+        builder.set_file_storage_provider(InMemoryFileStorageProvider())
+        builder.add_installed_plugin(USERS)
+        builder.add_installed_plugin("acme-billing", icon="💳")
+        builder.add_installed_plugin("acme-other")
+
+        assert {p.name: p.icon for p in builder.installed_plugins} == {
+            "Core": "🖥️",
+            "Weather": "🌤️",
+            "Filesystem": "📁",
+            "Users": "👥",
+            "acme-billing": "💳",
+            "acme-other": None,
+        }
+        assert builder.installed_plugins[0].to_dict()["icon"] == "🖥️"
+        assert WeatherModule().icon == "🌤️"
+
     def test_host_code_is_not_listed_but_a_named_package_is(self) -> None:
         builder = CliBuilder(CliCommandRegistry())
         builder.add_installed_plugin(_HostPlugin())
@@ -116,6 +135,7 @@ class TestInstalledPluginMetadata:
             "name": "Not Installed",
             "version": None,
             "description": None,
+            "icon": None,
         }
 
 
@@ -160,7 +180,8 @@ class TestAdminInstalledPlugins:
             CORE, "qodalis-cli-server-plugin-filesystem", ADMIN, USERS,
         ]
         assert body[0]["name"] == "Core"
-        assert set(body[3]) == {"id", "name", "version", "description"}
+        assert set(body[3]) == {"id", "name", "version", "description", "icon"}
+        assert body[3]["icon"] == "👥"
 
     async def test_requires_authentication(self, client: AsyncClient) -> None:
         del client.headers["Authorization"]

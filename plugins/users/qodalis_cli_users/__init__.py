@@ -5,6 +5,9 @@ sessions, groups and API tokens.  Its events are recorded in the audit plugin
 
 from __future__ import annotations
 
+#: The package's icon on the admin dashboard's plugins page (``CliInstalledPlugin.icon``).
+__plugin_icon__ = "👥"
+
 from .cli_users_builder import CliUsersBuilder, CliUsersPlugin
 from .errors import UsersApiError
 from .models import (

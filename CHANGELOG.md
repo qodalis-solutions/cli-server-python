@@ -4,6 +4,9 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## Unreleased
+
+- **Icons for the installed plugins.** `/api/v1/qcli/plugins/installed` returns each package's `icon` (one emoji or an image URL, `null` when it has none): `CliInstalledPlugin.icon`, the `__plugin_icon__ = "💳"` of the package's top-level `__init__.py`, or `builder.add_installed_plugin(..., icon="💳")`. Every package has one: Core 🖥️, Abstractions 🧱, Admin 🎛️, Audit 🛡️, Aws ☁️, Jobs ⏱️, Users 👥, Weather 🌤️, Data Explorer 📊, Filesystem 📁 (Json 📄, Sqlite 🪶, S3 🪣) and the data explorer providers (Sql 🪶, Postgres 🐘, Mysql 🐬, Mssql 🗃️, Mongo 🍃, Redis 🔴, Elasticsearch 🔍). The weather and aws modules have icons too (`ICliModule.icon`: 🌤️, ☁️).
 ## 1.0.0b27
 
 - The admin plugin embeds dashboard 1.0.0-beta.23: built with Qodalis CLI 2.5.2; New token dialog, SQL editor with completion, the query as run ("Ran as"), module icons on the Plugins page, and the return to the dashboard after an external sign-in.

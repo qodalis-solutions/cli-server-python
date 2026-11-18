@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 from dataclasses import dataclass
 from importlib import metadata
@@ -28,6 +29,8 @@ class CliInstalledPlugin:
     name: str
     version: str | None = None
     description: str | None = None
+    #: One emoji or an image URL; ``None`` when the package has none.
+    icon: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +38,7 @@ class CliInstalledPlugin:
             "name": self.name,
             "version": self.version,
             "description": self.description,
+            "icon": self.icon,
         }
 
     @classmethod
@@ -45,10 +49,13 @@ class CliInstalledPlugin:
         name: str | None = None,
         version: str | None = None,
         description: str | None = None,
+        icon: str | None = None,
     ) -> CliInstalledPlugin:
         """Describes an installed distribution.  Version and description come
         from its metadata; a distribution that is not installed (running from
-        source) keeps the given values or ``None``."""
+        source) keeps the given values or ``None``.  The icon is the
+        ``__plugin_icon__`` of the distribution's top-level package (see
+        :func:`plugin_icon`)."""
         if version is None or description is None:
             try:
                 meta = metadata.metadata(distribution)
@@ -61,7 +68,46 @@ class CliInstalledPlugin:
             name=name or short_plugin_name(distribution),
             version=version,
             description=description,
+            icon=icon or plugin_icon(distribution),
         )
+
+
+def _normalize(distribution: str) -> str:
+    return distribution.lower().replace("_", "-").replace(".", "-")
+
+
+def _top_level_packages(distribution: str) -> list[str]:
+    """The import names a distribution ships: from the installed metadata,
+    else by the naming convention (``qodalis-cli-server-plugin-users`` ->
+    ``qodalis_cli_users``)."""
+    wanted = _normalize(distribution)
+    try:
+        tops = [top for top, dists in metadata.packages_distributions().items()
+                if any(_normalize(d) == wanted for d in dists)]
+    except Exception:  # pragma: no cover - broken metadata
+        tops = []
+    for top, dist in _KNOWN_DISTRIBUTIONS.items():
+        if dist == distribution:
+            tops.append(top)
+    if distribution.startswith(PLUGIN_PREFIX):
+        tops.append("qodalis_cli_" + distribution[len(PLUGIN_PREFIX):].replace("-", "_"))
+    return list(dict.fromkeys(tops))
+
+
+def plugin_icon(distribution: str) -> str | None:
+    """The icon a distribution declares: ``__plugin_icon__ = "💳"`` (one
+    emoji or an image URL) in its top-level package's ``__init__.py``."""
+    for top in _top_level_packages(distribution):
+        module = sys.modules.get(top)
+        if module is None:
+            try:
+                module = importlib.import_module(top)
+            except Exception:
+                continue
+        icon = getattr(module, "__plugin_icon__", None)
+        if isinstance(icon, str) and icon.strip():
+            return icon.strip()
+    return None
 
 
 def short_plugin_name(distribution: str) -> str:

@@ -1,5 +1,8 @@
 """Qodalis CLI jobs plugin — background job scheduler."""
 
+#: The package's icon on the admin dashboard's plugins page (``CliInstalledPlugin.icon``).
+__plugin_icon__ = "⏱️"
+
 from .cli_job_execution_context import CliJobExecutionContext
 from .cli_job_logger import CliJobLogger
 from .cli_job_scheduler import (

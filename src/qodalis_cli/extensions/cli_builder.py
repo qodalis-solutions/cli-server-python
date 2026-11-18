@@ -52,6 +52,7 @@ class CliBuilder:
         *,
         name: str | None = None,
         description: str | None = None,
+        icon: str | None = None,
     ) -> CliBuilder:
         """List a server plugin package among the installed plugins (once,
         in the order added), shown on the admin dashboard's plugins page.
@@ -60,13 +61,16 @@ class CliBuilder:
         or an object (module, class or instance) of the package.  The built-in
         plugins list themselves when added or mounted; call it from a plugin of
         your own.  The host application's own code (no distribution) is never
-        listed.
+        listed.  The icon defaults to the ``__plugin_icon__`` of the package's
+        top-level ``__init__.py``.
         """
         distribution = plugin if isinstance(plugin, str) else distribution_of(plugin)
         if not distribution or any(p.id == distribution for p in self._installed_plugins):
             return self
         self._installed_plugins.append(
-            CliInstalledPlugin.from_distribution(distribution, name=name, description=description)
+            CliInstalledPlugin.from_distribution(
+                distribution, name=name, description=description, icon=icon
+            )
         )
         return self
 
