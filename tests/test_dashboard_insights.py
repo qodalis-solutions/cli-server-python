@@ -179,7 +179,7 @@ class TestJobsStats:
         assert a["lastFailureAt"] == "2026-11-04T23:59:59.999Z"
         # Newest first
         assert [r["status"] for r in a["recent"]] == ["timed_out", "running", "failed", "completed"]
-        assert a["recent"][0] == {"status": "timed_out", "startedAt": "2026-11-04T23:59:59.999Z", "duration": 500}
+        assert a["recent"][0] == {"id": "a-3", "status": "timed_out", "startedAt": "2026-11-04T23:59:59.999Z", "duration": 500}
         assert b["lastFailureAt"] == "2026-11-04T04:00:00.000Z"
         assert b["successRate"] == pytest.approx(0.5)
 

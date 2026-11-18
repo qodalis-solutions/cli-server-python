@@ -184,7 +184,7 @@ def compute_stats(
             "jobName": name or (job_names or {}).get(job_id) or job_id,
             **_summary(job_runs),
             "recent": [
-                {"status": r.status, "startedAt": iso(r.started_at), "duration": r.duration}
+                {"id": r.id, "status": r.status, "startedAt": iso(r.started_at), "duration": r.duration}
                 for r in job_runs[:RECENT_RUNS]
             ],
         })

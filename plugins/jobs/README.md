@@ -197,7 +197,7 @@ runs' executions, oldest first; empty when idle), `currentExecutionId` (the newe
 `tags` the same way; `since` is an ISO 8601 time; `limit` is clamped to 1..100. Executions carry `properties`, the job's own
 values. `GET /stats` counts every run started in `[since, until)` (it pages through the storage's execution query, so
 any storage works) per time column by outcome (`succeeded`, `failed`, `cancelled`, `running`), with totals and per-job
-figures (`successRate`, `avgDuration`, `p95Duration`, `maxDuration`, `lastFailureAt`, the 12 newest runs); `buckets` is
+figures (`successRate`, `avgDuration`, `p95Duration`, `maxDuration`, `lastFailureAt`, the 12 newest runs as `recent`: `{ id, status, startedAt, duration }`, `id` being the execution id for `GET /{jobId}/history/{id}`); `buckets` is
 clamped to 1..200 and a bad time answers `400 { "error": "..." }`.
 
 `DELETE /{id}/history/{exec_id}` answers `200 { "message": "Run deleted" }`, `404 { "error", "code": "JOB_NOT_FOUND" }`
