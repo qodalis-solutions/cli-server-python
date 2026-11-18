@@ -4,9 +4,14 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
-## Unreleased
+## 1.0.0b28
 
+- The admin plugin embeds dashboard 1.0.0-beta.24: history retention on the job page and the pruning job's last run, collapsible job filters, Jobs and Recent runs tabs, paged lists, tag colours, run controls and row actions as button groups, last-runs tooltips that open the run, a navigation drawer on phones and tablets, shared selects, menus and dialogs, plugin icons, and uploads into folders.
+- **Jobs: built-in history retention** (#94). `CliJobsBuilder().set_history_retention(JobHistoryRetention(max_age, max_runs_per_job, failed_max_age, failed_max_runs_per_job, prune_interval))`, off by default; a job overrides them with `CliJobOptions.history` (or keeps everything with `keep_all`). The built-in system job `jobs:prune-history` (group `system`, runs on start when due) deletes the runs past the limits and records how many in its run's `deleted` property. Failed runs are counted on their own when `failed_max_runs_per_job` is set; running runs and each job's newest run are never deleted; runs of jobs no longer registered follow the global limits. Storage providers get an optional `prune_history(limits, default, now)`. Job info carries `historyRetention` (the limits in force, `null` when none apply), for the dashboard.
+- **Jobs: run ids in the statistics.** Each recent run in `GET /api/v1/qcli/jobs/stats` carries its execution `id`, so the dashboard's last-runs bars open the run.
+- **`get_cli_caller()`**: code a CLI request runs (a processor and the services it calls) reads the authenticated caller (`CliCaller`: `user_id`, `user_name`, `permissions`, `session_id`, `token_id`) for sessions, API tokens (a terminal linked with `server add`) and the host's adapter sign-ins; `None` outside an authenticated CLI request.
 - **Icons for the installed plugins.** `/api/v1/qcli/plugins/installed` returns each package's `icon` (one emoji or an image URL, `null` when it has none): `CliInstalledPlugin.icon`, the `__plugin_icon__ = "💳"` of the package's top-level `__init__.py`, or `builder.add_installed_plugin(..., icon="💳")`. Every package has one: Core 🖥️, Abstractions 🧱, Admin 🎛️, Audit 🛡️, Aws ☁️, Jobs ⏱️, Users 👥, Weather 🌤️, Data Explorer 📊, Filesystem 📁 (Json 📄, Sqlite 🪶, S3 🪣) and the data explorer providers (Sql 🪶, Postgres 🐘, Mysql 🐬, Mssql 🗃️, Mongo 🍃, Redis 🔴, Elasticsearch 🔍). The weather and aws modules have icons too (`ICliModule.icon`: 🌤️, ☁️).
+
 ## 1.0.0b27
 
 - The admin plugin embeds dashboard 1.0.0-beta.23: built with Qodalis CLI 2.5.2; New token dialog, SQL editor with completion, the query as run ("Ran as"), module icons on the Plugins page, and the return to the dashboard after an external sign-in.
