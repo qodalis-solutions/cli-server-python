@@ -49,8 +49,12 @@ route such as `GET /v1/rates` or `GET /health`, whatever the order they were add
 | `/assets/<file>` | the site's file (`Cache-Control: public, max-age=31536000, immutable`), else not handled |
 | `/favicon.svg` | the site's file, else not handled |
 
-The pages are served without sign-in (GET and HEAD), also under `/api/` on a server protected by the users plugin (the mount is
-listed in `CliServerResult.public_route_prefixes`; CLI routes always keep their sign-in). Under an ASGI `root_path`
+The pages are served without sign-in (GET and HEAD), also under `/api/` on a server protected by the users plugin (the
+portal's `public_paths`: the mount, `portal.json`, `favicon.svg`, and everything under `assets/`, `guides/` and
+`reference/`; CLI routes always keep their sign-in). Away from `/`, the portal answers every path under those prefixes
+itself (404 for what it does not serve), so a path served without sign-in never reaches a host route; at `/` (never
+under `/api/`) a missing asset falls through to the host instead. A mount that holds CLI routes (`/api`, `/ws`,
+`/api/v1`, anything under `/api/qcli`, ...) is refused. Under an ASGI `root_path`
 (an app mounted under a prefix) the `<base href>` and the URLs in `portal.json` start with it; a `root_path` starting
 with `//` or `/\` answers 400 `{"error": "invalid path base"}`.
 

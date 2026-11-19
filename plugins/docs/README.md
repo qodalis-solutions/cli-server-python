@@ -36,14 +36,16 @@ result.mount_plugin(docs)
 | `GET <base>/pages/<slug>` | 200, `Cache-Control: no-cache`: `{"slug", "title", "group", "order", "markdown"}` |
 | unknown or invalid slug | 404 `{"error": "page not found"}` |
 
-`HEAD` is answered too. No sign-in; credentials are ignored (keep `<base>` out of `/api/` on a server protected by the
-users plugin, which signs in every `/api/` path). Page order: `order` ascending, then `title` (case-insensitive), then
+`HEAD` is answered too. No sign-in; credentials are ignored, also under `/api/` on a server protected by the users
+plugin (`<base>/pages` and everything under it are the plugin's `public_paths`, answered by the plugin itself; a base
+under a CLI route fails `mount_plugin`). Under an ASGI `root_path` `{{baseUrl}}` includes it; a `root_path` starting
+with `//` or `/\` answers 400 `{"error": "invalid path base"}`. Page order: `order` ascending, then `title` (case-insensitive), then
 `slug`. The plugin's routes are host routes (`cli_routes = False`).
 
 ## Pages
 
 - **Folders** (`add_folder(path)`): every `*.md` file directly in the folder (no subfolders; names starting with `.` or
-  `_` are ignored), read once by `build()`. The slug is the file name without `.md`, lower-cased; it must match
+  `_` are ignored; symbolic links and files over 1 MB are skipped and logged), read once by `build()`. The slug is the file name without `.md`, lower-cased; it must match
   `^[a-z0-9][a-z0-9-]*$`. `index` is the guides' home page.
 - **Code** (`add_page(slug, markdown)`): same slug rule, same front matter.
 - **Front matter**: only when the first line is exactly `---`, up to the next line that is exactly `---` (without

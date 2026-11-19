@@ -101,8 +101,10 @@ class CliPortalPlugin:
     site_dir: Optional[str] = None
     #: Host routes: never counted among the CLI's routes.
     cli_routes: bool = False
-    #: Served without sign-in, also under ``/api/`` on a protected server.
-    public_routes: bool = True
+    #: Served without sign-in (GET and HEAD), also under ``/api/`` on a
+    #: protected server; under them the portal answers every path itself.
+    #: Empty at ``/`` (never under ``/api/``) and without a site.
+    public_paths: list[str] = field(default_factory=list)
     _index: Optional[str] = field(default=None, repr=False)
 
     def portal_json(self, root: str) -> dict[str, Any]:
@@ -207,6 +209,11 @@ class CliPortalBuilder:
         with open(os.path.join(site_dir, "index.html"), encoding="utf-8") as handle:
             plugin._index = handle.read()
         plugin.router = _router(plugin, site_dir)
+        if path != "/":
+            plugin.public_paths = [
+                path, f"{path}/", f"{path}/portal.json", f"{path}/favicon.svg", f"{path}/assets/*",
+                f"{path}/guides/*", f"{path}/reference", f"{path}/reference/*",
+            ]
         return plugin
 
 
@@ -235,10 +242,22 @@ def _router(plugin: CliPortalPlugin, site_dir: str) -> APIRouter:
             return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400)
         return JSONResponse(plugin.portal_json(root), headers=_NO_CACHE)
 
+    # At "/" a missing file falls through to the host's routes.  Elsewhere the
+    # portal answers every path under its public prefixes itself, so a path
+    # served without sign-in never reaches a host route.
+    owns_prefixes = plugin.prefix != "/"
+
+    async def not_found() -> Response:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+
     async def asset(file: str) -> Response:
+        if not asset_exists({"file": file}):
+            return await not_found()
         return FileResponse(os.path.join(assets_dir, file), headers=_IMMUTABLE)
 
     async def favicon_svg() -> Response:
+        if not os.path.isfile(favicon):
+            return await not_found()
         return FileResponse(favicon, media_type="image/svg+xml")
 
     plain = _route_class()
@@ -254,6 +273,12 @@ def _router(plugin: CliPortalPlugin, site_dir: str) -> APIRouter:
     for page in ("/", "/guides/{slug}", "/reference", "/reference/{tag}"):
         add(page, index)
     add("/portal.json", portal_json)
-    add("/assets/{file}", asset, _route_class(asset_exists))
-    add("/favicon.svg", favicon_svg, _route_class(lambda _: os.path.isfile(favicon)))
+    if owns_prefixes:
+        add("/assets/{file}", asset)
+        add("/favicon.svg", favicon_svg)
+        for under in ("/assets", "/guides", "/reference"):
+            add(under + "/{rest:path}", not_found)
+    else:
+        add("/assets/{file}", asset, _route_class(asset_exists))
+        add("/favicon.svg", favicon_svg, _route_class(lambda _: os.path.isfile(favicon)))
     return router

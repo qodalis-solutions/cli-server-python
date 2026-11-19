@@ -42,7 +42,7 @@ from .middleware.auth_middleware import (
     host_token_dependency,
     permission_dependency,
 )
-from .errors import UsersApiError, install_guard_error_handler
+from .errors import QcliGuardError, UsersApiError, install_guard_error_handler
 from .models import ExternalAuthAdapter, TokenUsageProvider
 from .permissions import USERS_PERMISSION_ENTRIES
 from .server_protection import ServerProtectionMiddleware, _normalize_base
@@ -149,8 +149,8 @@ class CliUsersPlugin:
     _base_paths: list = field(default_factory=list, repr=False)
     #: The server's ``cli_route_prefixes`` (live list), set when mounted.
     _server_cli_prefixes: Optional[list] = field(default=None, repr=False)
-    #: The server's ``public_route_prefixes`` (live list), set when mounted.
-    _server_public_prefixes: Optional[list] = field(default=None, repr=False)
+    #: The server's ``public_paths`` (live list), set when mounted.
+    _server_public_paths: Optional[list] = field(default=None, repr=False)
     _protected_apps: list = field(default_factory=list, repr=False)
     _cleanup_task: Optional[asyncio.Task] = field(default=None, repr=False)
     #: ``(socket manager, permission)`` of the server's events/logs sockets.
@@ -164,12 +164,20 @@ class CliUsersPlugin:
     link_service: Optional[LinkService] = None
     _link_limiter: Optional[LinkRateLimiter] = field(default=None, repr=False)
     _seeded: bool = field(default=False, repr=False)
+    #: Guard-only: mounted on a server without CLI routes (the guards work).
+    _guard_only_mounted: bool = field(default=False, repr=False)
     _seed_lock: Optional[asyncio.Lock] = field(default=None, repr=False)
 
     async def ensure_seeded(self) -> None:
-        """Seed built-in groups and the root user once (idempotent); nothing
-        in guard-only mode."""
-        if self._seeded or self.guard_only:
+        """Seed built-in groups and the root user once (idempotent).  In
+        guard-only mode nothing is seeded, and until the plugin is mounted on
+        a server without CLI routes the guards answer 500 (fail closed)."""
+        if self.guard_only:
+            if not self._guard_only_mounted:
+                logger.error(GUARD_ONLY_NEEDS_NO_CLI_ROUTES)
+                raise QcliGuardError(500, "internal server error")
+            return
+        if self._seeded:
             return
         if self._seed_lock is None:
             self._seed_lock = asyncio.Lock()
@@ -217,7 +225,7 @@ class CliUsersPlugin:
             base_paths=self._base_paths,
             cli_prefixes=lambda: self._server_cli_prefixes,
             enforce=enforce,
-            public_prefixes=lambda: self._server_public_prefixes,
+            public_paths=lambda: self._server_public_paths,
         ))
         app.middleware_stack = None
         self._protected_apps.append(app)
@@ -233,6 +241,8 @@ class CliUsersPlugin:
         # must not be served at all.
         if self.guard_only and getattr(options, "cli_routes", True) is not False:
             raise ValueError(GUARD_ONLY_NEEDS_NO_CLI_ROUTES)
+        if self.guard_only:
+            self._guard_only_mounted = True
         manager = getattr(server, "event_socket_manager", None)
         if manager is not None and hasattr(manager, "send_to_user"):
             self.auth_service.user_event_sender = manager.send_to_user
@@ -259,9 +269,9 @@ class CliUsersPlugin:
         prefixes = getattr(server, "cli_route_prefixes", None)
         if isinstance(prefixes, list):
             self._server_cli_prefixes = prefixes
-        public = getattr(server, "public_route_prefixes", None)
+        public = getattr(server, "public_paths", None)
         if isinstance(public, list):
-            self._server_public_prefixes = public
+            self._server_public_paths = public
         # Without protection the middleware still refuses host tokens on the
         # CLI's routes (they authenticate nothing else then).  A guard-only
         # plugin (on a server without CLI routes) has nothing to protect.
@@ -345,11 +355,11 @@ class CliUsersPlugin:
         session sweep and, with an external auth adapter, the re-check of
         the events/logs sockets opened through it.  Nothing in guard-only
         mode."""
-        await self.ensure_seeded()
-        loop = asyncio.get_running_loop()
         # Guard-only: the stores are the token-issuing service's to sweep.
         if self.guard_only:
             return
+        await self.ensure_seeded()
+        loop = asyncio.get_running_loop()
         if self._cleanup_task is None or self._cleanup_task.done():
             self._cleanup_task = loop.create_task(self._cleanup_loop())
         if self.auth_service.external_auth and (

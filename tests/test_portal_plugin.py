@@ -300,33 +300,109 @@ def test_portal_ignores_credentials():
         assert res.status_code == 200
 
 
-def test_public_routes_under_api_on_a_protected_server():
+def _secret_routes(app: Any) -> None:
+    @app.get("/api/developers/reference/x/secret")
+    async def reference_secret():
+        return "secret"
+
+    @app.get("/api/developers/assets/secret")
+    async def asset_secret():
+        return "secret"
+
+    @app.get("/api/developers/guides/a/b")
+    async def guide_secret():
+        return "secret"
+
+    @app.get("/api/developers/other")
+    async def other():
+        return "secret"
+
+
+@pytest.mark.parametrize("order", ["before", "after"])
+def test_public_routes_under_api_on_a_protected_server(order: str):
     result, users = _make_users()
+    if order == "before":
+        _secret_routes(result.app)
     docs = CliDocsBuilder().add_folder(str(DOCS)).set_base_path("/api/docs").build()
     api = CliPublicApiBuilder().set_users(users).set_base_path("/api/public").build()
     portal = _portal().set_path("/api/developers").add_section(docs).add_section(api).build()
     for plugin in (docs, api, portal):
         result.mount_plugin(plugin)
-    assert result.public_route_prefixes == ["/api/docs", "/api/public", "/api/developers"]
+    if order == "after":
+        _secret_routes(result.app)
+    assert "/api/developers/assets/*" in result.public_paths
+    assert "/api/docs/pages/*" in result.public_paths
     with TestClient(result.app) as client:
         for path in (
-            "/api/developers", "/api/developers/", "/api/developers/guides/auth", "/api/developers/reference/Rates",
-            "/api/developers/portal.json", "/api/developers/assets/app.js", "/api/developers/favicon.svg",
-            "/api/docs/pages", "/api/docs/pages/index", "/api/public/openapi.json", "/api/public/swagger",
+            "/api/developers", "/api/developers/", "/api/developers/guides/auth", "/api/developers/reference",
+            "/api/developers/reference/Rates", "/api/developers/portal.json", "/api/developers/assets/app.js",
+            "/api/developers/favicon.svg", "/api/docs/pages", "/api/docs/pages/index",
+            "/api/public/openapi.json", "/api/public/swagger",
         ):
             assert client.get(path).status_code == 200, path
-        # The prefix is public: a path the portal does not serve is the framework's 404.
-        assert client.get("/api/developers/other").status_code == 404
-        # Only GET and HEAD are public there.
+            assert client.head(path).status_code == 200, path
+        # Under the public paths the portal answers itself: a host route there
+        # is never reached without a token.
+        for path in (
+            "/api/developers/reference/x/secret", "/api/developers/assets/secret", "/api/developers/guides/a/b",
+        ):
+            res = client.get(path)
+            assert res.status_code == 404 and "secret" not in res.text, path
+        # Outside them the server's sign-in applies as before.
+        assert client.get("/api/developers/other").status_code == 401
         assert client.post("/api/developers/portal.json").status_code == 401
-        # CLI routes and other /api/ paths still need a token.
         assert client.get("/api/v1/qcli/commands").status_code == 401
         assert client.get("/api/host/rates").status_code == 401
 
 
-def test_public_prefix_never_opens_cli_routes():
-    result, users = _make_users()
-    docs = CliDocsBuilder().set_base_path("/api/v1/qcli/docs").build()
-    result.mount_plugin(docs)
-    with TestClient(result.app) as client:
-        assert client.get("/api/v1/qcli/docs/pages").status_code == 401
+def test_portal_path_holding_cli_routes_is_refused():
+    for path in ("/api", "/ws", "/api/v1", "/api/v2", "/api/qcli", "/api/v1/qcli/portal", "/ws/qcli/x"):
+        _expect(lambda b, p=path: b.set_path(p), f"invalid portal path: {path}")
+    CliPortalBuilder().set_site_dir(str(SITE)).set_path("/api/developers").build()
+
+
+@pytest.mark.parametrize("paths", [
+    ["/*"], ["/elsewhere/*"], ["/qcli/xy"], ["/qcli/x/p*"], ["/api/v1/qcli/commands"], ["/qcli/x/../y"],
+])
+def test_invalid_public_paths_fail_startup(paths: list[str]):
+    from dataclasses import dataclass, field
+
+    from fastapi import APIRouter
+
+    @dataclass
+    class Plugin:
+        prefix: str = "/qcli/x"
+        router: Any = field(default_factory=APIRouter)
+        cli_routes: bool = False
+        public_paths: list = field(default_factory=list)
+
+    result = create_cli_server()
+    with pytest.raises(ValueError, match="^invalid public path: "):
+        result.mount_plugin(Plugin(public_paths=paths))
+
+
+def test_public_path_on_a_cli_prefix_fails_startup():
+    from dataclasses import dataclass, field
+
+    from fastapi import APIRouter
+
+    @dataclass
+    class Plugin:
+        prefix: str = "/api/v1/qcli/docs"
+        router: Any = field(default_factory=APIRouter)
+        cli_routes: bool = False
+        public_paths: list = field(default_factory=lambda: ["/api/v1/qcli/docs/pages"])
+
+    with pytest.raises(ValueError, match="^invalid public path: /api/v1/qcli/docs/pages$"):
+        create_cli_server().mount_plugin(Plugin())
+
+
+def test_docs_on_a_cli_prefix_fails_startup():
+    result, _ = _make_users()
+    with pytest.raises(ValueError, match="^invalid public path: "):
+        result.mount_plugin(CliDocsBuilder().set_base_path("/api/v1/qcli/docs").build())
+
+
+def test_root_portal_declares_no_public_paths():
+    assert CliPortalBuilder().set_site_dir(str(SITE)).set_path("/").build().public_paths == []
+    assert CliPortalBuilder().set_site_dir("/nonexistent").build().public_paths == []

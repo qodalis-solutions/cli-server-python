@@ -102,15 +102,18 @@ No headers are sent when both limits are `None`.
 | `GET <base>/openapi.json` | 200 `application/json; charset=utf-8`, `Cache-Control: no-cache`, `Access-Control-Allow-Origin: *`: the public document. No sign-in; credentials are ignored |
 | `GET <base>/swagger`, `<base>/swagger/` | 200 `text/html`: Swagger UI 5 for that document only (`persistAuthorization: false`, `tryItOutEnabled: true`), titled with the document's `info.title` |
 
-`<base>` is `/qcli/api` (`set_base_path(path)`: starts with `/`, no trailing `/`, not `/` itself; otherwise `build()`
-raises `ValueError("invalid public-api base path: <path>")`). Other paths under it are not handled.
+`<base>` is `/qcli/api` (`set_base_path(path)`: starts with `/`, no trailing `/`, not `/` itself, no `//`, whitespace,
+`?`, `#` or `\`; otherwise `build()` raises `ValueError("invalid public-api base path: <path>")`). Other paths under it
+are not handled. Both routes answer HEAD too and are served without sign-in, also under `/api/` on a protected server
+(the plugin's `public_paths`). Under an ASGI `root_path` the `servers` URL, the Swagger page's document URL and its
+root-relative assets include it; a `root_path` starting with `//` or `/\` answers 400 `{"error": "invalid path base"}`.
 
 Hand the document over with `set_openapi(source)`:
 
 | Source | Document |
 |---|---|
 | `APIRouter` / `FastAPI` | `get_openapi(title=<set_title or "API">, version=<set_version or "1.0.0">, routes=source.routes)`, read on the first request; routes with `include_in_schema=False` are left out |
-| `dict` | used as given |
+| `dict` | used as given; it must have `openapi`, `info` and `paths` (`ValueError("public-api: invalid OpenAPI document")` otherwise) |
 | zero-argument callable | called per request, its `dict` used as given |
 
 Keep the public routes on their own router (or app) and include it in the server's app:
@@ -153,8 +156,8 @@ back (best effort).
   or the host's own CORS middleware) with `Authorization` allowed, and `Access-Control-Expose-Headers:
   X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After` so the page can read the rate-limit
   headers.
-- **Root path.** Under an ASGI `root_path` the Swagger UI page points at `<root_path><base>/openapi.json`; a
-  `root_path` starting with `//` (a protocol-relative URL) is ignored there, as in the portal.
+- **Root path.** Under an ASGI `root_path` the document's URLs include it; a `root_path` starting with `//` or `/\`
+  answers 400 `{"error": "invalid path base"}` (the docs plugin and the portal do the same).
 
 ## Usage store
 

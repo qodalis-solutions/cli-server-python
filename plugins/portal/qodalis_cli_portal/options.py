@@ -38,6 +38,15 @@ _COLOR_PATTERNS = (
 _SNAKE_TO_TOKEN = {re.sub(r"[A-Z]", lambda m: "_" + m.group(0).lower(), t): t for t in THEME_TOKENS}
 
 
+_CLI_PATH = re.compile(r"^/(api|ws)/(v\d+/)?(qcli|cli)(/|$)")
+_CLI_PARENT = re.compile(r"^/(api|ws)(/v\d+)?$")
+
+
+def _holds_cli_routes(path: str) -> bool:
+    """``/api``, ``/ws``, ``/api/v1`` or a path under a CLI route."""
+    return bool(_CLI_PARENT.match(path) or _CLI_PATH.match(path + "/"))
+
+
 def validate_path(path: Any) -> str:
     """The mount: starts with ``/``, no trailing ``/`` except ``/`` itself;
     nothing that could leave a URL or an HTML attribute (``//``, ``\\``,
@@ -48,6 +57,7 @@ def validate_path(path: Any) -> str:
         or (path != "/" and path.endswith("/"))
         or "//" in path
         or any(c.isspace() or ord(c) < 0x20 or c in "?#\\\"'<>" for c in path)
+        or _holds_cli_routes(path)
     ):
         raise ValueError(f"invalid portal path: {path}")
     return path

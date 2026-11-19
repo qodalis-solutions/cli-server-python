@@ -275,3 +275,37 @@ def test_other_paths_not_handled():
         assert client.get("/qcli/docs").status_code == 404
         assert client.get("/qcli/docs/other").status_code == 404
         assert client.post("/qcli/docs/pages").status_code == 405
+
+
+def test_base_url_follows_the_root_path():
+    result = create_cli_server()
+    result.mount_plugin(_builder().build())
+    with TestClient(result.app, root_path="/svc") as client:
+        markdown = client.get("/qcli/docs/pages/index").json()["markdown"]
+        assert markdown.startswith("Call http://testserver/svc/v1/rates")
+
+
+@pytest.mark.parametrize("root", ["//evil.example", "/\\evil.example"])
+def test_invalid_root_path(root: str):
+    result = create_cli_server()
+    result.mount_plugin(_builder().build())
+    with TestClient(result.app, root_path=root) as client:
+        for path in ("/qcli/docs/pages", "/qcli/docs/pages/index"):
+            res = client.get(path)
+            assert (res.status_code, res.json()) == (400, {"error": "invalid path base"}), path
+
+
+def test_symlinks_and_large_files_are_skipped(tmp_path: Path, caplog):
+    import logging as _logging
+
+    folder = tmp_path / "pages"
+    folder.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("# Secret", encoding="utf-8")
+    (folder / "linked.md").symlink_to(secret)
+    (folder / "big.md").write_text("# Big\n" + "x" * (1024 * 1024), encoding="utf-8")
+    (folder / "ok.md").write_text("# Ok", encoding="utf-8")
+    with caplog.at_level(_logging.WARNING):
+        plugin = CliDocsBuilder().add_folder(str(folder)).build()
+    assert [p.slug for p in plugin.pages] == ["ok"]
+    assert "a symbolic link" in caplog.text and "larger than 1 MB" in caplog.text

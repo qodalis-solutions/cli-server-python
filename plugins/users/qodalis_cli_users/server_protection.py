@@ -135,7 +135,7 @@ class ServerProtectionMiddleware:
         base_paths: list[str] | None = None,
         cli_prefixes: Callable[[], list[str] | None] | None = None,
         enforce: bool = True,
-        public_prefixes: Callable[[], list[str] | None] | None = None,
+        public_paths: Callable[[], list[str] | None] | None = None,
     ) -> None:
         self.app = app
         self.auth = auth_service
@@ -152,10 +152,10 @@ class ServerProtectionMiddleware:
         #: nothing is authenticated, only ``host`` API tokens are refused on
         #: the CLI's routes and sockets.
         self.enforce = enforce
-        #: Host routes served without sign-in (portal, docs, the public API
-        #: document): ``CliServerResult.public_route_prefixes``, read per
-        #: request.  Never applied to a CLI path.
-        self.public_prefixes = public_prefixes
+        #: Host paths served without sign-in, GET and HEAD (portal, docs,
+        #: the public API document): ``CliServerResult.public_paths``, read
+        #: per request (``/*`` = everything under it).  Never a CLI path.
+        self.public_paths = public_paths
 
     # ------------------------------------------------------------------
 
@@ -173,8 +173,15 @@ class ServerProtectionMiddleware:
         return False
 
     def _is_public_host_route(self, path: str) -> bool:
-        prefixes = list(self.public_prefixes() or []) if self.public_prefixes is not None else []
-        return any(path == p or path.startswith(p + "/") for p in prefixes) and not self._is_cli(path)
+        entries = list(self.public_paths() or []) if self.public_paths is not None else []
+        for entry in entries:
+            if entry.endswith("/*"):
+                matched = path.startswith(entry[:-1])
+            else:
+                matched = path == entry
+            if matched:
+                return not self._is_cli(path)
+        return False
 
     def _is_cli(self, path: str) -> bool:
         prefixes = list(self.base_paths)
