@@ -39,7 +39,7 @@ from .controllers.users_controller import create_users_router
 from .middleware.auth_middleware import cli_only, create_auth_dependencies, permission_dependency
 from .errors import UsersApiError
 from .models import ExternalAuthAdapter
-from .permissions import USERS_PERMISSION_ENTRIES, USERS_READ
+from .permissions import USERS_PERMISSION_ENTRIES
 from .server_protection import ServerProtectionMiddleware, _normalize_base
 from .shell_access import UsersShellAccess
 from .services.auth_service import (
@@ -86,6 +86,14 @@ DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000
 DEFAULT_SESSION_CHECK_INTERVAL = 30.0
 MAX_SESSION_CHECK_INTERVAL = 60.0
 LOGS_READ = "logs:read"
+
+
+def _is_own_entry(existing: Any, entry: dict[str, str]) -> bool:
+    return (
+        existing is not None
+        and getattr(existing, "surface", None) == "cli"
+        and getattr(existing, "description", None) == entry["description"]
+    )
 
 
 @dataclass
@@ -255,15 +263,9 @@ class CliUsersPlugin:
         catalog = getattr(getattr(server, "builder", None), "permissions", None)
         if catalog is None or not all(callable(getattr(catalog, m, None)) for m in ("add", "all", "find")):
             return
-        # Skipped only on a remount (the entry is the plugin's own); a host or
-        # plugin that registered users:read itself fails startup.
-        existing = catalog.find(USERS_READ)
-        own = USERS_PERMISSION_ENTRIES[0]
-        if not (
-            existing is not None
-            and getattr(existing, "surface", None) == "cli"
-            and getattr(existing, "description", None) == own["description"]
-        ):
+        # Skipped only on a remount (all twelve entries are the plugin's own);
+        # a host or plugin that registered any of them itself fails startup.
+        if not all(_is_own_entry(catalog.find(e["name"]), e) for e in USERS_PERMISSION_ENTRIES):
             catalog.add(USERS_PERMISSION_ENTRIES, "cli")
         self.auth_service.permission_catalog = catalog
 

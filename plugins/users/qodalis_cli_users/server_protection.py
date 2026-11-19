@@ -15,6 +15,7 @@ not accepted.  Failures close the socket with 4401 (unauthenticated) or 4403
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Awaitable, Callable
 
@@ -33,6 +34,8 @@ from .services.auth_service import (
     AuthContext,
     AuthService,
 )
+
+logger = logging.getLogger(__name__)
 
 Rule = tuple[re.Pattern[str], frozenset[str] | None, str | None]
 
@@ -175,7 +178,13 @@ class ServerProtectionMiddleware:
         token = bearer_token(Headers(scope=scope))
         if not token or not token.startswith(API_TOKEN_PREFIX) or not self.auth.api_tokens_enabled:
             return False
-        record = await self.auth.api_token_store.get_token_by_hash(hash_token(token))
+        try:
+            record = await self.auth.api_token_store.get_token_by_hash(hash_token(token))
+        except Exception:
+            # The request proceeds as it would without the check; the route's
+            # own authentication (if any) meets the store's failure itself.
+            logger.warning("API token store failed during the host-token check", exc_info=True)
+            return False
         return record is not None and record.is_host
 
     def _protected(self, path: str) -> bool:
