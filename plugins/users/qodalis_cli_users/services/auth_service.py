@@ -70,6 +70,8 @@ INVALID_CREDENTIALS = "invalid credentials"
 PASSWORD_CHANGE_REQUIRED = "password change required"
 TOO_MANY_REQUESTS = "too many requests, try again later"
 INSUFFICIENT_PRIVILEGES = "insufficient privileges for this user"
+#: A ``host`` API token used on a CLI route (users plugin, server routes).
+HOST_TOKENS_CANNOT_USE_CLI_ROUTES = "forbidden: host tokens cannot use CLI routes"
 
 _MAX_TRACKED_KEYS = 10_000
 
@@ -130,6 +132,13 @@ class AuthContext:
 
     #: Server auth-context name of :attr:`api_token_id`.
     token_id = api_token_id
+
+    @property
+    def is_host_token(self) -> bool:
+        """Authenticated by a ``host`` API token: accepted only by the host
+        application's guarded routes (``require_auth`` /
+        ``require_permission``), refused on every CLI route."""
+        return self.api_token is not None and getattr(self.api_token, "audience", None) == "host"
 
     def can(self, permission: str) -> bool:
         return has_permission(self.permissions, permission)
@@ -643,6 +652,8 @@ class AuthService:
             return True
         if ctx.external:
             return True
+        if ctx.is_host_token:
+            return False
         if ctx.api_token is not None:
             return await self.is_api_token_active(ctx.api_token.id, ctx.user.id)
         if ctx.session is None:
@@ -894,7 +905,8 @@ class AuthService:
             return entry.external_ctx
         if entry.api_token_id is not None:
             record = await self.api_token_store.get_token(entry.api_token_id)
-            if record is None or record.user_id != entry.user_id:
+            # Host tokens never open the CLI's sockets.
+            if record is None or record.user_id != entry.user_id or record.audience == "host":
                 return None
             try:
                 return await self.context_for_api_token(record)

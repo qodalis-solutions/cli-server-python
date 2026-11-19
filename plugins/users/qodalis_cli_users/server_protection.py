@@ -24,7 +24,12 @@ from starlette.requests import Request
 from ._http import SAFE_METHODS, set_scope_auth
 from .errors import UsersApiError
 from .middleware.auth_middleware import authenticate_request
-from .services.auth_service import PASSWORD_CHANGE_REQUIRED, AuthContext, AuthService
+from .services.auth_service import (
+    HOST_TOKENS_CANNOT_USE_CLI_ROUTES,
+    PASSWORD_CHANGE_REQUIRED,
+    AuthContext,
+    AuthService,
+)
 
 Rule = tuple[re.Pattern[str], frozenset[str] | None, str | None]
 
@@ -63,6 +68,20 @@ WS_RULES: list[tuple[re.Pattern[str], str | None]] = [
     (re.compile(r"^/ws/(v1/)?qcli/logs/?$"), "logs:read"),
     (re.compile(r"^/ws/(v1/)?qcli/shell/?$"), "shell:execute"),
 ]
+
+
+#: The CLI's own HTTP and WebSocket paths (``host`` API tokens are refused
+#: there).  The middleware protects every ``/api/`` and ``/ws/`` path, the
+#: host application's routes included, which accept host tokens.
+CLI_PATH = re.compile(r"^/(api|ws)/(v\d+/)?(qcli|cli)(/|$)")
+
+
+def is_cli_path(path: str, base_paths: list[str] | None = None) -> bool:
+    """A CLI route: ``/api|ws/[vN/]qcli|cli/...`` or under a custom CLI base
+    path."""
+    if CLI_PATH.match(path):
+        return True
+    return any(path == base or path.startswith(base + "/") for base in base_paths or [])
 
 
 def http_permission(path: str, method: str, base_paths: list[str] | None = None) -> str | None:
@@ -150,6 +169,8 @@ class ServerProtectionMiddleware:
             await self.ensure_ready()
         try:
             ctx = await authenticate_request(self.auth, Request(scope))
+            if ctx.is_host_token and is_cli_path(path, self.base_paths):
+                raise UsersApiError(403, HOST_TOKENS_CANNOT_USE_CLI_ROUTES)
             if ctx.must_change_password:
                 raise UsersApiError(403, PASSWORD_CHANGE_REQUIRED)
             permission = http_permission(path, method, self.base_paths)
@@ -214,4 +235,6 @@ async def _close(receive: Any, send: Any, code: int, reason: str) -> None:
     await send({"type": "websocket.close", "code": code, "reason": reason})
 
 
-__all__ = ["AuthContext", "ServerProtectionMiddleware", "http_permission", "ws_permission", "SAFE_METHODS"]
+__all__ = [
+    "AuthContext", "ServerProtectionMiddleware", "http_permission", "is_cli_path", "ws_permission", "SAFE_METHODS",
+]
