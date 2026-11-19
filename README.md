@@ -282,8 +282,11 @@ CORS never combines `*` with credentials. With `allowed_origins` set, a WebSocke
 | `set_file_storage_provider(provider)` | Enable the file system API with a storage provider |
 | `add_filesystem(FileSystemOptions(allowed_paths=[...], max_upload_bytes=...))` | Enable the file system API on whitelisted OS paths |
 | `add_data_explorer_provider(provider, options)` | Register a data explorer source |
+| `add_permissions(entries, surface="host")` | Declare permissions tokens can be given (`CliPermission` or dicts with `name`, `description`, `group`), see [Token permissions and host tokens](#token-permissions-and-host-tokens) |
 
-`create_cli_server` returns a `CliServerResult` with `app` (FastAPI), `registry`, `builder`, `executor`, `event_socket_manager`, `log_socket_manager`, `shell_session_manager`, `mcp` (the MCP tool registry), `mount_plugin(plugin)` for router-based plugins (users, jobs, admin) and `set_shell_access_provider(...)` used by auth plugins.
+`builder.permissions` is the permission catalog (`all()`, `find(name)`).
+
+`create_cli_server` returns a `CliServerResult` with `app` (FastAPI), `registry`, `builder`, `executor`, `event_socket_manager`, `log_socket_manager`, `shell_session_manager`, `mcp` (the MCP tool registry), `mount_plugin(plugin)` for router-based plugins (users, jobs, admin), `cli_route_prefixes` (the CLI's own path prefixes: the core's, `base_path` and every mounted plugin's API and dashboard prefix), `add_cli_route_prefix(prefix)` for a plugin router you include by hand, and `set_shell_access_provider(...)` used by auth plugins.
 
 ## API
 
@@ -653,6 +656,30 @@ class MyCommand(CliCommandProcessor):
         caller = get_cli_caller()
         return f"hello {caller.user_name}" if caller else "not signed in"
 ```
+
+### Token permissions and host tokens
+
+The server keeps a catalog of the permissions an API token can be given: core's 11 (`commands:execute`, `files:read`, ...), the users plugin's 12 and your own. The admin dashboard and the web CLI build their token pickers from it (`GET /api/v1/qcli/permissions`). Declare your routes' permissions in `configure`:
+
+```python
+from qodalis_cli import CliPermission, CliServerOptions, create_cli_server
+
+result = create_cli_server(CliServerOptions(configure=lambda b: b.add_permissions([
+    CliPermission(name="rates:read", description="Official exchange rates", group="Rates"),
+    CliPermission(name="banks:read", description="Banks and their buy and sell rates", group="Rates"),
+])))
+```
+
+Entries are `area:action` in lower case. A malformed entry or a name that is already registered fails startup (`invalid permission entry: <name>`, `permission already registered: <name>`). `/permissions` lists every `cli` entry first (core, then plugins), then your `host` entries.
+
+Your users can then hold **host tokens**: API tokens with the audience `host`, which you create with `users_plugin.api_tokens.create(user_id, ApiTokenCreateOptions(name=..., audience="host", permissions=["rates:read"]))` and which carry only `host` permissions. They are accepted only by `users_plugin.require_auth` / `require_permission(...)` on your routes, and refused with `403 forbidden: host tokens cannot use CLI routes` on every CLI route and socket, whether or not the server is protected:
+
+```python
+@app.get("/api/rates", dependencies=[Depends(users_plugin.require_permission("rates:read"))])
+async def rates(): ...
+```
+
+On a route without a guard, `qodalis_cli.security.get_auth_context(request).is_host_token` tells the two kinds of token apart. Details, the manager's rules and errors: [plugins/users/README.md](plugins/users/README.md#host-tokens).
 
 ## Remote Shell Security
 
