@@ -178,8 +178,9 @@ class ApiToken:
     def is_expired(self, now: int | None = None) -> bool:
         return self.expires_at is not None and (now if now is not None else now_ms()) >= self.expires_at
 
-    def to_view(self, user_name: str) -> dict[str, Any]:
-        """``GET /tokens`` shape — never includes the token or its hash."""
+    def to_view(self, user_name: str, usage: dict[str, Any] | None = None) -> dict[str, Any]:
+        """``GET /tokens`` shape — never includes the token or its hash.
+        ``usage`` (from the token usage provider) is added last when given."""
         result: dict[str, Any] = {
             "id": self.id,
             "name": self.name,
@@ -192,7 +193,41 @@ class ApiToken:
         }
         if self.permissions is not None:
             result["permissions"] = list(self.permissions)
+        if usage is not None:
+            result["usage"] = usage
         return result
+
+
+#: ``(token_ids) -> {token_id: usage}``: the token views' ``usage``
+#: (``{"today", "last30Days", "days": [{"date", "requests"}, ...]}``), set
+#: with ``users_plugin.set_token_usage_provider`` (the public-api plugin).
+TokenUsageProvider = Callable[[list[str]], Awaitable[dict[str, dict[str, Any]]]]
+
+
+@dataclass(frozen=True)
+class QcliCaller:
+    """The caller of a guarded host route (``request.state.qcli_caller``).
+
+    ``token_id`` / ``audience`` are ``None`` for a session or an external
+    adapter identity; ``audience`` is ``cli`` or ``host`` for an API token
+    (anything stored but ``cli`` reads as ``host``).  ``permissions`` are the
+    live, scope-narrowed effective permissions.
+    """
+
+    user_id: str
+    user_name: str
+    token_id: str | None
+    audience: str | None
+    permissions: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "userId": self.user_id,
+            "userName": self.user_name,
+            "tokenId": self.token_id,
+            "audience": self.audience,
+            "permissions": list(self.permissions),
+        }
 
 
 @dataclass

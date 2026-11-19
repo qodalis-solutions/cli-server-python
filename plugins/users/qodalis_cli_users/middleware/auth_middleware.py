@@ -12,13 +12,18 @@ host application's routes and accepts them.
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request
 
 from .._http import SAFE_METHODS, bearer_token, get_scope_auth, has_bearer, origin_allowed
-from ..errors import forbidden, unauthorized
-from ..services.auth_service import HOST_TOKENS_CANNOT_USE_CLI_ROUTES, AuthContext, AuthService
+from ..errors import QcliGuardError, UsersApiError, forbidden, unauthorized
+from ..services.auth_service import (
+    HOST_TOKEN_REQUIRED,
+    HOST_TOKENS_CANNOT_USE_CLI_ROUTES,
+    AuthContext,
+    AuthService,
+)
 
 GetAuth = Callable[[Request], Awaitable[AuthContext]]
 
@@ -67,15 +72,65 @@ def cli_only(get: GetAuth) -> GetAuth:
     return dependency
 
 
+def tag_guard(guard: Any, permission: str | None, host_token_only: bool) -> Any:
+    """Mark a guard dependency with what it requires (read by the public
+    OpenAPI document: ``x-required-permission`` / ``x-host-token-only``)."""
+    guard.qcli_permission = permission
+    guard.qcli_host_token_only = host_token_only
+    return guard
+
+
+def set_caller(request: Request, ctx: AuthContext) -> None:
+    """Expose the caller to the host's handler (``request.state.qcli_caller``)."""
+    request.state.qcli_caller = ctx.caller
+
+
 def permission_dependency(get: GetAuth, permission: str) -> Callable[..., Awaitable[AuthContext]]:
     """FastAPI dependency: ``get``'s caller holding ``permission`` (403)."""
 
-    async def dependency(ctx: AuthContext = Depends(get)) -> AuthContext:
+    async def dependency(request: Request, ctx: AuthContext = Depends(get)) -> AuthContext:
         if not ctx.can(permission):
             raise forbidden(f"missing permission: {permission}")
+        set_caller(request, ctx)
         return ctx
 
-    return dependency
+    return tag_guard(dependency, permission, False)
+
+
+async def authenticate_host_token(get: GetAuth, request: Request) -> AuthContext:
+    """``get``'s caller when it is a ``host`` API token.  Every refusal is a
+    :class:`QcliGuardError` (``{"error": …}`` on host routes): the
+    authentication texts as ``get`` answers them, then 403
+    ``forbidden: a host token is required`` for a session, an adapter
+    identity or a ``cli`` token."""
+    try:
+        ctx = await get(request)
+    except QcliGuardError:
+        raise
+    except UsersApiError as exc:
+        raise QcliGuardError(exc.status_code, exc.message) from None
+    except HTTPException as exc:
+        # Raised by an external auth adapter: keep its status and detail.
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        raise QcliGuardError(exc.status_code, detail, getattr(exc, "headers", None)) from None
+    if not ctx.is_host_token:
+        raise QcliGuardError(403, HOST_TOKEN_REQUIRED)
+    return ctx
+
+
+def host_token_dependency(get: GetAuth, permission: str | None) -> Callable[..., Awaitable[AuthContext]]:
+    """FastAPI dependency: a ``host`` API token (C2), holding ``permission``
+    when given (403 ``missing permission: <permission>``, checked after the
+    audience)."""
+
+    async def dependency(request: Request) -> AuthContext:
+        ctx = await authenticate_host_token(get, request)
+        if permission and not ctx.can(permission):
+            raise QcliGuardError(403, f"missing permission: {permission}")
+        set_caller(request, ctx)
+        return ctx
+
+    return tag_guard(dependency, permission, True)
 
 
 def create_auth_dependencies(
@@ -99,7 +154,10 @@ def create_auth_dependencies(
     async def get_auth(request: Request) -> AuthContext:
         ctx = await get_auth_pending(request)
         auth_service.ensure_password_changed(ctx)
+        set_caller(request, ctx)
         return ctx
+
+    tag_guard(get_auth, None, False)
 
     async def get_cli_auth(request: Request) -> AuthContext:
         ctx = await get_auth_pending(request)

@@ -30,6 +30,32 @@ class UsersApiError(HTTPException):
         self.message = message
 
 
+class QcliGuardError(UsersApiError):
+    """A refusal of the host-token-only guards (``require_host_token``, the
+    public-api guard), with optional response headers (``Retry-After``,
+    ``X-RateLimit-*``).  Rendered as ``{"error": message}`` on host routes by
+    the handler the users plugin installs when mounted
+    (:func:`install_guard_error_handler`); the existing guards
+    (``require_auth`` / ``require_permission``) keep FastAPI's shape."""
+
+    def __init__(self, status_code: int, message: str, headers: dict[str, str] | None = None) -> None:
+        HTTPException.__init__(self, status_code=status_code, detail=message, headers=headers)
+        self.message = message
+
+
+async def _guard_error_handler(request: Request, exc: Exception) -> Response:
+    assert isinstance(exc, QcliGuardError)
+    return JSONResponse(status_code=exc.status_code, content={"error": exc.message}, headers=exc.headers)
+
+
+def install_guard_error_handler(app: Any) -> None:
+    """Render :class:`QcliGuardError` as ``{"error": message}`` on ``app``
+    (once; before the app starts)."""
+    handlers = getattr(app, "exception_handlers", None)
+    if isinstance(handlers, dict) and QcliGuardError not in handlers:
+        app.add_exception_handler(QcliGuardError, _guard_error_handler)
+
+
 def bad_request(message: str) -> UsersApiError:
     return UsersApiError(400, message)
 

@@ -225,7 +225,7 @@ def create_tokens_router(
             raise forbidden(f"forbidden: missing permission {TOKENS_READ}")
         tokens = await store.get_tokens(None if all else ctx.user.id)
         tokens.sort(key=lambda t: t.created_at)
-        return [await auth_service.api_token_view(t) for t in tokens]
+        return await auth_service.api_token_views(tokens)
 
     @collection(router, "POST", status_code=201)
     async def create_token(body: CreateApiTokenRequest, ctx: AuthContext = Depends(get_auth)):

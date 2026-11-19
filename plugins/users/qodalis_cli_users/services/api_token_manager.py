@@ -127,12 +127,12 @@ class ApiTokenManager:
         return CreatedApiToken(token=token, api_token=record.to_view(user.name))
 
     async def list(self, user_id: str) -> list[dict[str, Any]]:
-        """The user's tokens (both audiences), oldest first; ``[]`` for an
-        unknown user."""
+        """The user's tokens (both audiences), oldest first, with ``usage``
+        when a token usage provider is set; ``[]`` for an unknown user."""
         _require_user_id(user_id)
         tokens = await self.auth_service.api_token_store.get_tokens(user_id)
         tokens.sort(key=lambda t: t.created_at)
-        return [await self.auth_service.api_token_view(t) for t in tokens]
+        return await self.auth_service.api_token_views(tokens)
 
     async def revoke(self, user_id: str, token_id: str, actor: str | None = None) -> bool:
         """Revoke the user's token; ``False`` when it does not exist or
