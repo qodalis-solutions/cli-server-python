@@ -166,9 +166,12 @@ class CliUsersPlugin:
             (path, frozenset(m.upper() for m in methods) if methods else None),
         )
 
-    def protect(self, app: Any) -> None:
+    def protect(self, app: Any, *, enforce: bool = True) -> None:
         """Install the server-protection middleware on ``app`` (innermost,
-        so CORS stays outermost).  Must be called before the app starts."""
+        so CORS stays outermost).  Must be called before the app starts.
+        ``enforce=False`` (``set_protect_server(False)``) authenticates
+        nothing and only refuses ``host`` API tokens on the CLI's routes and
+        sockets."""
         if any(a is app for a in self._protected_apps):
             return
         from starlette.middleware import Middleware
@@ -180,6 +183,7 @@ class CliUsersPlugin:
             extra_public=self._extra_public,
             base_paths=self._base_paths,
             cli_prefixes=lambda: self._server_cli_prefixes,
+            enforce=enforce,
         ))
         app.middleware_stack = None
         self._protected_apps.append(app)
@@ -217,8 +221,9 @@ class CliUsersPlugin:
         prefixes = getattr(server, "cli_route_prefixes", None)
         if isinstance(prefixes, list):
             self._server_cli_prefixes = prefixes
-        if self.protect_server:
-            self.protect(server.app)
+        # Without protection the middleware still refuses host tokens on the
+        # CLI's routes (they authenticate nothing else then).
+        self.protect(server.app, enforce=self.protect_server)
         # Events/logs sockets are bound to their session: closed (4401
         # "session ended") on logout, revoke, disable/delete and expiry.
         # Those of adapter identities are re-checked through the adapter

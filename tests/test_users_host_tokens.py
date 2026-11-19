@@ -238,8 +238,10 @@ class TestVariants:
         with TestClient(result.app) as client:
             srv = Srv(client, users, result)
             token = srv.token(srv.alice())["token"]
-            # CLI routes are not authenticated: the header is ignored.
-            assert srv.request("POST", "/api/qcli/execute", token, {"command": "echo", "value": "hi"}).status_code == 200
+            # CLI routes are not authenticated, but a host token is still refused.
+            res = srv.request("POST", "/api/qcli/execute", token, {"command": "echo", "value": "hi"})
+            assert res.status_code == 403 and res.json() == {"error": HOST_TEXT}
+            assert srv.request("POST", "/api/qcli/execute", None, {"command": "echo", "value": "hi"}).status_code == 200
             # The users plugin's routes, and the audit API it guards, still refuse it.
             for path in (BASE + "/users", BASE + "/permissions", BASE + "/audit"):
                 res = srv.request("GET", path, token)
@@ -479,7 +481,30 @@ class TestAdminGuard:
             for path in (BASE + "/status", BASE + "/config", BASE + "/plugins/installed"):
                 res = srv.request("GET", path, token)
                 assert res.status_code == 403, (path, res.text)
-                assert res.json() == {"detail": HOST_TEXT}, path
+                assert HOST_TEXT in res.text, path
+
+    def test_admin_guard_refuses_host_tokens_itself(self):
+        """Without the users plugin's middleware in front (an admin router the
+        host includes by hand), the admin guard refuses host tokens."""
+        from fastapi import FastAPI
+
+        result, users = _make(CliUsersBuilder().set_protect_server(False))
+        from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder
+
+        admin = CliAdminBuilder().set_users_plugin(users).build(AdminBuildDeps(
+            registry=result.registry,
+            event_socket_manager=result.event_socket_manager,
+            builder=result.builder,
+        ))
+        app = FastAPI()
+        app.include_router(admin.router, prefix=admin.prefix)
+        app.include_router(users.router, prefix=users.prefix)
+        with TestClient(result.app) as setup, TestClient(app) as client:
+            srv = Srv(setup, users, result)
+            token = srv.token(srv.alice(["rates:read", "admin:access"]))["token"]
+            res = client.get(BASE + "/status", headers=_h(token))
+            assert res.status_code == 403
+            assert res.json() == {"detail": HOST_TEXT}
 
     def test_admin_api_still_accepts_cli_tokens(self):
         result, users = _with_admin(CliUsersBuilder().set_protect_server(False))
@@ -592,3 +617,81 @@ def test_unguarded_host_route_sees_the_host_token(srv: Srv):
     res = srv.request("GET", "/api/open", token)
     assert res.status_code == 200, res.text
     assert res.json() == {"user": "alice", "host": True}
+
+
+# =========================================================================
+# Fix round 3: host tokens are refused on CLI routes without server
+# protection too
+# =========================================================================
+
+
+class TestUnprotectedServer:
+    ROUTES: list[tuple[str, str, Any]] = [
+        ("GET", BASE + "/commands", None),
+        ("POST", BASE + "/execute", {"command": "echo", "value": "hi"}),
+        ("POST", "/api/qcli/execute", {"command": "echo", "value": "hi"}),
+        ("GET", "/api/qcli/fs/ls?path=/", None),
+        ("GET", "/api/qcli/data-explorer/sources", None),
+        ("GET", BASE + "/jobs", None),
+        ("POST", "/api/qcli/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+    ]
+
+    @pytest.fixture()
+    def open_srv(self):
+        from qodalis_cli_jobs import CliJobsBuilder
+        from qodalis_cli_server_abstractions.jobs import CliJobOptions
+        from tests.test_jobs import DummyJob
+
+        result, users = _make(CliUsersBuilder().set_protect_server(False), enable_shell=True)
+        result.mount_plugin(CliJobsBuilder().add_job(DummyJob(), CliJobOptions(name="a")).build())
+        with TestClient(result.app) as client:
+            yield Srv(client, users, result)
+
+    @pytest.mark.parametrize("method,path,body", ROUTES)
+    def test_host_token_refused(self, open_srv: Srv, method: str, path: str, body: Any):
+        created = open_srv.token(open_srv.alice())
+        res = open_srv.request(method, path, created["token"], body)
+        assert res.status_code == 403, (path, res.text)
+        assert res.json() == {"error": HOST_TEXT}
+        stored = open_srv.call(open_srv.users.api_token_store.get_token, created["apiToken"]["id"])
+        assert stored.last_used_at is None
+
+    @pytest.mark.parametrize("method,path,body", ROUTES)
+    def test_anonymous_and_cli_tokens_unchanged(self, open_srv: Srv, method: str, path: str, body: Any):
+        cli = open_srv.token(open_srv.alice(), audience="cli")["token"]
+        anonymous = open_srv.request(method, path, None, body)
+        with_cli = open_srv.request(method, path, cli, body)
+        assert anonymous.status_code == with_cli.status_code
+        assert anonymous.status_code != 403 or anonymous.json() != {"error": HOST_TEXT}
+
+    def test_echo_still_runs_anonymously(self, open_srv: Srv):
+        res = open_srv.request("POST", "/api/qcli/execute", None, {"command": "echo", "value": "hi"})
+        assert res.status_code == 200
+
+    @pytest.mark.parametrize("path", ["/ws/qcli/events", "/ws/v1/qcli/logs", "/ws/qcli/shell"])
+    def test_sockets_refused(self, open_srv: Srv, path: str):
+        created = open_srv.token(open_srv.alice(["rates:read", "logs:read", "shell:execute"]))
+        exc = _closed(open_srv.c, path, _h(created["token"]))
+        assert (exc.code, exc.reason) == (4403, HOST_TEXT)
+        stored = open_srv.call(open_srv.users.api_token_store.get_token, created["apiToken"]["id"])
+        assert stored.last_used_at is None
+
+    def test_events_socket_still_opens_anonymously(self, open_srv: Srv):
+        with open_srv.c.websocket_connect("/ws/qcli/events") as ws:
+            ws.close()
+
+    def test_host_route_and_non_cli_paths(self, open_srv: Srv):
+        token = open_srv.token(open_srv.alice())["token"]
+        assert open_srv.request("GET", "/api/host/rates", token).status_code == 200
+        assert open_srv.request("GET", "/host/me", token).status_code == 200
+        # A path nobody serves: the usual 404, not the host-token 403.
+        assert open_srv.request("GET", "/api/elsewhere", token).status_code == 404
+
+    def test_fail_closed_audience(self):
+        result, users = _make(CliUsersBuilder().set_protect_server(False)
+                              .set_api_token_store(_UpperAudienceStore("HOST")))
+        with TestClient(result.app) as client:
+            srv = Srv(client, users, result)
+            token = srv.token(srv.alice())["token"]
+            res = srv.request("GET", BASE + "/commands", token)
+            assert res.status_code == 403 and res.json() == {"error": HOST_TEXT}
