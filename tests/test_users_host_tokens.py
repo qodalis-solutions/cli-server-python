@@ -568,10 +568,20 @@ def test_colliding_cli_registration_fails_mount():
         [{"name": "users:read", "description": "See users and their permissions", "group": "Users"}], surface="cli",
     )))
     users = CliUsersBuilder().set_default_admin_password(ROOT_PASS).build()
-    # Same text and surface as the plugin's own entry: taken as a remount.
-    result.mount_plugin(users)
-    names = [p.name for p in result.builder.permissions.all()]
-    assert names.count("users:read") == 1 and "groups:read" not in names
+    # Same text as the plugin's own entry, but not all twelve: a collision.
+    with pytest.raises(ValueError, match="permission already registered: users:read"):
+        result.mount_plugin(users)
+
+
+def test_partial_registration_with_another_description_fails_mount():
+    from qodalis_cli_users.permissions import USERS_PERMISSION_ENTRIES
+
+    entries = [dict(e) for e in USERS_PERMISSION_ENTRIES]
+    entries[-1]["description"] = "Something else"
+    result = create_cli_server(CliServerOptions(configure=lambda b: b.add_permissions(entries, surface="cli")))
+    users = CliUsersBuilder().set_default_admin_password(ROOT_PASS).build()
+    with pytest.raises(ValueError, match="permission already registered: users:read"):
+        result.mount_plugin(users)
 
 
 def test_remount_with_another_users_plugin_is_skipped():
@@ -695,3 +705,62 @@ class TestUnprotectedServer:
             token = srv.token(srv.alice())["token"]
             res = srv.request("GET", BASE + "/commands", token)
             assert res.status_code == 403 and res.json() == {"error": HOST_TEXT}
+
+
+# =========================================================================
+# Final round: a failing store never fails the host-token check; bearer case
+# =========================================================================
+
+
+class _RaisingHashStore:
+    def __new__(cls):
+        from qodalis_cli_users import InMemoryApiTokenStore
+
+        class Store(InMemoryApiTokenStore):
+            raising = False
+
+            async def get_token_by_hash(self, token_hash):
+                if self.raising:
+                    raise RuntimeError("store down")
+                return await super().get_token_by_hash(token_hash)
+
+        return Store()
+
+
+def test_raising_store_on_an_unprotected_server():
+    store = _RaisingHashStore()
+    result, users = _make(CliUsersBuilder().set_protect_server(False).set_api_token_store(store))
+    with TestClient(result.app, raise_server_exceptions=False) as client:
+        srv = Srv(client, users, result)
+        token = srv.token(srv.alice(), audience="cli")["token"]
+        store.raising = True
+        res = srv.request("POST", "/api/qcli/execute", token, {"command": "echo", "value": "hi"})
+        assert res.status_code == 200, res.text
+        with client.websocket_connect("/ws/qcli/events", headers=_h(token)) as ws:
+            ws.close()
+
+
+def test_raising_store_on_the_dashboard_files_of_a_protected_server():
+    store = _RaisingHashStore()
+    result, users = _with_admin(CliUsersBuilder().set_api_token_store(store))
+    with TestClient(result.app, raise_server_exceptions=False) as client:
+        srv = Srv(client, users, result)
+        token = srv.token(srv.alice())["token"]
+        expected = client.get("/qcli/admin/").status_code
+        store.raising = True
+        res = srv.request("GET", "/qcli/admin/", token)
+        assert res.status_code == expected != 500
+
+
+@pytest.mark.parametrize("scheme", ["bearer", "BEARER", "Bearer"])
+def test_bearer_scheme_case(scheme: str):
+    """The host-token check reads the bearer with the authenticator's own
+    helper (case-insensitive scheme)."""
+    result, users = _make(CliUsersBuilder().set_protect_server(False))
+    with TestClient(result.app) as client:
+        srv = Srv(client, users, result)
+        token = srv.token(srv.alice())["token"]
+        res = client.get(BASE + "/commands", headers={"Authorization": f"{scheme} {token}"})
+        assert res.status_code == 403 and res.json() == {"error": HOST_TEXT}
+        res = client.get("/api/host/rates", headers={"Authorization": f"{scheme} {token}"})
+        assert res.status_code == 200
