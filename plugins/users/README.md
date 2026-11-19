@@ -75,6 +75,19 @@ async def handler(ctx = Depends(users_plugin.require_permission("deploy:run"))):
 
 `users_plugin.require_auth` only requires an authenticated session.
 
+The guards make the caller available to the handler as `request.state.qcli_caller`, a frozen `QcliCaller(user_id,
+user_name, token_id, audience, permissions)` (`token_id` / `audience` are `None` for a session or an adapter user;
+`audience` is `cli` or `host` for a token; `permissions` are the live, scope-narrowed ones; `to_dict()` gives the
+camelCase JSON). The returned `AuthContext` has it too (`ctx.caller`).
+
+`users_plugin.require_host_token(permission=None)` accepts **only** `host` tokens: after authentication (same texts),
+a session, an adapter user or a `cli` token gets `403 forbidden: a host token is required`, then the permission is
+checked (`403 missing permission: <permission>`). Its refusals answer `{"error": "..."}` (the plugin installs the
+handler when mounted); `require_auth` / `require_permission` keep FastAPI's `{"detail": "..."}` on host routes.
+
+The guards carry `qcli_permission` and `qcli_host_token_only`, read by the
+[public-api plugin](../public-api/README.md)'s OpenAPI document (`x-required-permission`, `x-host-token-only`).
+
 These two guards are the only places that accept [host tokens](#host-tokens): API tokens a host application issues for its own routes. `users_plugin.require_cli_auth` is `require_auth` that refuses them (`403 forbidden: host tokens cannot use CLI routes`); use it for routes of a CLI plugin of your own that you include by hand. The admin plugin's API uses it.
 
 ## Permissions
@@ -254,6 +267,34 @@ Use a token with the server's MCP endpoint — see the main README, [*Using the 
 claude mcp add --transport http qcli http://localhost:8048/api/qcli/mcp \
   --header "Authorization: Bearer <token>"
 ```
+
+### Token usage
+
+`users_plugin.set_token_usage_provider(provider)` adds `usage` to every token view of `GET /tokens` (own and
+`?all=true`) and `api_tokens.list`, last, after `permissions`: `await provider(token_ids)` returns
+`{token_id: {"today": 12, "last30Days": 340, "days": [{"date": "2026-10-21", "requests": 0}, ...]}}` (30 days, oldest
+first). The [public-api plugin](../public-api/README.md) sets one. Without a provider the views are as before; a
+failing provider is logged and the views are returned without `usage`. Creating a token never returns it.
+
+### Guard-only mode
+
+`CliUsersBuilder().set_guard_only()` builds a users plugin for a second service that only validates tokens (a public
+API next to the service running the CLI): no users routes (sign-in, users, groups, sessions, tokens, permissions, link,
+audit), no seeding, no session or link sweeps and no server protection. Its guards authenticate `qcli_pat_` tokens
+against the stores you share with the other service (`set_user_store`, `set_group_store`, `set_api_token_store`).
+
+It needs a server without CLI routes: mounting it on a server with `cli_routes=True` raises
+`ValueError("guard-only needs cli_routes=False")`, and its guards answer 500 (logging that text) until it is mounted on
+one.
+
+```python
+result = create_cli_server(CliServerOptions(cli_routes=False, configure=add_permissions))
+users = CliUsersBuilder().set_user_store(users_db).set_group_store(groups_db).set_api_token_store(tokens_db).set_guard_only().build()
+result.mount_plugin(users)
+```
+
+Tokens must be created and revoked from one service only: the name's uniqueness and the 20-token limit are checked in
+the process that creates the token.
 
 ## Linking a terminal
 

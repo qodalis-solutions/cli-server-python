@@ -149,6 +149,8 @@ class CliUsersPlugin:
     _base_paths: list = field(default_factory=list, repr=False)
     #: The server's ``cli_route_prefixes`` (live list), set when mounted.
     _server_cli_prefixes: Optional[list] = field(default=None, repr=False)
+    #: The server's ``public_route_prefixes`` (live list), set when mounted.
+    _server_public_prefixes: Optional[list] = field(default=None, repr=False)
     _protected_apps: list = field(default_factory=list, repr=False)
     _cleanup_task: Optional[asyncio.Task] = field(default=None, repr=False)
     #: ``(socket manager, permission)`` of the server's events/logs sockets.
@@ -215,6 +217,7 @@ class CliUsersPlugin:
             base_paths=self._base_paths,
             cli_prefixes=lambda: self._server_cli_prefixes,
             enforce=enforce,
+            public_prefixes=lambda: self._server_public_prefixes,
         ))
         app.middleware_stack = None
         self._protected_apps.append(app)
@@ -256,6 +259,9 @@ class CliUsersPlugin:
         prefixes = getattr(server, "cli_route_prefixes", None)
         if isinstance(prefixes, list):
             self._server_cli_prefixes = prefixes
+        public = getattr(server, "public_route_prefixes", None)
+        if isinstance(public, list):
+            self._server_public_prefixes = public
         # Without protection the middleware still refuses host tokens on the
         # CLI's routes (they authenticate nothing else then).  A guard-only
         # plugin (on a server without CLI routes) has nothing to protect.

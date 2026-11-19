@@ -135,6 +135,7 @@ class ServerProtectionMiddleware:
         base_paths: list[str] | None = None,
         cli_prefixes: Callable[[], list[str] | None] | None = None,
         enforce: bool = True,
+        public_prefixes: Callable[[], list[str] | None] | None = None,
     ) -> None:
         self.app = app
         self.auth = auth_service
@@ -151,6 +152,10 @@ class ServerProtectionMiddleware:
         #: nothing is authenticated, only ``host`` API tokens are refused on
         #: the CLI's routes and sockets.
         self.enforce = enforce
+        #: Host routes served without sign-in (portal, docs, the public API
+        #: document): ``CliServerResult.public_route_prefixes``, read per
+        #: request.  Never applied to a CLI path.
+        self.public_prefixes = public_prefixes
 
     # ------------------------------------------------------------------
 
@@ -166,6 +171,10 @@ class ServerProtectionMiddleware:
                 if path.rstrip("/") in (base + "/version", base + "/capabilities"):
                     return True
         return False
+
+    def _is_public_host_route(self, path: str) -> bool:
+        prefixes = list(self.public_prefixes() or []) if self.public_prefixes is not None else []
+        return any(path == p or path.startswith(p + "/") for p in prefixes) and not self._is_cli(path)
 
     def _is_cli(self, path: str) -> bool:
         prefixes = list(self.base_paths)
@@ -219,7 +228,12 @@ class ServerProtectionMiddleware:
                 return
             await self.app(scope, receive, send)
             return
-        if method == "OPTIONS" or self._is_public(path, method) or SELF_PROTECTED.match(path):
+        if (
+            method == "OPTIONS"
+            or self._is_public(path, method)
+            or SELF_PROTECTED.match(path)
+            or (method in ("GET", "HEAD") and self._is_public_host_route(path))
+        ):
             await self.app(scope, receive, send)
             return
         if not self._protected(path):

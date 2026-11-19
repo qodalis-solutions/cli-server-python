@@ -1,0 +1,8 @@
+{
+  "name": "qodalis-cli-server-plugin-portal",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@qodalis/cli-server-portal": "^1.0.0-beta.26"
+  }
+}

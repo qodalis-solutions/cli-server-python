@@ -42,3 +42,6 @@ TestResults/
 .DS_Store
 Thumbs.db
 node_modules/
+
+# Portal site copied into the package at build time (scripts/copy_portal.py)
+plugins/portal/qodalis_cli_portal/site/

@@ -132,6 +132,9 @@ class CliPublicApiPlugin:
     title: str = DEFAULT_TITLE
     #: Host routes: never counted among the CLI's routes.
     cli_routes: bool = False
+    #: The document and Swagger UI are served without sign-in, also under
+    #: ``/api/`` on a protected server (the guarded routes are elsewhere).
+    public_routes: bool = True
     quota_resolver: Optional[QuotaResolver] = None
     retention_days: int = DEFAULT_RETENTION_DAYS
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(timezone.utc))
@@ -278,11 +281,6 @@ class CliPublicApiPlugin:
         get ``usage``, refusals answer ``{"error": …}`` and admitted
         requests carry their ``X-RateLimit-*`` headers."""
         self.users.set_token_usage_provider(self.usage.tokens)
-        # No sign-in, also when the base path is under /api/ on a protected server.
-        allow_anonymous = getattr(self.users, "allow_anonymous", None)
-        if callable(allow_anonymous):
-            for path in ("/openapi.json", "/swagger", "/swagger/"):
-                allow_anonymous(self.prefix + path, ["GET", "HEAD"])
         app = server.app
         install_guard_error_handler(app)
         if not any(getattr(m, "cls", None) is RateLimitHeadersMiddleware for m in app.user_middleware):

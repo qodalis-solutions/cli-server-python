@@ -270,6 +270,8 @@ Used by the standalone server; import them from `qodalis_cli` to add them to you
 | `shell` | `CliShellOptions()` | Shell access, limits and environment |
 | `mcp` | `None` | `True`, a `CliMcpOptions` or a `dict` enables the [MCP endpoint](#mcp-endpoint) |
 | `max_table_rows` | `200` | Rows an unpaged table may return; longer ones are cut and marked `truncated` (`0` = no limit), see [Paging](#paging) |
+| `cli_routes` | `True` | `False` serves none of the CLI's routes and sockets (`/api/qcli/*`, `/api/v1/qcli/*`, `/ws/*`, MCP, files, data explorer): a service that only validates tokens (users plugin `set_guard_only()`) and serves the host's public API. `mount_plugin` then mounts only host-route plugins (`cli_routes = False`) and logs `[qcli] CLI routes are turned off; <prefix> is not mounted` for the others; the permission catalog, events and services stay |
+| `app_docs` | `True` | `False` turns off FastAPI's own `/docs`, `/redoc` and `/openapi.json` for the whole app |
 
 CORS never combines `*` with credentials. With `allowed_origins` set, a WebSocket upgrade from another origin is closed with 4403 (a missing `Origin`, as sent by non-browser clients, is accepted; protected sockets still need a ticket). Same-origin requests, such as the bundled admin dashboard, always pass Origin and CSRF checks (`X-Forwarded-Proto`/`X-Forwarded-Host` are honoured only with `trust_proxy`).
 
@@ -286,7 +288,7 @@ CORS never combines `*` with credentials. With `allowed_origins` set, a WebSocke
 
 `builder.permissions` is the permission catalog (`all()`, `find(name)`).
 
-`create_cli_server` returns a `CliServerResult` with `app` (FastAPI), `registry`, `builder`, `executor`, `event_socket_manager`, `log_socket_manager`, `shell_session_manager`, `mcp` (the MCP tool registry), `mount_plugin(plugin)` for router-based plugins (users, jobs, admin), `cli_route_prefixes` (the CLI's own path prefixes: the core's, `base_path` and every mounted plugin's API and dashboard prefix), `add_cli_route_prefix(prefix)` for a plugin router you include by hand, and `set_shell_access_provider(...)` used by auth plugins.
+`create_cli_server` returns a `CliServerResult` with `app` (FastAPI), `registry`, `builder`, `executor`, `event_socket_manager`, `log_socket_manager`, `shell_session_manager`, `mcp` (the MCP tool registry), `mount_plugin(plugin)` for router-based plugins (users, jobs, admin), `cli_route_prefixes` (the CLI's own path prefixes: the core's, `base_path` and every mounted plugin's API and dashboard prefix), `add_cli_route_prefix(prefix)` for a plugin router you include by hand, `public_route_prefixes` (prefixes of host-route plugins served without sign-in: portal, docs, the public API document) and `set_shell_access_provider(...)` used by auth plugins. A plugin with `cli_routes = False` serves host routes: its prefix is never a CLI route.
 
 ## API
 
@@ -935,6 +937,9 @@ Each plugin is a separate package under [`plugins/`](plugins) with its own READM
 | [`qodalis-cli-server-plugin-data-explorer`](plugins/data-explorer/README.md) | `qodalis_cli_data_explorer` | Data explorer routes and executor |
 | [`...-data-explorer-sql`](plugins/data-explorer-sql/README.md), [`-postgres`](plugins/data-explorer-postgres/README.md), [`-mysql`](plugins/data-explorer-mysql/README.md), [`-mssql`](plugins/data-explorer-mssql/README.md), [`-mongo`](plugins/data-explorer-mongo/README.md), [`-redis`](plugins/data-explorer-redis/README.md), [`-elasticsearch`](plugins/data-explorer-elasticsearch/README.md) | `qodalis_cli_data_explorer_<name>` | Data explorer providers |
 | [`qodalis-cli-server-plugin-weather`](plugins/weather/README.md) | `qodalis_cli_weather` | Example module (`weather current`, `weather forecast`) |
+| [`qodalis-cli-server-plugin-public-api`](plugins/public-api/README.md) | `qodalis_cli_public_api` | A public REST API of the host: routes guarded by `host` tokens with per-account quotas and `X-RateLimit-*` headers, usage per token, the public OpenAPI document and Swagger UI (`/qcli/api`) |
+| [`qodalis-cli-server-plugin-docs`](plugins/docs/README.md) | `qodalis_cli_docs` | Markdown guides from folders or code, with front matter and variables, served as JSON (`/qcli/docs`) |
+| [`qodalis-cli-server-plugin-portal`](plugins/portal/README.md) | `qodalis_cli_portal` | The prebuilt portal site (guides and API reference) at one mount (`/qcli/portal`), with `portal.json` |
 | [AWS](plugins/aws/README.md) | `qodalis_cli_aws` | `aws` commands for S3, EC2, Lambda, CloudWatch, SNS, SQS, IAM, DynamoDB, ECS (boto3) |
 
 Router-based plugins are built with a builder and mounted on the server; run their `startup()` / `shutdown()` from the app lifespan:
