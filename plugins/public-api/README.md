@@ -138,6 +138,24 @@ The plugin adds, unless the document has its own (the host's values always win):
 The host's own `x-codeSamples` are passed through untouched; the portal generates the other code samples.
 `set_swagger_assets(js_url, css_url)` replaces the Swagger UI assets (FastAPI's default CDN URLs otherwise).
 
+Stacked guards (a router's `dependencies=[Depends(public_api.guard())]` and a route's
+`Depends(public_api.guard("rates:read"))`) count the request once; the later ones only check their own permission.
+A failing usage store answers 500 `internal server error` and the counts already made for that request are taken
+back (best effort).
+
+## In production
+
+- **Set the URLs explicitly.** Without `set_server_url(url)` the document's `servers` (and, in the docs plugin, without
+  `set_base_url(url)`, `{{baseUrl}}`) come from the request's `Host` header. Behind a proxy or with an untrusted
+  `Host`, set them.
+- **"Try it" from another origin.** The portal's "try it" box and Swagger UI call the host's API from the browser.
+  When the portal is served from another origin than the API, the API needs CORS (`CliServerOptions(cors_origins=[...])`
+  or the host's own CORS middleware) with `Authorization` allowed, and `Access-Control-Expose-Headers:
+  X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After` so the page can read the rate-limit
+  headers.
+- **Root path.** Under an ASGI `root_path` the Swagger UI page points at `<root_path><base>/openapi.json`; a
+  `root_path` starting with `//` (a protocol-relative URL) is ignored there, as in the portal.
+
 ## Usage store
 
 The counters live in an `IPublicApiUsageStore` (`increment`, `decrement`, `account_count`, `token_days`, `prune`); the

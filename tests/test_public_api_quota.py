@@ -11,7 +11,7 @@ from typing import Any, Iterator
 
 import httpx
 import pytest
-from fastapi import Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.testclient import TestClient
 
 from qodalis_cli_public_api import (
@@ -460,3 +460,131 @@ async def test_in_memory_store():
     assert await store.account_count("u1", "2026-11-17") == 0
     assert await store.account_count("u1", "2026-11-19T10:00") == 0
     assert await store.account_count("u1", "2026-11-18") == 1
+
+
+class _FailingStore(InMemoryPublicApiUsageStore):
+    """Raises on the minute increment or on the account-count read."""
+
+    def __init__(self, fail_on: str) -> None:
+        super().__init__()
+        self.fail_on = fail_on
+        self.failing = True
+
+    async def increment(self, token_id: str, user_id: str, window: str) -> int:
+        if self.failing and self.fail_on == "minute" and len(window) == 16:
+            raise RuntimeError("store down")
+        return await super().increment(token_id, user_id, window)
+
+    async def account_count(self, user_id: str, window: str) -> int:
+        if self.failing and self.fail_on == "count":
+            raise RuntimeError("store down")
+        return await super().account_count(user_id, window)
+
+
+@pytest.mark.parametrize("fail_on", ["minute", "count"])
+def test_store_failure_returns_500_and_takes_back_the_counts(fail_on: str):
+    store = _FailingStore(fail_on)
+    with _srv(_limit(3, 10), store) as srv:
+        alice, token, token_id = srv.host_token()
+        res = srv.get("/v1/rates", token)
+        assert (res.status_code, res.json()) == (500, {"error": "internal server error"})
+        assert "store down" not in res.text
+        store.failing = False
+        assert srv.account_count(alice.id) == 0
+        assert srv.account_count(alice.id, "2026-11-19T23:59") == 0
+        res = srv.get("/v1/rates", token)
+        assert res.status_code == 200 and res.headers["x-ratelimit-remaining"] == "2"
+
+
+def test_store_failure_without_limits_returns_500():
+    store = _FailingStore("minute")
+    with _srv(None, store) as srv:
+        alice, token, _ = srv.host_token()
+        assert srv.get("/v1/rates", token).status_code == 500
+        store.failing = False
+        assert srv.account_count(alice.id) == 0
+
+
+def test_stacked_guards_count_once():
+    with _srv(_limit(2)) as srv:
+        api = srv.api
+        router = APIRouter(dependencies=[Depends(api.guard())])
+
+        @router.get("/v2/rates")
+        async def rates(caller=Depends(api.guard("rates:read"))):
+            return {"ok": True}
+
+        @router.get("/v2/banks")
+        async def banks(caller=Depends(api.guard("banks:read"))):
+            return {"ok": True}
+
+        srv.host.app.include_router(router)
+        alice, token, _ = srv.host_token()
+        first = srv.get("/v2/rates", token)
+        assert first.status_code == 200 and first.headers["x-ratelimit-remaining"] == "1"
+        assert srv.get("/v2/rates", token).status_code == 200
+        res = srv.get("/v2/rates", token)
+        assert (res.status_code, res.json()) == (429, {"error": "quota exceeded: 2 requests per day"})
+        assert srv.account_count(alice.id) == 2
+        assert srv.call(srv.api.usage.account, alice.id).today == 2
+
+
+def test_stacked_guard_missing_permission():
+    with _srv(_limit(5)) as srv:
+        api = srv.api
+        router = APIRouter(dependencies=[Depends(api.guard())])
+
+        @router.get("/v2/banks")
+        async def banks(caller=Depends(api.guard("banks:read"))):
+            return {"ok": True}
+
+        srv.host.app.include_router(router)
+        alice, token, _ = srv.host_token()
+        res = srv.get("/v2/banks", token)
+        assert (res.status_code, res.json()) == (403, {"error": "forbidden: missing permission banks:read"})
+        assert _rate_headers(res) == {}
+        # Refused by the route's guard before the router's guard counted it.
+        assert srv.account_count(alice.id) == 0
+
+
+def test_stacked_guards_most_specific_permission_in_the_document():
+    with _srv() as srv:
+        api = srv.api
+        router = APIRouter(dependencies=[Depends(api.guard("rates:read"))])
+
+        @router.get("/v2/banks")
+        async def banks(caller=Depends(api.guard("banks:read"))):
+            return {}
+
+        from qodalis_cli_public_api.openapi import _guard_tags
+
+        route = next(r for r in router.routes if r.path == "/v2/banks")
+        assert _guard_tags(route.dependant) == ("banks:read", True)
+
+
+class _BlockingStore(InMemoryPublicApiUsageStore):
+    """Holds the minute increment until released (waiting on a slow database)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def increment(self, token_id: str, user_id: str, window: str) -> int:
+        if len(window) == 16:
+            self.entered.set()
+            await self.release.wait()
+        return await super().increment(token_id, user_id, window)
+
+
+async def test_cancelled_admission_is_not_counted():
+    store = _BlockingStore()
+    host = Host(_limit(5), store)
+    caller = QcliCaller(user_id="u1", user_name="u", token_id="t1", audience="host", permissions=("rates:read",))
+    task = asyncio.ensure_future(host.api._admit(caller))
+    await store.entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await store.account_count("u1", TODAY) == 0
+    assert await store.account_count("u1", "2026-11-19T23:59") == 0

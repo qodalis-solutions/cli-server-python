@@ -91,6 +91,7 @@ DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000
 DEFAULT_SESSION_CHECK_INTERVAL = 30.0
 MAX_SESSION_CHECK_INTERVAL = 60.0
 LOGS_READ = "logs:read"
+GUARD_ONLY_NEEDS_NO_CLI_ROUTES = "guard-only needs cli_routes=False"
 
 
 def _is_own_entry(existing: Any, entry: dict[str, str]) -> bool:
@@ -224,6 +225,11 @@ class CliUsersPlugin:
         ended, adopts the server's allowed origins (CSRF), protects the whole
         server unless disabled and owns access to the remote shell (``users``
         shell mode)."""
+        options = getattr(server, "options", None)
+        # Fail closed: guard-only installs no protection, so the CLI's routes
+        # must not be served at all.
+        if self.guard_only and getattr(options, "cli_routes", True) is not False:
+            raise ValueError(GUARD_ONLY_NEEDS_NO_CLI_ROUTES)
         manager = getattr(server, "event_socket_manager", None)
         if manager is not None and hasattr(manager, "send_to_user"):
             self.auth_service.user_event_sender = manager.send_to_user
@@ -235,7 +241,6 @@ class CliUsersPlugin:
         # sockets without a user (read on every event).
         if manager is not None and hasattr(manager, "set_authentication_required"):
             manager.set_authentication_required(lambda: True)
-        options = getattr(server, "options", None)
         # The host application signs users in (read by the admin dashboard).
         if self.auth_service.external_auth and hasattr(options, "external_authentication"):
             options.external_authentication = True
@@ -253,8 +258,8 @@ class CliUsersPlugin:
             self._server_cli_prefixes = prefixes
         # Without protection the middleware still refuses host tokens on the
         # CLI's routes (they authenticate nothing else then).  A guard-only
-        # plugin on a server without CLI routes has nothing to protect.
-        if not (self.guard_only and getattr(options, "cli_routes", True) is False):
+        # plugin (on a server without CLI routes) has nothing to protect.
+        if not self.guard_only:
             self.protect(server.app, enforce=self.protect_server)
         # Events/logs sockets are bound to their session: closed (4401
         # "session ended") on logout, revoke, disable/delete and expiry.
@@ -332,9 +337,13 @@ class CliUsersPlugin:
     async def startup(self) -> None:
         """Seed and start the background tasks on the running loop: the
         session sweep and, with an external auth adapter, the re-check of
-        the events/logs sockets opened through it."""
+        the events/logs sockets opened through it.  Nothing in guard-only
+        mode."""
         await self.ensure_seeded()
         loop = asyncio.get_running_loop()
+        # Guard-only: the stores are the token-issuing service's to sweep.
+        if self.guard_only:
+            return
         if self._cleanup_task is None or self._cleanup_task.done():
             self._cleanup_task = loop.create_task(self._cleanup_loop())
         if self.auth_service.external_auth and (
@@ -578,7 +587,12 @@ class CliUsersBuilder:
         ``require_host_token``, the public-api guard) authenticate
         ``qcli_pat_`` tokens against the stores set here, shared with the
         service that creates them.  Create and revoke tokens from one service
-        only: the name and 20-token checks run in the creating process."""
+        only: the name and 20-token checks run in the creating process.
+
+        Mount it on a server without CLI routes
+        (``CliServerOptions(cli_routes=False)``): on any other server
+        ``mount_plugin`` raises ``ValueError("guard-only needs
+        cli_routes=False")``, so the CLI routes are never left open."""
         self._guard_only = on
         return self
 

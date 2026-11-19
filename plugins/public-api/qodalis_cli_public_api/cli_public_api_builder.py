@@ -60,6 +60,8 @@ PRUNE_INTERVAL = timedelta(hours=1)
 INTERNAL_ERROR = "internal server error"
 NO_API_ACCESS = "forbidden: no API access"
 USERS_REQUIRED = "public-api: set_users(users_plugin) is required"
+#: ``request.state`` flag: the request was admitted (counted) by a guard.
+COUNTED_KEY = "qcli_public_api_counted"
 #: FastAPI's default Swagger UI 5 assets (``set_swagger_assets`` overrides them).
 SWAGGER_JS_URL = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"
 SWAGGER_CSS_URL = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"
@@ -73,11 +75,29 @@ def validate_base_path(path: Any, label: str) -> str:
         or not path.startswith("/")
         or path == "/"
         or path.endswith("/")
-        or any(c.isspace() or ord(c) < 0x20 for c in path)
+        or any(c.isspace() or ord(c) < 0x20 or c in "?#\\" for c in path)
         or "//" in path
     ):
         raise ValueError(f"invalid {label} base path: {path}")
     return path
+
+
+def _stacked_permissions(request: Request) -> list[str]:
+    """Permissions of every public-api guard of the matched route (FastAPI
+    puts the route in ``scope["route"]``), so the first guard to run refuses
+    before counting.  Empty when the route is not known."""
+    route = request.scope.get("route")
+    stack = list(getattr(getattr(route, "dependant", None), "dependencies", None) or [])
+    found: list[str] = []
+    while stack:
+        dep = stack.pop(0)
+        call = getattr(dep, "call", None)
+        if getattr(call, "qcli_public_api", False):
+            permission = getattr(call, "qcli_permission", None)
+            if permission and permission not in found:
+                found.append(permission)
+        stack.extend(getattr(dep, "dependencies", None) or [])
+    return found
 
 
 def _seconds_until(now: datetime, then: datetime) -> int:
@@ -133,15 +153,27 @@ class CliPublicApiPlugin:
 
         async def dependency(request: Request) -> QcliCaller:
             ctx = await authenticate_host_token(users.require_auth, request)
-            if permission and not ctx.can(permission):
-                raise QcliGuardError(403, f"forbidden: missing permission {permission}")
+            # Stacked guards (a router's and a route's): the first one checks
+            # every stacked guard's permission, then counts the request once;
+            # the others check only their own permission.
+            counted = getattr(request.state, COUNTED_KEY, False)
+            required = [permission] if counted else [permission, *_stacked_permissions(request)]
+            for needed in required:
+                if needed and not ctx.can(needed):
+                    if counted:
+                        setattr(request.state, STATE_KEY, None)
+                    raise QcliGuardError(403, f"forbidden: missing permission {needed}")
             caller = ctx.caller
             request.state.qcli_caller = caller
+            if counted:
+                return caller
             headers = await self._admit(caller)
+            setattr(request.state, COUNTED_KEY, True)
             if headers:
                 setattr(request.state, STATE_KEY, headers)
             return caller
 
+        dependency.qcli_public_api = True
         return tag_guard(dependency, permission, True)
 
     def _account_lock(self, user_id: str) -> asyncio.Lock:
@@ -167,14 +199,17 @@ class CliPublicApiPlugin:
         day, minute = day_window(now), minute_window(now)
         token_id = caller.token_id or ""
         store = self.store
+        #: Windows incremented so far (taken back when the store fails).
+        incremented: list[str] = []
         try:
             # One admission at a time per account in this process: exactly the
             # limit here; across processes the compensation keeps the count at
             # or under it.
             lock = self._account_lock(caller.user_id)
             async with lock:
-                await store.increment(token_id, caller.user_id, day)
-                await store.increment(token_id, caller.user_id, minute)
+                for window in (day, minute):
+                    await store.increment(token_id, caller.user_id, window)
+                    incremented.append(window)
                 day_count = await store.account_count(caller.user_id, day) if per_day is not None else 0
                 minute_count = await store.account_count(caller.user_id, minute) if per_minute is not None else 0
                 exceeded = None
@@ -183,10 +218,17 @@ class CliPublicApiPlugin:
                 elif per_minute is not None and minute_count > per_minute:
                     exceeded = "minute"
                 if exceeded is not None:
-                    await store.decrement(token_id, day)
-                    await store.decrement(token_id, minute)
+                    while incremented:
+                        await store.decrement(token_id, incremented[-1])
+                        incremented.pop()
+        except asyncio.CancelledError:
+            # The request was cancelled (the client went away): not counted.
+            await self._take_back(token_id, incremented)
+            raise
         except Exception:
             logger.exception("public-api: the usage store failed")
+            # The request is not served: take back what was counted (best effort).
+            await self._take_back(token_id, incremented)
             raise QcliGuardError(500, INTERNAL_ERROR) from None
 
         await self._maybe_prune(now)
@@ -211,6 +253,14 @@ class CliPublicApiPlugin:
             headers["Retry-After"] = str(seconds_to_next_minute(now))
             raise QcliGuardError(429, f"too many requests: {per_minute} per minute", headers)
         return headers
+
+    async def _take_back(self, token_id: str, windows: list[str]) -> None:
+        for window in reversed(windows):
+            try:
+                await self.store.decrement(token_id, window)
+            except Exception:
+                logger.exception("public-api: taking back a request count failed")
+        windows.clear()
 
     async def _maybe_prune(self, now: datetime) -> None:
         if self._last_prune is not None and now - self._last_prune < PRUNE_INTERVAL:
@@ -371,7 +421,7 @@ class CliPublicApiBuilder:
         def base_url(request: Request) -> str:
             return str(request.base_url).rstrip("/")
 
-        @router.get("/openapi.json", include_in_schema=False)
+        @router.api_route("/openapi.json", methods=["GET", "HEAD"], include_in_schema=False)
         async def openapi_json(request: Request) -> Response:
             body = json.dumps(document.build(base_url(request)), ensure_ascii=False)
             return Response(
@@ -381,7 +431,9 @@ class CliPublicApiBuilder:
             )
 
         async def swagger(request: Request) -> HTMLResponse:
-            root = request.scope.get("root_path", "") or ""
+            root = (request.scope.get("root_path", "") or "").rstrip("/")
+            if root.startswith("//") or not root.startswith("/"):
+                root = ""  # never a protocol-relative URL
             title = document.title_of(document.build(base_url(request)))
             return get_swagger_ui_html(
                 openapi_url=f"{root}{plugin.prefix}/openapi.json",
