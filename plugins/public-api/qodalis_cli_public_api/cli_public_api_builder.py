@@ -109,16 +109,18 @@ def _drop_caller(request: Request) -> None:
 
 
 def _stacked_permissions(request: Request) -> list[str]:
-    """Permissions of every public-api guard of the matched route (FastAPI
-    puts the route in ``scope["route"]``), so the first guard to run refuses
-    before counting.  Empty when the route is not known."""
+    """Permissions of every tagged guard of the matched route (public-api
+    guards and the users plugin's ``require_permission`` /
+    ``require_host_token``; FastAPI puts the route in ``scope["route"]``),
+    so the first public-api guard to run refuses a request another guard
+    would refuse before counting it.  Empty when the route is not known."""
     route = request.scope.get("route")
     stack = list(getattr(getattr(route, "dependant", None), "dependencies", None) or [])
     found: list[str] = []
     while stack:
         dep = stack.pop(0)
         call = getattr(dep, "call", None)
-        if getattr(call, "qcli_public_api", False):
+        if hasattr(call, "qcli_host_token_only"):
             permission = getattr(call, "qcli_permission", None)
             if permission and permission not in found:
                 found.append(permission)
@@ -183,6 +185,15 @@ class CliPublicApiPlugin:
         authenticate = getattr(users, "authenticate", None) or users.require_auth
 
         async def dependency(request: Request) -> QcliCaller:
+            try:
+                return await check(request)
+            except QcliGuardError:
+                # A refused request has no caller, also when a users guard
+                # that ran first on the route had set one.
+                _drop_caller(request)
+                raise
+
+        async def check(request: Request) -> QcliCaller:
             ctx = await authenticate_host_token(authenticate, request)
             # Stacked guards (a router's and a route's): the first one checks
             # every stacked guard's permission, then counts the request once;
@@ -193,7 +204,6 @@ class CliPublicApiPlugin:
                 if needed and not ctx.can(needed):
                     if counted:
                         setattr(request.state, STATE_KEY, None)
-                        _drop_caller(request)
                     raise QcliGuardError(403, f"forbidden: missing permission {needed}")
             caller = ctx.caller
             if counted:
@@ -290,12 +300,23 @@ class CliPublicApiPlugin:
         return headers
 
     async def _take_back(self, token_id: str, windows: list[str]) -> None:
+        """Decrement every window, also when the task is cancelled (natively)
+        meanwhile: an interrupted decrement is retried (at most three times)
+        and the cancellation is raised again once all are done."""
+        cancelled: BaseException | None = None
         for window in reversed(windows):
-            try:
-                await self.store.decrement(token_id, window)
-            except Exception:
-                logger.exception("public-api: taking back a request count failed")
+            for _ in range(3):
+                try:
+                    await self.store.decrement(token_id, window)
+                    break
+                except Exception:
+                    logger.exception("public-api: taking back a request count failed")
+                    break
+                except BaseException as exc:  # cancellation: finish first
+                    cancelled = exc
         windows.clear()
+        if cancelled is not None:
+            raise cancelled
 
     async def _maybe_prune(self, now: datetime) -> None:
         if self._last_prune is not None and now - self._last_prune < PRUNE_INTERVAL:

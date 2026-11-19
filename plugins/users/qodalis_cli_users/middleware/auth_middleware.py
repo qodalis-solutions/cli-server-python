@@ -28,6 +28,8 @@ from ..services.auth_service import (
 GetAuth = Callable[[Request], Awaitable[AuthContext]]
 
 ORIGIN_NOT_ALLOWED = "origin not allowed"
+#: ``request.state`` key of the request's authenticated context.
+AUTH_MEMO_KEY = "qcli_auth_memo"
 
 
 async def authenticate_request(
@@ -143,13 +145,20 @@ def create_auth_dependencies(
     async def get_auth_pending(request: Request) -> AuthContext:
         if ensure_ready is not None:
             await ensure_ready()
+        # One authentication per request (one token look-up, one touch),
+        # however many guards run on the route.
+        memo = getattr(request.state, AUTH_MEMO_KEY, None)
+        if isinstance(memo, AuthContext):
+            return memo
         ctx = get_scope_auth(request.scope)
         if isinstance(ctx, AuthContext):
             if ctx.last_used_pending and ctx.api_token is not None:
                 ctx.last_used_pending = False
                 await auth_service.touch_api_token(ctx.api_token)
-            return ctx
-        return await authenticate_request(auth_service, request)
+        else:
+            ctx = await authenticate_request(auth_service, request)
+        setattr(request.state, AUTH_MEMO_KEY, ctx)
+        return ctx
 
     async def authenticate(request: Request) -> AuthContext:
         """``get_auth`` without exposing the caller: the guards built on it

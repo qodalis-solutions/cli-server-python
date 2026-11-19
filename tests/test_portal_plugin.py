@@ -74,6 +74,7 @@ def test_portal_json_both_sections():
         res = client.get("/qcli/portal/portal.json")
         assert res.status_code == 200
         assert res.headers["cache-control"] == "no-cache"
+        assert res.headers["content-type"] == "application/json; charset=utf-8"
         assert res.json() == BOTH
         assert list(res.json()) == ["name", "logo", "theme", "footerLinks", "docs", "api"]
 

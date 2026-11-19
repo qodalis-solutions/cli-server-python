@@ -347,3 +347,11 @@ def test_invalid_root_path(root: str):
 def test_invalid_document_fails_at_build(doc: dict):
     with pytest.raises(ValueError, match="^public-api: invalid OpenAPI document$"):
         CliPublicApiBuilder().set_openapi(doc)
+
+
+def test_empty_security_and_servers_are_filled_in():
+    source = {"openapi": "3.1.0", "info": {"title": "x", "version": "1"}, "paths": {}, "security": [], "servers": []}
+    with _host(lambda b: b.set_openapi(source), source="given") as (client, _, _):
+        doc = _doc(client)
+        assert doc["security"] == [{"qcliToken": []}]
+        assert doc["servers"] == [{"url": "http://testserver"}]

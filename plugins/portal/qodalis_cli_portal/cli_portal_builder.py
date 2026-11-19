@@ -49,6 +49,7 @@ INVALID_PATH_BASE = "invalid path base"
 SECTION_KINDS = ("docs", "api")
 BASE_TAG = '<base href="/" />'
 _NO_CACHE = {"Cache-Control": "no-cache"}
+JSON_TYPE = "application/json; charset=utf-8"
 _IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
 _ASSET_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*$")
 _METHODS = ("GET", "HEAD")
@@ -240,7 +241,7 @@ def _router(plugin: CliPortalPlugin, site_dir: str) -> APIRouter:
         root = _path_base(request)
         if root is None:
             return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400)
-        return JSONResponse(plugin.portal_json(root), headers=_NO_CACHE)
+        return JSONResponse(plugin.portal_json(root), headers=_NO_CACHE, media_type=JSON_TYPE)
 
     # At "/" a missing file falls through to the host's routes.  Elsewhere the
     # portal answers every path under its public prefixes itself, so a path

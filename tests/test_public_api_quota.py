@@ -671,3 +671,133 @@ async def test_take_back_on_cancellation_is_shielded():
         holder[0].cancel()   # stays cancelled: unshielded awaits would be cancelled too
     assert await store.account_count("u1", TODAY) == 0
     assert host.api._last_prune is None
+
+
+# ---------------------------------------------------------------------------
+# Final review: users guards stacked with the public-api guard, one
+# authentication per request, a take-back that survives a second cancel
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("order", ["users-first", "public-first"])
+def test_users_guard_permission_checked_before_counting(order: str):
+    host = Host(_limit(5))
+    api, users = host.api, host.users
+    recorder: list[_CallerRecorder] = []
+
+    def factory(app: Any) -> _CallerRecorder:
+        recorder.append(_CallerRecorder(app))
+        return recorder[0]
+
+    host.app.add_middleware(factory)
+    if order == "users-first":
+        deps = [Depends(users.require_permission("banks:read")), Depends(api.guard("rates:read"))]
+    else:
+        deps = [Depends(api.guard("rates:read")), Depends(users.require_host_token("banks:read"))]
+
+    @host.app.get("/v3/banks", dependencies=deps)
+    async def banks():
+        return {}
+
+    with TestClient(host.app) as client:
+        srv = Srv(host, client)
+        alice, token, _ = srv.host_token()           # holds rates:read only
+        res = srv.get("/v3/banks", token)
+        assert res.status_code == 403
+        assert srv.account_count(alice.id) == 0
+        assert recorder[0].seen[-1] is False
+
+
+def test_public_api_refusal_drops_a_users_guard_caller():
+    host = Host(_limit(1))
+    api, users = host.api, host.users
+    recorder: list[_CallerRecorder] = []
+
+    def factory(app: Any) -> _CallerRecorder:
+        recorder.append(_CallerRecorder(app))
+        return recorder[0]
+
+    host.app.add_middleware(factory)
+
+    @host.app.get("/v3/rates", dependencies=[Depends(users.require_auth), Depends(api.guard("rates:read"))])
+    async def rates():
+        return {}
+
+    with TestClient(host.app) as client:
+        srv = Srv(host, client)
+        _, token, _ = srv.host_token()
+        assert srv.get("/v3/rates", token).status_code == 200
+        assert recorder[0].seen[-1] is True
+        assert srv.get("/v3/rates", token).status_code == 429
+        assert recorder[0].seen[-1] is False
+
+
+def test_one_authentication_per_request():
+    from qodalis_cli_users import InMemoryApiTokenStore
+
+    class CountingStore(InMemoryApiTokenStore):
+        lookups = 0
+        touches = 0
+
+        async def get_token_by_hash(self, token_hash: str):
+            CountingStore.lookups += 1
+            return await super().get_token_by_hash(token_hash)
+
+        async def update_last_used(self, token_id: str, last_used_at: int) -> None:
+            CountingStore.touches += 1
+            await super().update_last_used(token_id, last_used_at)
+
+    from qodalis_cli_users import CliUsersBuilder
+
+    host = Host.__new__(Host)
+    host.clock = Clock()
+    host.result, host.users = _make_users(CliUsersBuilder().set_api_token_store(CountingStore()))
+    host.api = CliPublicApiBuilder().set_users(host.users).set_clock(host.clock).build()
+    host.result.mount_plugin(host.api)
+    users, api = host.users, host.api
+
+    @host.result.app.get("/v3/all", dependencies=[
+        Depends(users.require_auth), Depends(users.require_permission("rates:read")),
+        Depends(users.require_host_token("rates:read")), Depends(api.guard("rates:read")),
+    ])
+    async def everything():
+        return {}
+
+    with TestClient(host.app) as client:
+        srv = Srv(host, client)
+        _, token, _ = srv.host_token()
+        CountingStore.lookups = CountingStore.touches = 0
+        assert srv.get("/v3/all", token).status_code == 200
+        assert (CountingStore.lookups, CountingStore.touches) == (1, 1)
+
+
+class _SlowTakeBackStore(InMemoryPublicApiUsageStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.decrementing = asyncio.Event()
+
+    async def increment(self, token_id: str, user_id: str, window: str) -> int:
+        if len(window) == 16:
+            self.entered.set()
+            await asyncio.Event().wait()
+        return await super().increment(token_id, user_id, window)
+
+    async def decrement(self, token_id: str, window: str) -> None:
+        self.decrementing.set()
+        await asyncio.sleep(0.05)
+        await super().decrement(token_id, window)
+
+
+async def test_take_back_survives_a_second_native_cancel():
+    store = _SlowTakeBackStore()
+    host = Host(_limit(5), store)
+    caller = QcliCaller(user_id="u1", user_name="u", token_id="t1", audience="host", permissions=("rates:read",))
+    task = asyncio.ensure_future(host.api._admit(caller))
+    await store.entered.wait()
+    task.cancel()
+    await store.decrementing.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await store.account_count("u1", TODAY) == 0
