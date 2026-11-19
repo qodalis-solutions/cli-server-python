@@ -50,7 +50,7 @@ the token views' `usage`. Its routes are host routes (`cli_routes = False`), nev
 
 | # | Condition | Answer |
 |---|---|---|
-| 1 | authentication fails | 401 `unauthorized` / 401 `invalid or expired token` / 403 `account disabled` / 403 `password change required` |
+| 1 | authentication fails | 401 `unauthorized` (no credentials) / 401 `invalid or expired token` (also the token of a disabled or deleted user) / 401 `session expired` / 401 `account disabled` (a disabled user signed in through the host's auth adapter) / 403 `password change required` |
 | 2 | not a `host` token (a session, an adapter user, a `cli` token) | 403 `forbidden: a host token is required` |
 | 3 | `permission` given and not held | 403 `forbidden: missing permission <permission>` |
 | 4 | the quota resolver raises | 500 `internal server error` (logged; the text never reaches the client) |
