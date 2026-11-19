@@ -202,6 +202,13 @@ def test_duplicate_throws():
     assert str(error.value) == "permission already registered: rates:read"
 
 
+def test_duplicate_is_case_insensitive_and_checked_before_syntax():
+    builder = _builder()
+    with pytest.raises(ValueError) as error:
+        builder.add_permissions([{"name": "FILES:READ", "description": "Files", "group": "Files"}])
+    assert str(error.value) == "permission already registered: FILES:READ"
+
+
 def test_duplicate_inside_one_call_registers_nothing():
     builder = _builder()
     with pytest.raises(ValueError):
