@@ -333,7 +333,9 @@ def test_root_path():
         assert client.get("/qcli/api/swagger/swagger-ui.css").status_code == 200
 
 
-@pytest.mark.parametrize("root", ["//evil.example", "/\\evil.example"])
+@pytest.mark.parametrize("root", [
+    "//evil.example", "/\\evil.example", "/\t/evil.example", "/\r/evil.example", "/\n/evil.example", "/a b",
+])
 def test_invalid_root_path(root: str):
     result, users = _make_users()
     result.mount_plugin(CliPublicApiBuilder().set_users(users).build())

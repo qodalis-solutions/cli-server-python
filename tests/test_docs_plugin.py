@@ -285,7 +285,9 @@ def test_base_url_follows_the_root_path():
         assert markdown.startswith("Call http://testserver/svc/v1/rates")
 
 
-@pytest.mark.parametrize("root", ["//evil.example", "/\\evil.example"])
+@pytest.mark.parametrize("root", [
+    "//evil.example", "/\\evil.example", "/\t/evil.example", "/\r/evil.example", "/\n/evil.example", "/a b",
+])
 def test_invalid_root_path(root: str):
     result = create_cli_server()
     result.mount_plugin(_builder().build())

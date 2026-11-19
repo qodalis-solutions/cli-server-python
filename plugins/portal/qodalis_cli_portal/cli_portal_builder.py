@@ -82,9 +82,10 @@ def _route_class(serves: Callable[[dict[str, Any]], bool] | None = None) -> type
 
 def _path_base(request: Request) -> str | None:
     """The app's root path, or ``None`` when it could make a URL leave the
-    host (``//`` or ``/\\``)."""
+    host: ``//`` or ``/\\``, or whitespace / control characters (browsers drop
+    them, so ``/<tab>/evil`` becomes ``//evil``)."""
     root = request.scope.get("root_path", "") or ""
-    if root.startswith("//") or root.startswith("/\\"):
+    if root.startswith("//") or root.startswith("/\\") or any(c.isspace() or ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in root):
         return None
     return root.rstrip("/")
 
@@ -234,13 +235,13 @@ def _router(plugin: CliPortalPlugin, site_dir: str) -> APIRouter:
     async def index(request: Request) -> Response:
         root = _path_base(request)
         if root is None:
-            return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400)
+            return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400, media_type=JSON_TYPE)
         return HTMLResponse(plugin.index_html(root), headers=_NO_CACHE)
 
     async def portal_json(request: Request) -> Response:
         root = _path_base(request)
         if root is None:
-            return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400)
+            return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400, media_type=JSON_TYPE)
         return JSONResponse(plugin.portal_json(root), headers=_NO_CACHE, media_type=JSON_TYPE)
 
     # At "/" a missing file falls through to the host's routes.  Elsewhere the
@@ -249,7 +250,7 @@ def _router(plugin: CliPortalPlugin, site_dir: str) -> APIRouter:
     owns_prefixes = plugin.prefix != "/"
 
     async def not_found() -> Response:
-        return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse({"error": "not found"}, status_code=404, media_type=JSON_TYPE)
 
     async def asset(file: str) -> Response:
         if not asset_exists({"file": file}):
