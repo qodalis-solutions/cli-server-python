@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from qodalis_cli_server_abstractions import (
     DataExplorerProviderOptions,
@@ -13,6 +13,12 @@ from ..models.cli_installed_plugin import (
     CORE_DISTRIBUTION,
     CliInstalledPlugin,
     distribution_of,
+)
+from ..permissions import (
+    CORE_PERMISSIONS,
+    CliPermission,
+    CliPermissionCatalog,
+    CliPermissionSurface,
 )
 from ..services.cli_command_registry import CliCommandRegistry
 
@@ -45,6 +51,31 @@ class CliBuilder:
         self._data_explorer_registrations: list[_DataExplorerRegistration] = []
         self._installed_plugins: list[CliInstalledPlugin] = []
         self.add_installed_plugin(CORE_DISTRIBUTION)
+        self._permissions = CliPermissionCatalog()
+        self._permissions.add(CORE_PERMISSIONS, "cli")
+
+    def add_permissions(
+        self,
+        entries: Iterable[CliPermission | Mapping[str, Any]],
+        *,
+        surface: CliPermissionSurface = "host",
+    ) -> CliBuilder:
+        """Declare permissions tokens can be given (``CliPermission`` or
+        plain dicts with ``name``, ``description`` and ``group``).
+
+        The host declares its own routes' permissions (``surface="host"``,
+        the default), which ``host`` tokens may hold; plugins declare theirs
+        with ``surface="cli"``.  Raises ``ValueError`` (``invalid permission
+        entry: <name>`` / ``permission already registered: <name>``).
+        """
+        self._permissions.add(entries, surface)
+        return self
+
+    @property
+    def permissions(self) -> CliPermissionCatalog:
+        """The permission catalog: core's permissions, then plugins', then
+        the host's."""
+        return self._permissions
 
     def add_installed_plugin(
         self,
