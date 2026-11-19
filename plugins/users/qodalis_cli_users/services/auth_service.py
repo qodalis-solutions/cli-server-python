@@ -25,8 +25,10 @@ from ..models import (
     ApiToken,
     AuditEntry,
     ExternalAuthResult,
+    QcliCaller,
     Session,
     SessionMetadata,
+    TokenUsageProvider,
     User,
     now_ms,
 )
@@ -72,6 +74,9 @@ TOO_MANY_REQUESTS = "too many requests, try again later"
 INSUFFICIENT_PRIVILEGES = "insufficient privileges for this user"
 #: A ``host`` API token used on a CLI route (users plugin, server routes).
 HOST_TOKENS_CANNOT_USE_CLI_ROUTES = "forbidden: host tokens cannot use CLI routes"
+#: A session, an adapter identity or a ``cli`` token on a host-token-only
+#: route (``require_host_token``, the public-api guard).
+HOST_TOKEN_REQUIRED = "forbidden: a host token is required"
 
 _MAX_TRACKED_KEYS = 10_000
 
@@ -145,6 +150,18 @@ class AuthContext:
 
     def can(self, permission: str) -> bool:
         return has_permission(self.permissions, permission)
+
+    @property
+    def caller(self) -> QcliCaller:
+        """The caller as host routes see it (``request.state.qcli_caller``)."""
+        token = self.api_token
+        return QcliCaller(
+            user_id=self.user.id,
+            user_name=self.user.name,
+            token_id=token.id if token is not None else None,
+            audience=("host" if token.is_host else "cli") if token is not None else None,
+            permissions=tuple(self.permissions),
+        )
 
     def is_self(self, user: User | None) -> bool:
         return user is not None and user.id == self.user.id
@@ -260,6 +277,9 @@ class AuthService:
         #: plugin's own entries until mounted on a server with a catalog,
         #: then the server's (``server.builder.permissions``).
         self.permission_catalog: PermissionCatalog = users_permission_catalog()
+        #: Adds ``usage`` to the token views (``GET /tokens``,
+        #: ``api_tokens.list``); set by the public-api plugin.
+        self.token_usage_provider: TokenUsageProvider | None = None
         self._lockouts: OrderedDict[str, _LockoutState] = OrderedDict()
         self._rate: OrderedDict[str, deque[int]] = OrderedDict()
         self._tickets: dict[str, _Ticket] = {}
@@ -768,9 +788,23 @@ class AuthService:
             return False
         return True
 
-    async def api_token_view(self, record: ApiToken) -> dict[str, Any]:
+    async def api_token_view(self, record: ApiToken, usage: dict[str, Any] | None = None) -> dict[str, Any]:
         user = await self.user_store.get_user(record.user_id)
-        return record.to_view(user.name if user else "")
+        return record.to_view(user.name if user else "", usage)
+
+    async def api_token_views(self, records: list[ApiToken]) -> list[dict[str, Any]]:
+        """Views of ``records`` with their ``usage`` when a usage provider is
+        set (one call for every id); a failing provider is logged and the
+        views are returned without it."""
+        usage: dict[str, Any] = {}
+        provider = self.token_usage_provider
+        if provider is not None and records:
+            try:
+                usage = dict(await provider([r.id for r in records]) or {})
+            except Exception:
+                logger.exception("Token usage provider failed; token views returned without usage")
+                usage = {}
+        return [await self.api_token_view(r, usage.get(r.id)) for r in records]
 
     async def run_auth_adapter(self, request: Any) -> ExternalAuthResult | None:
         """Call the external auth adapter on ``request``, awaiting its result

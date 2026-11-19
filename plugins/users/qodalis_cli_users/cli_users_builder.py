@@ -36,9 +36,14 @@ from .controllers.permissions_controller import create_permissions_router
 from .controllers.sessions_controller import create_sessions_router
 from .controllers.tokens_controller import create_tokens_router
 from .controllers.users_controller import create_users_router
-from .middleware.auth_middleware import cli_only, create_auth_dependencies, permission_dependency
-from .errors import UsersApiError
-from .models import ExternalAuthAdapter
+from .middleware.auth_middleware import (
+    cli_only,
+    create_auth_dependencies,
+    host_token_dependency,
+    permission_dependency,
+)
+from .errors import UsersApiError, install_guard_error_handler
+from .models import ExternalAuthAdapter, TokenUsageProvider
 from .permissions import USERS_PERMISSION_ENTRIES
 from .server_protection import ServerProtectionMiddleware, _normalize_base
 from .shell_access import UsersShellAccess
@@ -128,6 +133,13 @@ class CliUsersPlugin:
     #: API): ``require_auth`` that also refuses ``host`` API tokens (403
     #: ``forbidden: host tokens cannot use CLI routes``).
     require_cli_auth: Any = None
+    #: ``require_host_token("perm")`` → FastAPI dependency accepting only
+    #: ``host`` API tokens (403 ``forbidden: a host token is required``),
+    #: then checking the permission when given.
+    require_host_token: Any = None
+    #: Guard-only mode (``set_guard_only()``): no routes, no seeding, no
+    #: server protection; the guards validate tokens of shared stores.
+    guard_only: bool = False
     #: API tokens the host creates, lists and revokes for its users,
     #: including ``host`` tokens (accepted only by ``require_auth`` /
     #: ``require_permission``).
@@ -152,8 +164,9 @@ class CliUsersPlugin:
     _seed_lock: Optional[asyncio.Lock] = field(default=None, repr=False)
 
     async def ensure_seeded(self) -> None:
-        """Seed built-in groups and the root user once (idempotent)."""
-        if self._seeded:
+        """Seed built-in groups and the root user once (idempotent); nothing
+        in guard-only mode."""
+        if self._seeded or self.guard_only:
             return
         if self._seed_lock is None:
             self._seed_lock = asyncio.Lock()
@@ -166,6 +179,15 @@ class CliUsersPlugin:
     @property
     def auth(self) -> AuthService:
         return self.auth_service
+
+    def set_token_usage_provider(self, provider: TokenUsageProvider | None) -> None:
+        """Add ``usage`` to the token views (``GET /tokens`` and
+        :meth:`ApiTokenManager.list`): ``await provider(token_ids)`` returns
+        ``{token_id: {"today", "last30Days", "days"}}``.  ``None`` removes
+        it.  The public-api plugin sets one."""
+        if provider is not None and not callable(provider):
+            raise TypeError("token usage provider must be callable")
+        self.auth_service.token_usage_provider = provider
 
     def allow_anonymous(self, path: str, methods: list[str] | None = None) -> None:
         """Exempt an exact path from server protection (e.g. another plugin's
@@ -230,8 +252,10 @@ class CliUsersPlugin:
         if isinstance(prefixes, list):
             self._server_cli_prefixes = prefixes
         # Without protection the middleware still refuses host tokens on the
-        # CLI's routes (they authenticate nothing else then).
-        self.protect(server.app, enforce=self.protect_server)
+        # CLI's routes (they authenticate nothing else then).  A guard-only
+        # plugin on a server without CLI routes has nothing to protect.
+        if not (self.guard_only and getattr(options, "cli_routes", True) is False):
+            self.protect(server.app, enforce=self.protect_server)
         # Events/logs sockets are bound to their session: closed (4401
         # "session ended") on logout, revoke, disable/delete and expiry.
         # Those of adapter identities are re-checked through the adapter
@@ -254,7 +278,10 @@ class CliUsersPlugin:
         if callable(set_shell_provider):
             set_shell_provider(UsersShellAccess(self.auth_service))
         self._adopt_permission_catalog(server)
-        self._mount_audit(server)
+        # The host-token-only guards answer {"error": ...} on host routes.
+        install_guard_error_handler(server.app)
+        if not self.guard_only:
+            self._mount_audit(server)
 
     def _adopt_permission_catalog(self, server: Any) -> None:
         """Use the server's permission catalog (``server.builder.permissions``,
@@ -414,6 +441,7 @@ class CliUsersBuilder:
         self._lockout_ms = DEFAULT_LOCKOUT_MS
         self._cleanup_interval_ms = DEFAULT_CLEANUP_INTERVAL_MS
         self._link_approval_url = DEFAULT_LINK_APPROVAL_URL
+        self._guard_only = False
 
     def set_user_store(self, store: IUserStore) -> CliUsersBuilder:
         self._user_store = store
@@ -540,6 +568,20 @@ class CliUsersBuilder:
         self._protect_server = protect
         return self
 
+    def set_guard_only(self, on: bool = True) -> CliUsersBuilder:
+        """Guard-only mode, for a service that only validates tokens (e.g. a
+        public API next to the service that runs the CLI): no users routes
+        (sign-in, users, groups, sessions, tokens, permissions, link, audit),
+        no seeding (no ``root``, no built-in groups) and no server
+        protection (``host`` tokens are still refused on CLI routes).  The
+        guards (``require_auth``, ``require_permission``,
+        ``require_host_token``, the public-api guard) authenticate
+        ``qcli_pat_`` tokens against the stores set here, shared with the
+        service that creates them.  Create and revoke tokens from one service
+        only: the name and 20-token checks run in the creating process."""
+        self._guard_only = on
+        return self
+
     def set_session_timeout(self, timeout_ms: int) -> CliUsersBuilder:
         """Idle session timeout in milliseconds (default 30 minutes)."""
         self._session_timeout_ms = timeout_ms
@@ -620,9 +662,10 @@ class CliUsersBuilder:
             api_token_store=auth_service.api_token_store,
             default_admin_password=self._default_admin_password,
             cleanup_interval_ms=self._cleanup_interval_ms,
-            protect_server=self._protect_server,
+            protect_server=self._protect_server and not self._guard_only,
             audit_plugin=audit_plugin,
             api_tokens=ApiTokenManager(auth_service),
+            guard_only=self._guard_only,
         )
 
         # The users plugin records its events in the audit plugin's store,
@@ -643,6 +686,13 @@ class CliUsersBuilder:
         plugin.require_auth = get_auth
         plugin.require_permission = require_permission
         plugin.require_cli_auth = get_cli_auth
+
+        def require_host_token(permission: str | None = None) -> Any:
+            return host_token_dependency(get_auth, permission)
+
+        plugin.require_host_token = require_host_token
+        if self._guard_only:
+            return plugin
         get_cli_auth_pending = cli_only(get_auth_pending)
 
         def require_cli_permission(permission: str) -> Any:

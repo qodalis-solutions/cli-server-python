@@ -78,6 +78,16 @@ class CliServerOptions:
     #: users plugin with an external auth adapter) when mounted; the admin
     #: dashboard then signs in through the host (``GET /api/v1/qcli/auth/mode``).
     external_authentication: bool = False
+    #: ``False`` serves none of the CLI's HTTP routes and sockets
+    #: (``/api/qcli/*``, ``/api/v1/qcli/*``, ``/ws/*``, MCP, filesystem, data
+    #: explorer), e.g. for a service that only guards a public API with the
+    #: users plugin in guard-only mode.  :meth:`CliServerResult.mount_plugin`
+    #: then mounts only plugins that serve host routes (``cli_routes =
+    #: False``).  The permission catalog, events and services stay.
+    cli_routes: bool = True
+    #: ``False`` turns off FastAPI's own ``/docs``, ``/redoc`` and
+    #: ``/openapi.json`` for the whole app.
+    app_docs: bool = True
     configure: Callable[[CliBuilder], None] | None = None
 
 
@@ -136,6 +146,9 @@ class CliServerResult:
 
         Reads ``prefix`` and ``router`` from the plugin result, and optionally
         ``dashboard_prefix`` / ``dashboard_app`` for plugins that serve a UI.
+        A plugin with ``cli_routes = False`` serves host routes (public API,
+        docs, portal): its prefix is not counted among the CLI's routes, and
+        it is the only kind mounted on a server without CLI routes.
 
         Example::
 
@@ -155,9 +168,15 @@ class CliServerResult:
 
         prefix = getattr(plugin, "prefix", None)
         router = getattr(plugin, "router", None)
-        self.add_cli_route_prefix(prefix)
-        self.add_cli_route_prefix(getattr(plugin, "dashboard_prefix", None))
-        if prefix and router:
+        serves_cli_routes = getattr(plugin, "cli_routes", True) is not False
+        if serves_cli_routes:
+            self.add_cli_route_prefix(prefix)
+            self.add_cli_route_prefix(getattr(plugin, "dashboard_prefix", None))
+        routes_off = serves_cli_routes and not self.options.cli_routes
+        if routes_off:
+            if prefix and router is not None and getattr(router, "routes", None):
+                logger.warning("[qcli] CLI routes are turned off; %s is not mounted", prefix)
+        elif prefix and router:
             self.app.include_router(router, prefix=prefix)
 
         # Plugins may hook into the server (e.g. the users plugin protects
@@ -168,7 +187,7 @@ class CliServerResult:
 
         dashboard_prefix = getattr(plugin, "dashboard_prefix", None)
         dashboard_app = getattr(plugin, "dashboard_app", None)
-        if dashboard_prefix and dashboard_app:
+        if dashboard_prefix and dashboard_app and not routes_off:
             self.app.mount(dashboard_prefix, dashboard_app)
 
 
@@ -201,10 +220,16 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         await log_socket_manager.broadcast_disconnect()
         logging.getLogger().removeHandler(log_handler)
 
-    app = FastAPI(title="Qodalis CLI Server", lifespan=lifespan)
+    if opts.app_docs:
+        app = FastAPI(title="Qodalis CLI Server", lifespan=lifespan)
+    else:
+        app = FastAPI(
+            title="Qodalis CLI Server", lifespan=lifespan,
+            docs_url=None, redoc_url=None, openapi_url=None,
+        )
 
     mcp_options = resolve_mcp_options(opts.mcp)
-    if mcp_options is not None:
+    if mcp_options is not None and opts.cli_routes:
         # Origin check and 405s before any auth middleware (users plugin).
         app.add_middleware(
             McpGateMiddleware,
@@ -232,11 +257,12 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     router = create_cli_router(registry, executor, enable_shell=opts.enable_shell, shell_auth=shell_auth)
     version_router = create_cli_version_router(enable_shell=opts.enable_shell, shell_auth=shell_auth)
 
-    app.include_router(router, prefix="/api/v1/qcli")
-    app.include_router(version_router, prefix="/api/qcli")
+    if opts.cli_routes:
+        app.include_router(router, prefix="/api/v1/qcli")
+        app.include_router(version_router, prefix="/api/qcli")
 
-    if opts.base_path != "/api/v1/qcli":
-        app.include_router(router, prefix=opts.base_path)
+        if opts.base_path != "/api/v1/qcli":
+            app.include_router(router, prefix=opts.base_path)
 
     mcp_tools = McpToolRegistry(mcp_options)
     package_version = _package_version()
@@ -268,7 +294,8 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
                 else DEFAULT_MAX_UPLOAD_BYTES
             ),
         )
-        app.include_router(fs_router, prefix="/api/qcli/fs")
+        if opts.cli_routes:
+            app.include_router(fs_router, prefix="/api/qcli/fs")
         mcp_tools.add_provider(FilesystemMcpToolProvider(fs_provider), builtin=True)
 
     #: Set to the result below: the data explorer reads its audit log per query.
@@ -296,7 +323,8 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
                 get_auth_context(request), remote_address(request, opts.shell.trust_proxy),
             ),
         )
-        app.include_router(data_explorer_router, prefix="/api/qcli/data-explorer")
+        if opts.cli_routes:
+            app.include_router(data_explorer_router, prefix="/api/qcli/data-explorer")
         mcp_tools.add_provider(
             DataExplorerMcpToolProvider(
                 data_explorer_registry,
@@ -310,7 +338,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         )
 
     mcp_tools.add_provider(CommandsMcpToolProvider(registry, executor))
-    if mcp_options is not None:
+    if mcp_options is not None and opts.cli_routes:
         app.include_router(create_mcp_router(
             mcp_tools,
             mcp_options,
@@ -319,37 +347,25 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
             trust_proxy=lambda: opts.shell.trust_proxy,
         ))
 
-    @app.websocket("/ws/v1/qcli/events")
-    async def websocket_events_v1(websocket: WebSocket) -> None:
-        logger.debug("WebSocket connection accepted: events")
-        await event_socket_manager.handle_connection(websocket, get_auth_context(websocket))
-
-    @app.websocket("/ws/qcli/events")
     async def websocket_events(websocket: WebSocket) -> None:
         logger.debug("WebSocket connection accepted: events")
         await event_socket_manager.handle_connection(websocket, get_auth_context(websocket))
 
-    async def _handle_logs(websocket: WebSocket) -> None:
+    async def websocket_logs(websocket: WebSocket) -> None:
         level_filter = websocket.query_params.get("level") or None
         logger.debug("Log WebSocket connection accepted (level=%s)", level_filter or "all")
         await log_socket_manager.handle_connection(websocket, level_filter, get_auth_context(websocket))
 
-    @app.websocket("/ws/v1/qcli/logs")
-    async def websocket_logs_v1(websocket: WebSocket) -> None:
-        await _handle_logs(websocket)
-
-    @app.websocket("/ws/qcli/logs")
-    async def websocket_logs(websocket: WebSocket) -> None:
-        await _handle_logs(websocket)
-
-    # Always routed: a disabled shell answers with close 4404 (C5).
-    @app.websocket("/ws/v1/qcli/shell")
-    async def websocket_shell_v1(websocket: WebSocket) -> None:
-        await shell_session_manager.handle_connection(websocket)
-
-    @app.websocket("/ws/qcli/shell")
     async def websocket_shell(websocket: WebSocket) -> None:
         await shell_session_manager.handle_connection(websocket)
+
+    if opts.cli_routes:
+        # The shell is always routed: a disabled shell answers with close 4404 (C5).
+        for name, handler in (
+            ("events", websocket_events), ("logs", websocket_logs), ("shell", websocket_shell),
+        ):
+            app.add_api_websocket_route(f"/ws/v1/qcli/{name}", handler)
+            app.add_api_websocket_route(f"/ws/qcli/{name}", handler)
 
     result = CliServerResult(
         app=app,

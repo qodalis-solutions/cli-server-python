@@ -9,7 +9,7 @@ from __future__ import annotations
 __plugin_icon__ = "👥"
 
 from .cli_users_builder import CliUsersBuilder, CliUsersPlugin
-from .errors import UsersApiError
+from .errors import QcliGuardError, UsersApiError
 from .models import (
     ApiToken,
     AuditEntry,
@@ -18,13 +18,16 @@ from .models import (
     ExternalAuthAdapter,
     ExternalAuthResult,
     Group,
+    QcliCaller,
     Session,
     SessionMetadata,
+    TokenUsageProvider,
     User,
 )
 from .permissions import has_permission, merge_permissions, permission_matches
 from .services.auth_service import (
     DEFAULT_SESSION_TIMEOUT_MS,
+    HOST_TOKEN_REQUIRED,
     AuthContext,
     AuthService,
     AuthServiceOptions,
@@ -64,6 +67,7 @@ __all__ = [
     "CliUsersBuilder",
     "CliUsersPlugin",
     "CreatedApiToken",
+    "HOST_TOKEN_REQUIRED",
     "Credentials",
     "ExternalAuthAdapter",
     "ExternalAuthResult",
@@ -80,9 +84,12 @@ __all__ = [
     "InMemoryGroupStore",
     "InMemorySessionStore",
     "InMemoryUserStore",
+    "QcliCaller",
+    "QcliGuardError",
     "Session",
     "ServerProtectionMiddleware",
     "SessionMetadata",
+    "TokenUsageProvider",
     "User",
     "UsersApiError",
     "UsersService",
