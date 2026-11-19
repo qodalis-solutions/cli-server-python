@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -443,3 +443,152 @@ class TestProtectedServerRoutes:
         assert "/qcli/admin" in prefixes and "/plugins/reports" in prefixes
         # Without a bearer the dashboard's static files stay public.
         assert srv.request("GET", "/qcli/admin/", None).status_code != 403
+
+
+# =========================================================================
+# Fix round 2: the admin API's own guard, colliding registrations, bearer
+# look-ups without side effects, unguarded host routes
+# =========================================================================
+
+
+def _with_admin(builder: CliUsersBuilder) -> tuple[Any, Any]:
+    from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder
+
+    result, users = _make(builder)
+    admin = CliAdminBuilder().set_users_plugin(users).build(AdminBuildDeps(
+        registry=result.registry,
+        event_socket_manager=result.event_socket_manager,
+        builder=result.builder,
+    ))
+    result.mount_plugin(admin)
+    return result, users
+
+
+class TestAdminGuard:
+    @pytest.mark.parametrize("builder", [
+        lambda: CliUsersBuilder().set_protect_server(False),
+        lambda: CliUsersBuilder().set_protect_server(False).set_auth_adapter(lambda req: None).set_allow_api_tokens(),
+    ])
+    def test_admin_api_refuses_host_tokens_without_server_protection(self, builder):
+        result, users = _with_admin(builder())
+        with TestClient(result.app) as client:
+            srv = Srv(client, users, result)
+            # admin:access is a cli permission, so the user holds it through a group.
+            alice = srv.alice(["rates:read", "admin:access"])
+            token = srv.token(alice)["token"]
+            for path in (BASE + "/status", BASE + "/config", BASE + "/plugins/installed"):
+                res = srv.request("GET", path, token)
+                assert res.status_code == 403, (path, res.text)
+                assert res.json() == {"detail": HOST_TEXT}, path
+
+    def test_admin_api_still_accepts_cli_tokens(self):
+        result, users = _with_admin(CliUsersBuilder().set_protect_server(False))
+        with TestClient(result.app) as client:
+            srv = Srv(client, users, result)
+            token = srv.token(srv.alice(["admin:access"]), audience="cli")["token"]
+            assert srv.request("GET", BASE + "/status", token).status_code == 200
+
+    def test_admin_guard_against_a_users_plugin_without_cli_auth(self):
+        """A users plugin released before host tokens has no ``require_cli_auth``
+        and contexts without ``is_host_token``: the admin guard still works."""
+        from types import SimpleNamespace
+
+        from qodalis_cli_admin.auth.auth_middleware import create_users_auth_dependency
+
+        ctx = SimpleNamespace(must_change_password=False, can=lambda p: True,
+                              user=SimpleNamespace(name="old"), session=None)
+
+        async def authenticate_token(_token):
+            return ctx
+
+        old = SimpleNamespace(
+            auth_service=SimpleNamespace(external_auth=False, authenticate_token=authenticate_token),
+            ensure_seeded=lambda: _noop(),
+        )
+        dependency = create_users_auth_dependency(old)
+        request = SimpleNamespace(headers={"Authorization": "Bearer x"})
+        import asyncio
+
+        assert asyncio.run(dependency(request))["username"] == "old"
+
+
+async def _noop() -> None:
+    return None
+
+
+def test_plugins_checked_for_their_own_auth_without_protection():
+    """With protection off: the audit API is guarded by the users plugin's CLI
+    variant (refuses host tokens); jobs, data explorer, filesystem and the
+    logs socket have no auth of their own (open, as every CLI route then);
+    MCP checks its own ``mcp.token`` only, never a users token."""
+    result, users = _make(CliUsersBuilder().set_protect_server(False))
+    with TestClient(result.app) as client:
+        srv = Srv(client, users, result)
+        token = srv.token(srv.alice(["rates:read", "audit:read"]))["token"]
+        res = srv.request("GET", BASE + "/audit", token)
+        assert res.status_code == 403 and res.json() == {"error": HOST_TEXT}
+
+
+def test_colliding_users_permission_fails_mount():
+    result = create_cli_server(CliServerOptions(configure=lambda b: b.add_permissions(
+        [{"name": "users:read", "description": "Read our users", "group": "Ours"}],
+    )))
+    users = CliUsersBuilder().set_default_admin_password(ROOT_PASS).build()
+    with pytest.raises(ValueError, match="permission already registered: users:read"):
+        result.mount_plugin(users)
+
+
+def test_colliding_cli_registration_fails_mount():
+    result = create_cli_server(CliServerOptions(configure=lambda b: b.add_permissions(
+        [{"name": "users:read", "description": "See users and their permissions", "group": "Users"}], surface="cli",
+    )))
+    users = CliUsersBuilder().set_default_admin_password(ROOT_PASS).build()
+    # Same text and surface as the plugin's own entry: taken as a remount.
+    result.mount_plugin(users)
+    names = [p.name for p in result.builder.permissions.all()]
+    assert names.count("users:read") == 1 and "groups:read" not in names
+
+
+def test_remount_with_another_users_plugin_is_skipped():
+    result = create_cli_server()
+    result.mount_plugin(CliUsersBuilder().set_default_admin_password(ROOT_PASS).build())
+    second = CliUsersBuilder().set_default_admin_password(ROOT_PASS).build()
+    second.on_mount(result)
+    assert [p.name for p in result.builder.permissions.all()].count("users:read") == 1
+
+
+class TestBearerLookupHasNoSideEffects:
+    @pytest.fixture()
+    def admin_srv(self):
+        result, users = _with_admin(CliUsersBuilder())
+        with TestClient(result.app) as client:
+            yield Srv(client, users, result)
+
+    def _last_used(self, srv: Srv, token_id: str):
+        return srv.call(srv.users.api_token_store.get_token, token_id).last_used_at
+
+    @pytest.mark.parametrize("audience", ["host", "cli"])
+    def test_last_used_unchanged(self, admin_srv: Srv, audience: str):
+        created = admin_srv.token(admin_srv.alice(), audience=audience)
+        token, token_id = created["token"], created["apiToken"]["id"]
+        admin_srv.request("GET", "/qcli/admin/", token)
+        with pytest.raises(WebSocketDisconnect):
+            with admin_srv.c.websocket_connect("/ws/qcli/events", headers=_h(token)) as ws:
+                ws.receive_text()
+        assert self._last_used(admin_srv, token_id) is None
+
+
+def test_unguarded_host_route_sees_the_host_token(srv: Srv):
+    """A host route under /api/ without a guard: the middleware authenticated
+    the token and the route can tell it is a host token."""
+    from qodalis_cli.security import get_auth_context
+
+    @srv.result.app.get("/api/open")
+    async def open_route(request: Request):
+        ctx = get_auth_context(request)
+        return {"user": ctx.user.name, "host": ctx.is_host_token}
+
+    token = srv.token(srv.alice())["token"]
+    res = srv.request("GET", "/api/open", token)
+    assert res.status_code == 200, res.text
+    assert res.json() == {"user": "alice", "host": True}

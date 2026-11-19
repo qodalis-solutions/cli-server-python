@@ -9,10 +9,14 @@ from fastapi import Request, HTTPException
 
 from .jwt_service import JwtService
 
+#: The users plugin's refusal of ``host`` API tokens (same text).
+HOST_TOKENS_CANNOT_USE_CLI_ROUTES = "forbidden: host tokens cannot use CLI routes"
+
 
 def create_users_auth_dependency(users_plugin: Any):
     """Admin auth through the users plugin: a valid users session holding
-    ``admin:access`` (admin ``*`` has it)."""
+    ``admin:access`` (admin ``*`` has it).  ``host`` API tokens are refused
+    (403), also when the users plugin does not protect the server."""
 
     async def require_auth(request: Request) -> dict[str, Any]:
         auth_service = users_plugin.auth_service
@@ -20,13 +24,18 @@ def create_users_auth_dependency(users_plugin: Any):
             # The host application signs users in: its external auth adapter
             # authenticates the request (e.g. the bearer token handed to the
             # dashboard through /qcli/admin/#token=…).
-            ctx = await users_plugin.require_auth(request)
+            # The users plugin's CLI variant refuses host tokens itself; a
+            # users plugin released before host tokens has only require_auth.
+            authenticate = getattr(users_plugin, "require_cli_auth", None) or users_plugin.require_auth
+            ctx = await authenticate(request)
         else:
             auth_header = request.headers.get("Authorization", "")
             if not auth_header.startswith("Bearer "):
                 raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
             await users_plugin.ensure_seeded()
             ctx = await auth_service.authenticate_token(auth_header[7:].strip())
+        if getattr(ctx, "is_host_token", False):
+            raise HTTPException(status_code=403, detail=HOST_TOKENS_CANNOT_USE_CLI_ROUTES)
         if ctx.must_change_password:
             raise HTTPException(status_code=403, detail="password change required")
         if not ctx.can("admin:access"):
