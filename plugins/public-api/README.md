@@ -116,7 +116,11 @@ Hand the document over with `set_openapi(source)`:
 | `dict` | used as given; it must have `openapi`, `info` and `paths` (`ValueError("public-api: invalid OpenAPI document")` otherwise) |
 | zero-argument callable | called per request, its `dict` used as given |
 
-Keep the public routes on their own router (or app) and include it in the server's app:
+With `set_openapi(app)` **every route of that app** appears in the public document, so never hand over the server's
+own app (it holds the CLI's routes). Keep the public routes on a dedicated router (or app, or a schema) and include it
+in the server's app. A router is read with its own paths: one included with a prefix
+(`app.include_router(public, prefix="/v1")`) must be built with that prefix (`APIRouter(prefix="/v1")`), or its paths
+lose it in the document.
 
 ```python
 public = APIRouter()
@@ -139,7 +143,12 @@ The plugin adds, unless the document has its own (the host's values always win):
   `users.require_permission(...)`).
 
 The host's own `x-codeSamples` are passed through untouched; the portal generates the other code samples.
-`set_swagger_assets(js_url, css_url)` replaces the Swagger UI assets (FastAPI's default CDN URLs otherwise).
+Swagger UI is served from files vendored in this package: **swagger-ui-dist 5.35.1** (Apache-2.0; its `LICENSE`,
+`NOTICE` and the bundle's licence notes are in `qodalis_cli_public_api/swagger_ui/`), at `<base>/swagger/swagger-ui-bundle.js`,
+`<base>/swagger/swagger-ui.css` and `<base>/swagger/favicon-32x32.png`. Only these three files are served; anything else
+under `<base>/swagger/` is 404 `{"error": "not found"}`. The page loads nothing from another origin, and every URL in
+it is escaped. `set_swagger_assets(js_url, css_url)` points the page at copies the host serves itself (root-relative
+paths only; anything else raises `ValueError("public-api: Swagger UI assets must be root-relative paths")`).
 
 Stacked guards (a router's `dependencies=[Depends(public_api.guard())]` and a route's
 `Depends(public_api.guard("rates:read"))`) count the request once; the later ones only check their own permission.
@@ -181,7 +190,7 @@ two minutes; the guard prunes at most once an hour.
 | `set_version(version)` | `1.0.0` | `info.version` of a router or app document |
 | `set_openapi(source)` | an empty document | the public document |
 | `set_server_url(url)` | the request's URL | the document's `servers` |
-| `set_swagger_assets(js_url, css_url)` | FastAPI's CDN URLs | Swagger UI assets |
+| `set_swagger_assets(js_url, css_url)` | the vendored files | Swagger UI assets (root-relative paths) |
 | `set_clock(now)` | UTC now | tests |
 
 The plugin's `portal_section` (`{"kind": "api", "title", "base_path"}`) is what the portal plugin shows.

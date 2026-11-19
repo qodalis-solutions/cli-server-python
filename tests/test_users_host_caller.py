@@ -180,3 +180,70 @@ def test_app_docs_default_on():
     with TestClient(result.app) as client:
         for path in ("/docs", "/redoc", "/openapi.json"):
             assert client.get(path).status_code == 200, path
+
+
+class _StateRecorder:
+    """Records whether a request ended with ``request.state.qcli_caller``."""
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+        self.seen: list[bool] = []
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        state = scope.setdefault("state", {})
+        await self.app(scope, receive, send)
+        self.seen.append("qcli_caller" in state)
+
+
+def test_refused_requests_leave_no_caller():
+    result, users = _make()
+    _caller_routes(result, users)
+    recorder: list[_StateRecorder] = []
+
+    def factory(app: Any) -> _StateRecorder:
+        recorder.append(_StateRecorder(app))
+        return recorder[0]
+
+    result.app.add_middleware(factory)
+    with TestClient(result.app) as client:
+        srv = Srv(client, users, result)
+        alice = srv.alice()
+        cli = srv.token(alice, audience="cli", permissions=["files:read"], name="cli")["token"]
+        host = srv.token(alice, name="host")["token"]
+        session = srv.login("alice", "pass1234")
+        refused = [
+            ("/host/caller", None, 401),          # require_permission, no token
+            ("/host/caller", cli, 403),           # require_permission, missing permission
+            ("/host/auth", "garbage", 401),       # require_auth
+            ("/host/only", session, 403),         # require_host_token, audience
+            ("/host/only", cli, 403),
+        ]
+        for path, token, status in refused:
+            recorder[0].seen.clear()
+            assert _get(srv, path, token).status_code == status, path
+            assert recorder[0].seen == [False], (path, token)
+        srv.call(lambda: srv.users.group_store.update_group("alice-g", permissions=["files:read"]))
+        recorder[0].seen.clear()
+        assert _get(srv, "/host/only", host).status_code == 403      # require_host_token, permission
+        assert recorder[0].seen == [False]
+
+        async def must_change() -> None:
+            await srv.users.user_store.update_user(alice.id, must_change_password=True)
+
+        srv.call(must_change)
+        recorder[0].seen.clear()
+        assert _get(srv, "/host/auth", session).status_code == 403   # require_auth, password change
+        assert recorder[0].seen == [False]
+
+
+def test_admitted_requests_have_the_caller():
+    result, users = _make()
+    _caller_routes(result, users)
+    with TestClient(result.app) as client:
+        srv = Srv(client, users, result)
+        host = srv.token(srv.alice())["token"]
+        for path in ("/host/caller", "/host/auth", "/host/only"):
+            assert _get(srv, path, host).status_code == 200, path

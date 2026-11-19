@@ -196,6 +196,12 @@ def test_x_code_samples_pass_through():
         assert _doc(client)["paths"]["/v1/ping"]["get"]["x-codeSamples"] == samples
 
 
+def _urls(html: str) -> list[str]:
+    import re
+
+    return re.findall(r'(?:src|href)="([^"]*)"', html) + re.findall(r'"url": "([^"]*)"', html)
+
+
 def test_swagger_serves_ui():
     with _host() as (client, _, _):
         for path in ("/qcli/api/swagger", "/qcli/api/swagger/"):
@@ -203,18 +209,59 @@ def test_swagger_serves_ui():
             assert res.status_code == 200, path
             assert res.headers["content-type"].startswith("text/html")
             html = res.text
-            assert "'/qcli/api/openapi.json'" in html
+            assert '"url": "/qcli/api/openapi.json"' in html
             assert html.count("openapi.json") == 1
             assert '"persistAuthorization": false' in html
             assert '"tryItOutEnabled": true' in html
             assert "<title>API</title>" in html
-            assert "swagger-ui-bundle.js" in html
+            assert "/qcli/api/swagger/swagger-ui-bundle.js" in html
+            assert "/qcli/api/swagger/swagger-ui.css" in html
 
 
-def test_swagger_assets_override():
+def test_swagger_page_loads_nothing_from_another_origin():
+    with _host() as (client, _, _):
+        html = client.get("/qcli/api/swagger").text
+        urls = _urls(html)
+        assert len(urls) >= 4
+        assert all(u.startswith("/") and not u.startswith("//") for u in urls), urls
+        assert "http://" not in html and "https://" not in html and "cdn" not in html.lower()
+
+
+def test_swagger_assets_are_served_from_an_allow_list():
+    with _host() as (client, _, _):
+        for name, kind in (
+            ("swagger-ui-bundle.js", "javascript"), ("swagger-ui.css", "text/css"), ("favicon-32x32.png", "image/png"),
+        ):
+            res = client.get(f"/qcli/api/swagger/{name}")
+            assert res.status_code == 200, name
+            assert kind in res.headers["content-type"]
+            assert len(res.content) > 100
+            assert client.head(f"/qcli/api/swagger/{name}").status_code == 200
+        for name in (
+            "swagger-ui-bundle.js.map", "LICENSE", "index.html", "..%2Fopenapi.json", "a/b.js",
+            "swagger-ui-es-bundle.js", "%2E%2E%2F__init__.py",
+        ):
+            res = client.get(f"/qcli/api/swagger/{name}")
+            assert (res.status_code, res.json()) == (404, {"error": "not found"}), name
+
+
+def test_swagger_assets_override_must_be_root_relative():
     with _host(lambda b: b.set_swagger_assets("/static/sw.js", "/static/sw.css")) as (client, _, _):
         html = client.get("/qcli/api/swagger").text
         assert "/static/sw.js" in html and "/static/sw.css" in html
+    for js, css in (("https://cdn.example/sw.js", "/sw.css"), ("/sw.js", "//cdn.example/sw.css"), ("/a\"b", "/c")):
+        with pytest.raises(ValueError, match="^public-api: Swagger UI assets must be root-relative paths$"):
+            CliPublicApiBuilder().set_swagger_assets(js, css)
+
+
+def test_root_path_cannot_inject():
+    result, users = _make_users()
+    result.mount_plugin(CliPublicApiBuilder().set_users(users).build())
+    root = '/a"b<c>\'x'
+    with TestClient(result.app, root_path=root) as client:
+        html = client.get("/qcli/api/swagger").text
+        assert '"b<c' not in html and "<c>" not in html
+        assert "&quot;b&lt;c&gt;" in html or "\\u003c" in html
 
 
 def test_other_paths_under_the_base_are_not_handled():
@@ -271,13 +318,19 @@ def test_invalid_source():
 
 def test_root_path():
     result, users = _make_users()
-    api = CliPublicApiBuilder().set_users(users).set_swagger_assets("/static/sw.js", "https://cdn.example/sw.css").build()
+    api = CliPublicApiBuilder().set_users(users).set_swagger_assets("/static/sw.js", "/static/sw.css").build()
     result.mount_plugin(api)
     with TestClient(result.app, root_path="/svc") as client:
         html = client.get("/qcli/api/swagger").text
-        assert "'/svc/qcli/api/openapi.json'" in html
-        assert "/svc/static/sw.js" in html and "https://cdn.example/sw.css" in html
+        assert '"url": "/svc/qcli/api/openapi.json"' in html
+        assert "/svc/static/sw.js" in html and "/svc/static/sw.css" in html
         assert client.get("/qcli/api/openapi.json").json()["servers"] == [{"url": "http://testserver/svc"}]
+    result2, users2 = _make_users()
+    result2.mount_plugin(CliPublicApiBuilder().set_users(users2).build())
+    with TestClient(result2.app, root_path="/svc") as client:
+        html = client.get("/qcli/api/swagger").text
+        assert "/svc/qcli/api/swagger/swagger-ui-bundle.js" in html
+        assert client.get("/qcli/api/swagger/swagger-ui.css").status_code == 200
 
 
 @pytest.mark.parametrize("root", ["//evil.example", "/\\evil.example"])

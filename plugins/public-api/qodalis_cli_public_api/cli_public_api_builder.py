@@ -19,18 +19,19 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
+import os
 import weakref
-import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
+import anyio
 from fastapi import APIRouter, Request
-from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from qodalis_cli_users import QcliCaller, QcliGuardError
 from qodalis_cli_users.errors import install_guard_error_handler
@@ -38,6 +39,9 @@ from qodalis_cli_users.middleware.auth_middleware import authenticate_host_token
 
 from .headers_middleware import STATE_KEY, RateLimitHeadersMiddleware
 from .openapi import PublicOpenApiDocument, check_source
+from .swagger_ui import ASSETS as SWAGGER_ASSETS
+from .swagger_ui import ASSETS_DIR as SWAGGER_ASSETS_DIR
+from .swagger_ui import is_root_relative, swagger_html
 from .quota import PublicApiQuota, QuotaResolver
 from .usage_service import (
     PublicApiUsageService,
@@ -62,10 +66,8 @@ NO_API_ACCESS = "forbidden: no API access"
 USERS_REQUIRED = "public-api: set_users(users_plugin) is required"
 #: ``request.state`` flag: the request was admitted (counted) by a guard.
 COUNTED_KEY = "qcli_public_api_counted"
-#: FastAPI's default Swagger UI 5 assets (``set_swagger_assets`` overrides them).
-SWAGGER_JS_URL = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"
-SWAGGER_CSS_URL = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"
-SWAGGER_PARAMETERS = {"persistAuthorization": False, "tryItOutEnabled": True}
+SWAGGER_ASSETS_TEXT = "public-api: Swagger UI assets must be root-relative paths"
+NOT_FOUND = "not found"
 
 
 def validate_base_path(path: Any, label: str) -> str:
@@ -97,6 +99,13 @@ def path_base(request: Request) -> str | None:
 
 def invalid_path_base() -> Response:
     return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400)
+
+
+def _drop_caller(request: Request) -> None:
+    """A later stacked guard refused: the request has no caller."""
+    state = request.scope.get("state")
+    if isinstance(state, dict):
+        state.pop("qcli_caller", None)
 
 
 def _stacked_permissions(request: Request) -> list[str]:
@@ -170,9 +179,11 @@ class CliPublicApiPlugin:
         access`` (a limit of 0), 429 per day, then per minute.  Nothing is
         counted for a refused request."""
         users = self.users
+        # The caller is exposed only once the guard fully passed.
+        authenticate = getattr(users, "authenticate", None) or users.require_auth
 
         async def dependency(request: Request) -> QcliCaller:
-            ctx = await authenticate_host_token(users.require_auth, request)
+            ctx = await authenticate_host_token(authenticate, request)
             # Stacked guards (a router's and a route's): the first one checks
             # every stacked guard's permission, then counts the request once;
             # the others check only their own permission.
@@ -182,15 +193,16 @@ class CliPublicApiPlugin:
                 if needed and not ctx.can(needed):
                     if counted:
                         setattr(request.state, STATE_KEY, None)
+                        _drop_caller(request)
                     raise QcliGuardError(403, f"forbidden: missing permission {needed}")
             caller = ctx.caller
-            request.state.qcli_caller = caller
             if counted:
                 return caller
             headers = await self._admit(caller)
             setattr(request.state, COUNTED_KEY, True)
             if headers:
                 setattr(request.state, STATE_KEY, headers)
+            request.state.qcli_caller = caller
             return caller
 
         dependency.qcli_public_api = True
@@ -241,17 +253,20 @@ class CliPublicApiPlugin:
                     while incremented:
                         await store.decrement(token_id, incremented[-1])
                         incremented.pop()
-        except asyncio.CancelledError:
+            # Inside the handling below: a cancellation while pruning takes
+            # the counts back too.
+            await self._maybe_prune(now)
+        except anyio.get_cancelled_exc_class():
             # The request was cancelled (the client went away): not counted.
-            await self._take_back(token_id, incremented)
+            # Shielded, so the take-back's own awaits are not cancelled.
+            with anyio.CancelScope(shield=True):
+                await self._take_back(token_id, incremented)
             raise
         except Exception:
             logger.exception("public-api: the usage store failed")
             # The request is not served: take back what was counted (best effort).
             await self._take_back(token_id, incremented)
             raise QcliGuardError(500, INTERNAL_ERROR) from None
-
-        await self._maybe_prune(now)
 
         headers: dict[str, str] = {}
         if per_day is not None:
@@ -319,8 +334,9 @@ class CliPublicApiBuilder:
         self._retention_days = DEFAULT_RETENTION_DAYS
         self._clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
         self._version: str | None = None
-        self._swagger_js_url = SWAGGER_JS_URL
-        self._swagger_css_url = SWAGGER_CSS_URL
+        #: ``None``: the vendored files under ``<base>/swagger/``.
+        self._swagger_js_url: str | None = None
+        self._swagger_css_url: str | None = None
 
     def set_users(self, users_plugin: Any) -> CliPublicApiBuilder:
         """The users plugin whose tokens the guard accepts (required)."""
@@ -348,8 +364,12 @@ class CliPublicApiBuilder:
         return self
 
     def set_swagger_assets(self, js_url: str, css_url: str) -> CliPublicApiBuilder:
-        """Swagger UI's script and stylesheet (default: FastAPI's CDN URLs of
-        ``swagger-ui-dist@5``), e.g. to serve them yourself."""
+        """Swagger UI's script and stylesheet, served by the host itself
+        (default: the copies vendored in this package, under
+        ``<base>/swagger/``).  Root-relative paths only: the page never loads
+        anything from another origin."""
+        if not (is_root_relative(js_url) and is_root_relative(css_url)):
+            raise ValueError(SWAGGER_ASSETS_TEXT)
         self._swagger_js_url = js_url
         self._swagger_css_url = css_url
         return self
@@ -426,7 +446,9 @@ class CliPublicApiBuilder:
         )
         holder["plugin"] = plugin
         plugin.router = self._router(plugin)
-        plugin.public_paths = [f"{base_path}/openapi.json", f"{base_path}/swagger", f"{base_path}/swagger/"]
+        plugin.public_paths = [
+            f"{base_path}/openapi.json", f"{base_path}/swagger", f"{base_path}/swagger/", f"{base_path}/swagger/*",
+        ]
         return plugin
 
     def _router(self, plugin: CliPublicApiPlugin) -> APIRouter:
@@ -454,15 +476,30 @@ class CliPublicApiBuilder:
             if root is None:
                 return invalid_path_base()
             title = document.title_of(document.build(base_url(request)))
-            return get_swagger_ui_html(
-                openapi_url=f"{root}{plugin.prefix}/openapi.json",
+            own = f"{root}{plugin.prefix}/swagger/"
+            # Every URL is same-origin and escaped in the page (the root path
+            # comes from the server's configuration, but is never trusted).
+            return HTMLResponse(swagger_html(
                 title=title,
-                # Root-relative assets (served by the host) follow the root path.
-                swagger_js_url=root + js_url if js_url.startswith("/") else js_url,
-                swagger_css_url=root + css_url if css_url.startswith("/") else css_url,
-                swagger_ui_parameters=dict(SWAGGER_PARAMETERS),
+                openapi_url=f"{root}{plugin.prefix}/openapi.json",
+                js_url=root + js_url if js_url else own + "swagger-ui-bundle.js",
+                css_url=root + css_url if css_url else own + "swagger-ui.css",
+                favicon_url=own + "favicon-32x32.png",
+            ))
+
+        async def swagger_asset(name: str) -> Response:
+            # A fixed allow-list: nothing else of the package is reachable.
+            media_type = SWAGGER_ASSETS.get(name)
+            if media_type is None:
+                return JSONResponse({"error": NOT_FOUND}, status_code=404)
+            return FileResponse(
+                os.path.join(SWAGGER_ASSETS_DIR, name), media_type=media_type,
+                headers={"Cache-Control": "public, max-age=86400"},
             )
 
-        router.add_api_route("/swagger", swagger, methods=["GET", "HEAD"], include_in_schema=False)
-        router.add_api_route("/swagger/", swagger, methods=["GET", "HEAD"], include_in_schema=False)
+        methods = ["GET", "HEAD"]
+        router.add_api_route("/swagger", swagger, methods=methods, include_in_schema=False)
+        router.add_api_route("/swagger/", swagger, methods=methods, include_in_schema=False)
+        # ``path`` so a name with an encoded "/" still gets this 404.
+        router.add_api_route("/swagger/{name:path}", swagger_asset, methods=methods, include_in_schema=False)
         return router

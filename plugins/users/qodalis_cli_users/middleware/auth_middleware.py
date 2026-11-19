@@ -151,13 +151,22 @@ def create_auth_dependencies(
             return ctx
         return await authenticate_request(auth_service, request)
 
-    async def get_auth(request: Request) -> AuthContext:
+    async def authenticate(request: Request) -> AuthContext:
+        """``get_auth`` without exposing the caller: the guards built on it
+        set ``request.state.qcli_caller`` only once they fully passed."""
         ctx = await get_auth_pending(request)
         auth_service.ensure_password_changed(ctx)
+        return ctx
+
+    async def get_auth(request: Request) -> AuthContext:
+        ctx = await authenticate(request)
         set_caller(request, ctx)
         return ctx
 
     tag_guard(get_auth, None, False)
+    #: For guards built on it (``require_permission``, ``require_host_token``,
+    #: the public-api guard).
+    get_auth.authenticate = authenticate  # type: ignore[attr-defined]
 
     async def get_cli_auth(request: Request) -> AuthContext:
         ctx = await get_auth_pending(request)
@@ -168,7 +177,7 @@ def create_auth_dependencies(
         return ctx
 
     def require_permission(permission: str) -> Callable[..., Awaitable[AuthContext]]:
-        return permission_dependency(get_auth, permission)
+        return permission_dependency(authenticate, permission)
 
     return get_auth, require_permission, get_auth_pending, get_cli_auth
 

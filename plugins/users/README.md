@@ -75,7 +75,7 @@ async def handler(ctx = Depends(users_plugin.require_permission("deploy:run"))):
 
 `users_plugin.require_auth` only requires an authenticated session.
 
-The guards make the caller available to the handler as `request.state.qcli_caller`, a frozen `QcliCaller(user_id,
+Once a guard has fully passed (authentication, audience, permission), it makes the caller available to the handler as `request.state.qcli_caller` (a refused request has none), a frozen `QcliCaller(user_id,
 user_name, token_id, audience, permissions)` (`token_id` / `audience` are `None` for a session or an adapter user;
 `audience` is `cli` or `host` for a token; `permissions` are the live, scope-narrowed ones; `to_dict()` gives the
 camelCase JSON). The returned `AuthContext` has it too (`ctx.caller`).

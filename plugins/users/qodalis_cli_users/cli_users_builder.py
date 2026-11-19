@@ -138,6 +138,9 @@ class CliUsersPlugin:
     #: ``host`` API tokens (403 ``forbidden: a host token is required``),
     #: then checking the permission when given.
     require_host_token: Any = None
+    #: ``require_auth`` without setting ``request.state.qcli_caller``: for
+    #: guards that set it themselves once they fully passed (public-api).
+    authenticate: Any = None
     #: Guard-only mode (``set_guard_only()``): no routes, no seeding, no
     #: server protection; the guards validate tokens of shared stores.
     guard_only: bool = False
@@ -716,9 +719,10 @@ class CliUsersBuilder:
         plugin.require_auth = get_auth
         plugin.require_permission = require_permission
         plugin.require_cli_auth = get_cli_auth
+        plugin.authenticate = get_auth.authenticate
 
         def require_host_token(permission: str | None = None) -> Any:
-            return host_token_dependency(get_auth, permission)
+            return host_token_dependency(get_auth.authenticate, permission)
 
         plugin.require_host_token = require_host_token
         if self._guard_only:

@@ -248,7 +248,7 @@ def _router(plugin: CliPortalPlugin, site_dir: str) -> APIRouter:
     owns_prefixes = plugin.prefix != "/"
 
     async def not_found() -> Response:
-        return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return JSONResponse({"error": "not found"}, status_code=404)
 
     async def asset(file: str) -> Response:
         if not asset_exists({"file": file}):

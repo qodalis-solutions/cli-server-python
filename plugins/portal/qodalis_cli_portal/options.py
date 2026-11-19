@@ -38,8 +38,9 @@ _COLOR_PATTERNS = (
 _SNAKE_TO_TOKEN = {re.sub(r"[A-Z]", lambda m: "_" + m.group(0).lower(), t): t for t in THEME_TOKENS}
 
 
-_CLI_PATH = re.compile(r"^/(api|ws)/(v\d+/)?(qcli|cli)(/|$)")
-_CLI_PARENT = re.compile(r"^/(api|ws)(/v\d+)?$")
+# Case-insensitive: a mount must not hold CLI routes in any spelling.
+_CLI_PATH = re.compile(r"^/(api|ws)/(v\d+/)?(qcli|cli)(/|$)", re.IGNORECASE)
+_CLI_PARENT = re.compile(r"^/(api|ws)(/v\d+)?$", re.IGNORECASE)
 
 
 def _holds_cli_routes(path: str) -> bool:
