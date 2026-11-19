@@ -30,6 +30,7 @@ jobs:
           pip install -e plugins/users/
           pip install -e plugins/admin/
           pip install -e plugins/public-api/
+          pip install -e plugins/docs/
           pip install -e plugins/aws/
           pip install -e ".[test]"
 
