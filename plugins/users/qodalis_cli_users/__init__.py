@@ -29,6 +29,11 @@ from .services.auth_service import (
     AuthService,
     AuthServiceOptions,
 )
+from .services.api_token_manager import (
+    ApiTokenCreateOptions,
+    ApiTokenManager,
+    CreatedApiToken,
+)
 from .services.users_service import UsersService
 from .server_protection import ServerProtectionMiddleware
 from .shell_access import UsersShellAccess
@@ -49,6 +54,8 @@ from .stores.interfaces import (
 
 __all__ = [
     "ApiToken",
+    "ApiTokenCreateOptions",
+    "ApiTokenManager",
     "AuditEntry",
     "AuditQueryOptions",
     "AuthContext",
@@ -56,6 +63,7 @@ __all__ = [
     "AuthServiceOptions",
     "CliUsersBuilder",
     "CliUsersPlugin",
+    "CreatedApiToken",
     "Credentials",
     "ExternalAuthAdapter",
     "ExternalAuthResult",

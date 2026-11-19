@@ -74,7 +74,7 @@ class TestParallelApprovals:
 
         calls: list[str] = []
 
-        async def slow_create(_auth, _ctx, name, _perms, expires_at):
+        async def slow_create(_auth, _owner, _actor, name, _perms, expires_at):
             calls.append(name)
             await asyncio.sleep(0.01)
             return "qcli_pat_x", SimpleNamespace(id=f"t{len(calls)}", name=name, expires_at=expires_at)
@@ -85,7 +85,7 @@ class TestParallelApprovals:
         monkeypatch.setattr(tokens_controller, "create_api_token", slow_create)
         links = LinkService(SimpleNamespace(audit=audit), "/qcli/admin/link")  # type: ignore[arg-type]
         created = links.create({"client": "term"})
-        ctx = SimpleNamespace(api_token=None, session=object(), external=False,
+        ctx = SimpleNamespace(api_token=None, session=object(), external=False, permissions=["*"],
                               user=SimpleNamespace(name="root", id="u1"))
         results = await asyncio.gather(
             links.approve(ctx, created["userCode"]),  # type: ignore[arg-type]
@@ -107,7 +107,8 @@ class TestParallelApprovals:
         monkeypatch.setattr(tokens_controller, "create_api_token", failing_create)
         links = LinkService(None, "/qcli/admin/link")  # type: ignore[arg-type]
         created = links.create({"client": "term"})
-        ctx = SimpleNamespace(api_token=None, session=object(), external=False)
+        ctx = SimpleNamespace(api_token=None, session=object(), external=False, permissions=["*"],
+                              user=SimpleNamespace(name="root", id="u1"))
         with pytest.raises(UsersApiError):
             await links.approve(ctx, created["userCode"])  # type: ignore[arg-type]
         assert links.view(created["userCode"])["client"] == "term"
@@ -127,20 +128,21 @@ class TestParallelApprovals:
         links = LinkService(SimpleNamespace(audit=audit), "/qcli/admin/link", now=lambda: now[0])  # type: ignore[arg-type]
         revoked: list[str] = []
 
-        async def expiring_create(_auth, _ctx, name, _perms, expires_at):
+        async def expiring_create(_auth, _owner, _actor, name, _perms, expires_at):
             # The request expires while the token is created (swept already, or not yet)
             now[0] += LINK_EXPIRES_IN_SECONDS * 1000
             if swept:
                 links.sweep()
             return "qcli_pat_x", SimpleNamespace(id="t1", name=name, expires_at=expires_at)
 
-        async def revoke(_auth, _ctx, record):
+        async def revoke(_auth, _actor, record):
             revoked.append(record.id)
 
         monkeypatch.setattr(tokens_controller, "create_api_token", expiring_create)
         monkeypatch.setattr(tokens_controller, "revoke_api_token", revoke)
         created = links.create({"client": "term"})
-        ctx = SimpleNamespace(api_token=None, session=object(), external=False, user=SimpleNamespace(id="u1", name="root"))
+        ctx = SimpleNamespace(api_token=None, session=object(), external=False, permissions=["*"],
+                              user=SimpleNamespace(id="u1", name="root"))
         with pytest.raises(UsersApiError) as exc:
             await links.approve(ctx, created["userCode"])  # type: ignore[arg-type]
         assert exc.value.status_code == 404 and exc.value.message == "link request not found or expired"
