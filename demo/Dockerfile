@@ -14,9 +14,12 @@ RUN cd plugins/admin && npm init -y && npm install @qodalis/cli-server-dashboard
     && python3 scripts/copy_dashboard.py \
     && rm -rf node_modules package.json package-lock.json
 
-# Copy the portal site into the portal plugin (skipped until the package is published)
-RUN cd plugins/portal && (npm install && python3 scripts/copy_portal.py || true) \
-    && rm -rf node_modules package-lock.json
+# Portal site: TEMPORARY SKIP while @qodalis/cli-server-portal is not published
+# on npm. Once it is, embed the site and build the portal wheel instead of the
+# editable install below:
+#   RUN cd plugins/portal && npm install && python3 scripts/copy_portal.py \
+#       && rm -rf node_modules package-lock.json
+#   RUN pip install --no-cache-dir ./plugins/portal
 
 RUN pip install --no-cache-dir ./plugins/filesystem \
     && pip install --no-cache-dir ./plugins/filesystem-json \
@@ -36,8 +39,12 @@ RUN pip install --no-cache-dir ./plugins/filesystem \
     && pip install --no-cache-dir ./plugins/data-explorer-elasticsearch \
     && pip install --no-cache-dir ./plugins/admin \
     && pip install --no-cache-dir ./plugins/public-api \
-    && pip install --no-cache-dir ./plugins/docs \
-    && (pip install --no-cache-dir ./plugins/portal || pip install --no-cache-dir -e ./plugins/portal)
+    && pip install --no-cache-dir ./plugins/docs
+
+# TEMPORARY (see above): the portal plugin without its site, installed editable
+# (a wheel build refuses without the site). The demo's portal then logs
+# "[qcli] portal site not found; the portal is not served" and serves nothing.
+RUN pip install --no-cache-dir -e ./plugins/portal
 
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/

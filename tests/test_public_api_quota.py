@@ -588,3 +588,86 @@ async def test_cancelled_admission_is_not_counted():
         await task
     assert await store.account_count("u1", TODAY) == 0
     assert await store.account_count("u1", "2026-11-19T23:59") == 0
+
+
+class _CallerRecorder:
+    def __init__(self, app: Any) -> None:
+        self.app = app
+        self.seen: list[bool] = []
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        state = scope.setdefault("state", {}) if scope["type"] == "http" else {}
+        await self.app(scope, receive, send)
+        if scope["type"] == "http":
+            self.seen.append("qcli_caller" in state)
+
+
+def test_refused_requests_leave_no_caller():
+    host = Host(_limit(1))
+    recorder: list[_CallerRecorder] = []
+
+    def factory(app: Any) -> _CallerRecorder:
+        recorder.append(_CallerRecorder(app))
+        return recorder[0]
+
+    host.app.add_middleware(factory)
+    api = host.api
+    router = APIRouter(dependencies=[Depends(api.guard())])
+
+    @router.get("/v2/banks")
+    async def banks(caller=Depends(api.guard("banks:read"))):
+        return {}
+
+    host.app.include_router(router)
+    with TestClient(host.app) as client:
+        srv = Srv(host, client)
+        alice, token, _ = srv.host_token()
+        session = srv.login("alice")
+        for path, bearer, status in (
+            ("/v1/rates", None, 401), ("/v1/rates", session, 403), ("/v2/banks", token, 403),
+        ):
+            assert srv.get(path, bearer).status_code == status
+        assert srv.get("/v1/rates", token).status_code == 200
+        assert srv.get("/v1/rates", token).status_code == 429
+    # login (POST /sessions) is recorded too, before the guarded requests
+    assert recorder[0].seen[-5:] == [False, False, False, True, False]
+
+
+class _ShieldedStore(InMemoryPublicApiUsageStore):
+    """Blocks the minute increment; its decrement awaits (a database)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+
+    async def increment(self, token_id: str, user_id: str, window: str) -> int:
+        if len(window) == 16:
+            self.entered.set()
+            await asyncio.Event().wait()
+        return await super().increment(token_id, user_id, window)
+
+    async def decrement(self, token_id: str, window: str) -> None:
+        import anyio
+
+        await anyio.sleep(0.01)
+        await super().decrement(token_id, window)
+
+
+async def test_take_back_on_cancellation_is_shielded():
+    import anyio
+
+    store = _ShieldedStore()
+    host = Host(_limit(5), store)
+    caller = QcliCaller(user_id="u1", user_name="u", token_id="t1", audience="host", permissions=("rates:read",))
+    async with anyio.create_task_group() as group:
+        async def admit() -> None:
+            with anyio.CancelScope() as scope:
+                holder.append(scope)
+                await host.api._admit(caller)
+
+        holder: list[anyio.CancelScope] = []
+        group.start_soon(admit)
+        await store.entered.wait()
+        holder[0].cancel()   # stays cancelled: unshielded awaits would be cancelled too
+    assert await store.account_count("u1", TODAY) == 0
+    assert host.api._last_prune is None

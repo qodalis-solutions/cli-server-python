@@ -347,7 +347,7 @@ def test_public_routes_under_api_on_a_protected_server(order: str):
             "/api/developers/reference/x/secret", "/api/developers/assets/secret", "/api/developers/guides/a/b",
         ):
             res = client.get(path)
-            assert res.status_code == 404 and "secret" not in res.text, path
+            assert (res.status_code, res.json()) == (404, {"error": "not found"}), path
         # Outside them the server's sign-in applies as before.
         assert client.get("/api/developers/other").status_code == 401
         assert client.post("/api/developers/portal.json").status_code == 401
@@ -356,7 +356,10 @@ def test_public_routes_under_api_on_a_protected_server(order: str):
 
 
 def test_portal_path_holding_cli_routes_is_refused():
-    for path in ("/api", "/ws", "/api/v1", "/api/v2", "/api/qcli", "/api/v1/qcli/portal", "/ws/qcli/x"):
+    for path in (
+        "/api", "/ws", "/api/v1", "/api/v2", "/api/qcli", "/api/v1/qcli/portal", "/ws/qcli/x",
+        "/API", "/API/V1", "/Api/Qcli", "/WS/v1/QCLI/x",
+    ):
         _expect(lambda b, p=path: b.set_path(p), f"invalid portal path: {path}")
     CliPortalBuilder().set_site_dir(str(SITE)).set_path("/api/developers").build()
 
