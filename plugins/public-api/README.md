@@ -95,6 +95,49 @@ No headers are sent when both limits are `None`.
   `PublicApiTokenUsage(token_id, name, usage)`; `to_dict()` gives the camelCase JSON) for the host's own pages; an
   unknown user raises `UsersApiError` 404 `user not found`.
 
+## OpenAPI document and Swagger UI
+
+| Route | Answer |
+|---|---|
+| `GET <base>/openapi.json` | 200 `application/json; charset=utf-8`, `Cache-Control: no-cache`, `Access-Control-Allow-Origin: *`: the public document. No sign-in; credentials are ignored |
+| `GET <base>/swagger`, `<base>/swagger/` | 200 `text/html`: Swagger UI 5 for that document only (`persistAuthorization: false`, `tryItOutEnabled: true`), titled with the document's `info.title` |
+
+`<base>` is `/qcli/api` (`set_base_path(path)`: starts with `/`, no trailing `/`, not `/` itself; otherwise `build()`
+raises `ValueError("invalid public-api base path: <path>")`). Other paths under it are not handled.
+
+Hand the document over with `set_openapi(source)`:
+
+| Source | Document |
+|---|---|
+| `APIRouter` / `FastAPI` | `get_openapi(title=<set_title or "API">, version=<set_version or "1.0.0">, routes=source.routes)`, read on the first request; routes with `include_in_schema=False` are left out |
+| `dict` | used as given |
+| zero-argument callable | called per request, its `dict` used as given |
+
+Keep the public routes on their own router (or app) and include it in the server's app:
+
+```python
+public = APIRouter()
+public_api = CliPublicApiBuilder().set_users(users).set_openapi(public).set_title("RateBell API").build()
+
+@public.get("/v1/rates", tags=["Rates"])
+async def rates(caller=Depends(public_api.guard("rates:read"))): ...
+
+result.app.include_router(public)
+result.mount_plugin(public_api)
+```
+
+The plugin adds, unless the document has its own (the host's values always win):
+
+- `components.securitySchemes.qcliToken` (`http` bearer, `bearerFormat: qcli_pat`) and a top-level
+  `security: [{"qcliToken": []}]`;
+- `servers: [{"url": <set_server_url(url) or the request's scheme://host and root path>}]`;
+- for routers and apps, `x-required-permission` and `x-host-token-only: true` on each operation guarded by
+  `public_api.guard(...)` or `users.require_host_token(...)` (`x-required-permission` alone for
+  `users.require_permission(...)`).
+
+The host's own `x-codeSamples` are passed through untouched; the portal generates the other code samples.
+`set_swagger_assets(js_url, css_url)` replaces the Swagger UI assets (FastAPI's default CDN URLs otherwise).
+
 ## Usage store
 
 The counters live in an `IPublicApiUsageStore` (`increment`, `decrement`, `account_count`, `token_days`, `prune`); the
@@ -113,7 +156,11 @@ two minutes; the guard prunes at most once an hour.
 | `set_usage_store(store)` | in memory | the counters |
 | `set_usage_retention_days(days)` | `31` | days of per-day counters kept |
 | `set_base_path(path)` | `/qcli/api` | where the OpenAPI document and Swagger UI are served |
-| `set_title(title)` | `API reference` | the portal's label of the API section |
+| `set_title(title)` | `API reference` | the portal's label of the API section (and `info.title` of a router or app document, default `API`) |
+| `set_version(version)` | `1.0.0` | `info.version` of a router or app document |
+| `set_openapi(source)` | an empty document | the public document |
+| `set_server_url(url)` | the request's URL | the document's `servers` |
+| `set_swagger_assets(js_url, css_url)` | FastAPI's CDN URLs | Swagger UI assets |
 | `set_clock(now)` | UTC now | tests |
 
 The plugin's `portal_section` (`{"kind": "api", "title", "base_path"}`) is what the portal plugin shows.

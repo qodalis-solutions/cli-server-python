@@ -19,6 +19,7 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import weakref
@@ -28,12 +29,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Request
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse, Response
 
 from qodalis_cli_users import QcliCaller, QcliGuardError
 from qodalis_cli_users.errors import install_guard_error_handler
 from qodalis_cli_users.middleware.auth_middleware import authenticate_host_token, tag_guard
 
 from .headers_middleware import STATE_KEY, RateLimitHeadersMiddleware
+from .openapi import PublicOpenApiDocument, check_source
 from .quota import PublicApiQuota, QuotaResolver
 from .usage_service import (
     PublicApiUsageService,
@@ -56,6 +60,10 @@ PRUNE_INTERVAL = timedelta(hours=1)
 INTERNAL_ERROR = "internal server error"
 NO_API_ACCESS = "forbidden: no API access"
 USERS_REQUIRED = "public-api: set_users(users_plugin) is required"
+#: FastAPI's default Swagger UI 5 assets (``set_swagger_assets`` overrides them).
+SWAGGER_JS_URL = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"
+SWAGGER_CSS_URL = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"
+SWAGGER_PARAMETERS = {"persistAuthorization": False, "tryItOutEnabled": True}
 
 
 def validate_base_path(path: Any, label: str) -> str:
@@ -99,6 +107,8 @@ class CliPublicApiPlugin:
     portal_section: dict[str, str]
     store: IPublicApiUsageStore
     users: Any
+    #: The public OpenAPI document (``<prefix>/openapi.json``).
+    document: PublicOpenApiDocument
     title: str = DEFAULT_TITLE
     #: Host routes: never counted among the CLI's routes.
     cli_routes: bool = False
@@ -218,6 +228,11 @@ class CliPublicApiPlugin:
         get ``usage``, refusals answer ``{"error": …}`` and admitted
         requests carry their ``X-RateLimit-*`` headers."""
         self.users.set_token_usage_provider(self.usage.tokens)
+        # No sign-in, also when the base path is under /api/ on a protected server.
+        allow_anonymous = getattr(self.users, "allow_anonymous", None)
+        if callable(allow_anonymous):
+            for path in ("/openapi.json", "/swagger", "/swagger/"):
+                allow_anonymous(self.prefix + path, ["GET", "HEAD"])
         app = server.app
         install_guard_error_handler(app)
         if not any(getattr(m, "cls", None) is RateLimitHeadersMiddleware for m in app.user_middleware):
@@ -231,12 +246,16 @@ class CliPublicApiBuilder:
         self._users: Any = None
         self._base_path: Any = DEFAULT_BASE_PATH
         self._title = DEFAULT_TITLE
+        self._title_set = False
         self._server_url: str | None = None
         self._openapi: Any = None
         self._quota: QuotaResolver | None = None
         self._store: IPublicApiUsageStore | None = None
         self._retention_days = DEFAULT_RETENTION_DAYS
         self._clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+        self._version: str | None = None
+        self._swagger_js_url = SWAGGER_JS_URL
+        self._swagger_css_url = SWAGGER_CSS_URL
 
     def set_users(self, users_plugin: Any) -> CliPublicApiBuilder:
         """The users plugin whose tokens the guard accepts (required)."""
@@ -250,9 +269,24 @@ class CliPublicApiBuilder:
         return self
 
     def set_title(self, title: str) -> CliPublicApiBuilder:
-        """The portal's label of the API section (default ``API reference``);
-        the document's ``info.title`` stays its own."""
+        """The portal's label of the API section (default ``API reference``).
+        A document read from an app or a router also takes it as
+        ``info.title`` (default ``API``); a ``dict`` keeps its own."""
         self._title = title
+        self._title_set = True
+        return self
+
+    def set_version(self, version: str) -> CliPublicApiBuilder:
+        """``info.version`` of a document read from an app or a router
+        (default ``1.0.0``)."""
+        self._version = version
+        return self
+
+    def set_swagger_assets(self, js_url: str, css_url: str) -> CliPublicApiBuilder:
+        """Swagger UI's script and stylesheet (default: FastAPI's CDN URLs of
+        ``swagger-ui-dist@5``), e.g. to serve them yourself."""
+        self._swagger_js_url = js_url
+        self._swagger_css_url = css_url
         return self
 
     def set_server_url(self, url: str | None) -> CliPublicApiBuilder:
@@ -263,8 +297,10 @@ class CliPublicApiBuilder:
 
     def set_openapi(self, source: Any) -> CliPublicApiBuilder:
         """The public OpenAPI document: a ``dict``, a zero-argument callable
-        returning one, a ``FastAPI`` app or an ``APIRouter``."""
-        self._openapi = source
+        returning one (called per request), a ``FastAPI`` app or an
+        ``APIRouter`` (its routes, read on the first request; routes with
+        ``include_in_schema=False`` are left out)."""
+        self._openapi = check_source(source)
         return self
 
     def set_quota(self, resolver: QuotaResolver | None) -> CliPublicApiBuilder:
@@ -312,10 +348,49 @@ class CliPublicApiBuilder:
             portal_section={"kind": "api", "title": self._title, "base_path": base_path},
             store=store,
             users=self._users,
+            document=PublicOpenApiDocument(
+                self._openapi,
+                title=self._title if self._title_set else None,
+                version=self._version,
+                server_url=self._server_url,
+            ),
             title=self._title,
             quota_resolver=self._quota,
             retention_days=self._retention_days,
             clock=self._clock,
         )
         holder["plugin"] = plugin
+        plugin.router = self._router(plugin)
         return plugin
+
+    def _router(self, plugin: CliPublicApiPlugin) -> APIRouter:
+        router = APIRouter()
+        document = plugin.document
+        js_url, css_url = self._swagger_js_url, self._swagger_css_url
+
+        def base_url(request: Request) -> str:
+            return str(request.base_url).rstrip("/")
+
+        @router.get("/openapi.json", include_in_schema=False)
+        async def openapi_json(request: Request) -> Response:
+            body = json.dumps(document.build(base_url(request)), ensure_ascii=False)
+            return Response(
+                content=body.encode("utf-8"),
+                media_type="application/json; charset=utf-8",
+                headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"},
+            )
+
+        async def swagger(request: Request) -> HTMLResponse:
+            root = request.scope.get("root_path", "") or ""
+            title = document.title_of(document.build(base_url(request)))
+            return get_swagger_ui_html(
+                openapi_url=f"{root}{plugin.prefix}/openapi.json",
+                title=title,
+                swagger_js_url=js_url,
+                swagger_css_url=css_url,
+                swagger_ui_parameters=dict(SWAGGER_PARAMETERS),
+            )
+
+        router.add_api_route("/swagger", swagger, methods=["GET"], include_in_schema=False)
+        router.add_api_route("/swagger/", swagger, methods=["GET"], include_in_schema=False)
+        return router
