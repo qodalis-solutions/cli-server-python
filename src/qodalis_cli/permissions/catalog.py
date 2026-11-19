@@ -47,6 +47,10 @@ def _invalid(name: Any) -> ValueError:
     return ValueError(f"invalid permission entry: {name}")
 
 
+def _name_of(entry: Any) -> Any:
+    return entry.get("name") if isinstance(entry, Mapping) else getattr(entry, "name", entry)
+
+
 def _validated(entry: CliPermission | Mapping[str, Any], surface: str) -> CliPermission:
     if isinstance(entry, CliPermission):
         name, description, group = entry.name, entry.description, entry.group
@@ -83,15 +87,16 @@ class CliPermissionCatalog:
     ) -> None:
         """Register entries with the given surface (it overrides the entries'
         own).  Raises ``ValueError`` for an invalid entry or a name already
-        registered; nothing of the call is registered then."""
+        registered (case-insensitively, checked first: ``FILES:READ`` is a
+        duplicate of ``files:read``); nothing of the call is registered then."""
         added: list[CliPermission] = []
         seen: set[str] = set()
         for entry in entries:
+            name = _name_of(entry)
+            if isinstance(name, str) and (name.lower() in self._by_name or name.lower() in seen):
+                raise ValueError(f"permission already registered: {name}")
             permission = _validated(entry, surface)
-            key = permission.name.lower()
-            if key in self._by_name or key in seen:
-                raise ValueError(f"permission already registered: {permission.name}")
-            seen.add(key)
+            seen.add(permission.name.lower())
             added.append(permission)
         for permission in added:
             self._entries.append(permission)
