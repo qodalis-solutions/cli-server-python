@@ -119,7 +119,8 @@ class ApiTokenManager:
         if audience == "host":
             permissions = host_scope(auth.permission_catalog, permissions)
         ensure_grantable(await auth.user_permissions(user), permissions)
-        actor = (options.actor, None) if options.actor else (user.name, user.id)
+        # An actor given (even "") is recorded as is; only None falls back.
+        actor = (options.actor, None) if options.actor is not None else (user.name, user.id)
         token, record = await create_api_token(
             auth, user, actor, name, permissions, expires_at, audience,
         )
@@ -143,7 +144,7 @@ class ApiTokenManager:
         record = await auth.api_token_store.get_token(token_id)
         if record is None or record.user_id != user_id:
             return False
-        if actor:
+        if actor is not None:
             by: tuple[str, str | None] = (actor, None)
         else:
             owner = await auth.user_store.get_user(user_id)

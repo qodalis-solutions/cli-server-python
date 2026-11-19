@@ -125,6 +125,9 @@ class AuthContext:
     #: External adapter identities: the request the adapter accepted (the
     #: ``ws-ticket`` request for sockets), re-run to re-check open sockets.
     external_request: ExternalRequestSnapshot | None = None
+    #: A host token the protection middleware let through to a host route:
+    #: its ``last_used_at`` is recorded by the route's guard, if it has one.
+    last_used_pending: bool = False
 
     @property
     def api_token_id(self) -> str | None:
@@ -699,11 +702,11 @@ class AuthService:
             session=session,
         )
 
-    async def authenticate_token(self, token: str) -> AuthContext:
+    async def authenticate_token(self, token: str, *, touch_api_token: bool = True) -> AuthContext:
         """Resolve a bearer token (session or API token) to the live user;
         raises 401 otherwise."""
         if token.startswith(API_TOKEN_PREFIX):
-            return await self.authenticate_api_token(token)
+            return await self.authenticate_api_token(token, touch=touch_api_token)
         token_hash = hash_token(token)
         session = await self.session_store.get_session(token_hash)
         if not session:
@@ -736,17 +739,23 @@ class AuthService:
             permissions = [p for p in record.permissions if has_permission(permissions, p)]
         return AuthContext(user=user, groups=groups, permissions=permissions, api_token=record)
 
-    async def authenticate_api_token(self, token: str) -> AuthContext:
-        """Resolve an API token to its live user and (scoped) permissions."""
+    async def authenticate_api_token(self, token: str, *, touch: bool = True) -> AuthContext:
+        """Resolve an API token to its live user and (scoped) permissions;
+        records its use unless ``touch`` is false."""
         record = await self.api_token_store.get_token_by_hash(hash_token(token))
         if record is None:
             raise unauthorized("invalid or expired token")
         ctx = await self.context_for_api_token(record)
+        if touch:
+            await self.touch_api_token(record)
+        return ctx
+
+    async def touch_api_token(self, record: ApiToken) -> None:
+        """Record an API token's use (``last_used_at``, at most once a minute)."""
         now = now_ms()
         if record.last_used_at is None or now - record.last_used_at >= API_TOKEN_LAST_USED_INTERVAL_MS:
             await self.api_token_store.update_last_used(record.id, now)
             record.last_used_at = now
-        return ctx
 
     async def is_api_token_active(self, token_id: str, user_id: str) -> bool:
         """Token not revoked/expired and its user neither disabled nor deleted."""
@@ -772,7 +781,7 @@ class AuthService:
             result = await result
         return result
 
-    async def authenticate_external(self, request: Any) -> AuthContext:
+    async def authenticate_external(self, request: Any, *, touch_api_token: bool = True) -> AuthContext:
         """Authenticate ``request`` through the external auth adapter.
 
         401 when the adapter returns no user, 401 ``account disabled`` for a
@@ -785,7 +794,7 @@ class AuthService:
         if self.options.api_tokens_with_external_auth:
             token = bearer_token(request.headers)
             if token is not None and token.startswith(API_TOKEN_PREFIX):
-                return await self.authenticate_api_token(token)
+                return await self.authenticate_api_token(token, touch=touch_api_token)
         result = await self.run_auth_adapter(request)
         if not isinstance(result, ExternalAuthResult) or result.user is None:
             raise unauthorized()
