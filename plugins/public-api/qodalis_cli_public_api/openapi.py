@@ -31,8 +31,21 @@ DEFAULT_VERSION = "1.0.0"
 _METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
 
 
+INVALID_DOCUMENT = "public-api: invalid OpenAPI document"
+
+
 def check_source(source: Any) -> Any:
-    if source is None or isinstance(source, (dict, FastAPI, APIRouter)) or callable(source):
+    """A supported source; a ``dict`` must look like an OpenAPI document
+    (``openapi``, ``info`` and ``paths``), checked once, at build time."""
+    if isinstance(source, dict):
+        if (
+            not isinstance(source.get("openapi"), str)
+            or not isinstance(source.get("info"), dict)
+            or not isinstance(source.get("paths"), dict)
+        ):
+            raise ValueError(INVALID_DOCUMENT)
+        return source
+    if source is None or isinstance(source, (FastAPI, APIRouter)) or callable(source):
         return source
     raise TypeError("public-api: the OpenAPI source must be a dict, a callable, a FastAPI app or an APIRouter")
 

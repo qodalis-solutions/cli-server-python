@@ -8,6 +8,7 @@ exactly ``---``; each line is ``key: value`` and only ``title``, ``group`` and
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, replace
@@ -19,6 +20,10 @@ VARIABLE_RE = re.compile(r"\{\{\s*([A-Za-z][A-Za-z0-9_.-]*)\s*\}\}")
 ORDER_RE = re.compile(r"^[+-]?\d+$")
 BUILT_IN_VARIABLES = ("baseUrl", "name")
 DEFAULT_GROUP = "Guides"
+#: Larger files are skipped (logged).
+MAX_PAGE_BYTES = 1024 * 1024
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -91,13 +96,21 @@ def validate_slug(slug: object) -> str:
 def read_folder(path: str) -> list[DocsPage]:
     """Every ``*.md`` file directly in ``path`` (names starting with ``.`` or
     ``_`` ignored), in file-name order; ``path`` is relative to the working
-    directory."""
+    directory.  Symbolic links and files over 1 MB are skipped (logged)."""
     if not os.path.isdir(path):
         raise ValueError(f"docs folder not found: {path}")
     pages: list[DocsPage] = []
     for name in sorted(os.listdir(path)):
         full = os.path.join(path, name)
-        if name.startswith((".", "_")) or not name.endswith(".md") or not os.path.isfile(full):
+        if name.startswith((".", "_")) or not name.endswith(".md"):
+            continue
+        if os.path.islink(full):
+            logger.warning("[qcli] docs: skipped %s (a symbolic link)", full)
+            continue
+        if not os.path.isfile(full):
+            continue
+        if os.path.getsize(full) > MAX_PAGE_BYTES:
+            logger.warning("[qcli] docs: skipped %s (larger than 1 MB)", full)
             continue
         slug = name[: -len(".md")].lower()
         if not SLUG_RE.match(slug):

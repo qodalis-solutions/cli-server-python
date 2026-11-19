@@ -281,3 +281,39 @@ def test_admin_dashboard_not_served_without_cli_routes(caplog, tmp_path):
     with TestClient(server.app) as client:
         assert client.get("/qcli/admin/").status_code == 404
         assert client.post("/api/v1/qcli/auth/login", json={}).status_code == 404
+
+
+def test_guard_only_never_mounted_answers_500(caplog):
+    from fastapi import FastAPI
+
+    users = CliUsersBuilder().set_guard_only().build()
+    app = FastAPI()
+
+    @app.get("/host/rates")
+    async def rates(caller=Depends(users.require_host_token("rates:read"))):
+        return {}
+
+    @app.get("/host/me")
+    async def me(ctx=Depends(users.require_auth)):
+        return {}
+
+    with TestClient(app) as client, caplog.at_level(logging.ERROR):
+        res = client.get("/host/rates", headers={"Authorization": "Bearer qcli_pat_x"})
+        assert res.status_code == 500
+        assert "internal server error" in res.text
+        assert client.get("/host/me").status_code == 500
+    assert "guard-only needs cli_routes=False" in caplog.text
+
+
+def test_guard_only_after_a_failed_mount_still_answers_500():
+    server = create_cli_server(CliServerOptions(configure=_configure))
+    users = CliUsersBuilder().set_guard_only().build()
+    with pytest.raises(ValueError):
+        server.mount_plugin(users)
+
+    @server.app.get("/host/rates")
+    async def rates(caller=Depends(users.require_host_token("rates:read"))):
+        return {}
+
+    with TestClient(server.app) as client:
+        assert client.get("/host/rates").status_code == 500

@@ -269,10 +269,28 @@ def test_invalid_source():
         CliPublicApiBuilder().set_openapi(42)
 
 
-def test_swagger_under_a_root_path():
+def test_root_path():
     result, users = _make_users()
-    api = CliPublicApiBuilder().set_users(users).build()
+    api = CliPublicApiBuilder().set_users(users).set_swagger_assets("/static/sw.js", "https://cdn.example/sw.css").build()
     result.mount_plugin(api)
-    for root, expected in (("/svc", "'/svc/qcli/api/openapi.json'"), ("//evil.example", "'/qcli/api/openapi.json'")):
-        with TestClient(result.app, root_path=root) as client:
-            assert expected in client.get("/qcli/api/swagger").text
+    with TestClient(result.app, root_path="/svc") as client:
+        html = client.get("/qcli/api/swagger").text
+        assert "'/svc/qcli/api/openapi.json'" in html
+        assert "/svc/static/sw.js" in html and "https://cdn.example/sw.css" in html
+        assert client.get("/qcli/api/openapi.json").json()["servers"] == [{"url": "http://testserver/svc"}]
+
+
+@pytest.mark.parametrize("root", ["//evil.example", "/\\evil.example"])
+def test_invalid_root_path(root: str):
+    result, users = _make_users()
+    result.mount_plugin(CliPublicApiBuilder().set_users(users).build())
+    with TestClient(result.app, root_path=root) as client:
+        for path in ("/qcli/api/openapi.json", "/qcli/api/swagger"):
+            res = client.get(path)
+            assert (res.status_code, res.json()) == (400, {"error": "invalid path base"}), path
+
+
+@pytest.mark.parametrize("doc", [{}, {"openapi": "3.1.0", "info": {}}, {"openapi": 3, "info": {}, "paths": {}}])
+def test_invalid_document_fails_at_build(doc: dict):
+    with pytest.raises(ValueError, match="^public-api: invalid OpenAPI document$"):
+        CliPublicApiBuilder().set_openapi(doc)

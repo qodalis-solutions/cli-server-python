@@ -70,8 +70,9 @@ class CliDocsPlugin:
     variables: dict[str, str] = field(default_factory=dict)
     #: Host routes: never counted among the CLI's routes.
     cli_routes: bool = False
-    #: Served without sign-in, also under ``/api/`` on a protected server.
-    public_routes: bool = True
+    #: Served without sign-in, also under ``/api/`` on a protected server
+    #: (the router answers everything under ``pages/`` itself).
+    public_paths: list[str] = field(default_factory=list)
 
     def variables_for(self, request: Request) -> dict[str, str]:
         base_url = self.base_url or (str(request.base_url).rstrip("/"))
@@ -155,7 +156,17 @@ class CliDocsBuilder:
             variables=variables,
         )
         plugin.router = _router(plugin)
+        plugin.public_paths = [f"{base_path}/pages", f"{base_path}/pages/*"]
         return plugin
+
+
+INVALID_PATH_BASE = "invalid path base"
+
+
+def _path_base_invalid(request: Request) -> bool:
+    """A root path that would make ``{{baseUrl}}`` leave the host."""
+    root = request.scope.get("root_path", "") or ""
+    return root.startswith("//") or root.startswith("/\\")
 
 
 def _router(plugin: CliDocsPlugin) -> APIRouter:
@@ -163,11 +174,15 @@ def _router(plugin: CliDocsPlugin) -> APIRouter:
     by_slug = {page.slug: page for page in plugin.pages}
 
     async def list_pages(request: Request) -> JSONResponse:
+        if _path_base_invalid(request):
+            return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400)
         # Page order is the titles' as written, before variables are replaced.
         variables = plugin.variables_for(request)
         return JSONResponse([apply_variables(p, variables).summary() for p in plugin.pages], headers=_NO_CACHE)
 
     async def get_page(slug: str, request: Request) -> JSONResponse:
+        if _path_base_invalid(request):
+            return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400)
         page = by_slug.get(slug)
         if page is None:
             return JSONResponse({"error": PAGE_NOT_FOUND}, status_code=404)

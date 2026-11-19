@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
@@ -123,11 +124,11 @@ class CliServerResult:
     #: plugin mounted with :meth:`mount_plugin`.  Anything else the app
     #: serves is the host application's.  Kept up to date as plugins mount.
     cli_route_prefixes: list[str] = field(default_factory=lambda: list(CORE_CLI_ROUTE_PREFIXES))
-    #: Path prefixes of host routes served without sign-in, also under
-    #: ``/api/`` on a server protected by the users plugin: the prefixes of
-    #: mounted plugins with ``public_routes = True`` (portal, docs, the
-    #: public-api plugin's document).  Never a CLI route.
-    public_route_prefixes: list[str] = field(default_factory=list)
+    #: Host paths served without sign-in (GET and HEAD), also under ``/api/``
+    #: on a server protected by the users plugin: the ``public_paths`` of
+    #: mounted plugins (portal, docs, the public-api plugin's document).  An
+    #: entry ending in ``/*`` covers everything under it.  Never a CLI route.
+    public_paths: list[str] = field(default_factory=list)
 
     def add_cli_route_prefix(self, prefix: str | None) -> None:
         """Count ``prefix`` among the CLI's routes (see
@@ -177,17 +178,23 @@ class CliServerResult:
         if serves_cli_routes:
             self.add_cli_route_prefix(prefix)
             self.add_cli_route_prefix(getattr(plugin, "dashboard_prefix", None))
-        elif getattr(plugin, "public_routes", False) is True and isinstance(prefix, str) and prefix.strip("/"):
-            public = "/" + prefix.strip().strip("/")
-            if public not in self.public_route_prefixes:
-                self.public_route_prefixes.append(public)
+        public_paths = [] if serves_cli_routes else _checked_public_paths(plugin, prefix, self.cli_route_prefixes)
         routes_off = serves_cli_routes and not self.options.cli_routes
         if routes_off:
             if prefix and router is not None and getattr(router, "routes", None):
                 logger.warning("[qcli] CLI routes are turned off; %s is not mounted", prefix)
         elif prefix and router:
+            routes = self.app.router.routes
+            count = len(routes)
             # A plugin mounted at the root (the portal at "/") has no prefix.
             self.app.include_router(router, prefix="" if prefix == "/" else prefix)
+            if public_paths:
+                # Paths served without sign-in are answered by the plugin
+                # itself, never by a host route added earlier under them.
+                routes[:] = routes[count:] + routes[:count]
+        for path in public_paths:
+            if path not in self.public_paths:
+                self.public_paths.append(path)
 
         # Plugins may hook into the server (e.g. the users plugin protects
         # every route and scopes events to authenticated sockets).
@@ -203,6 +210,34 @@ class CliServerResult:
             )
         elif dashboard_prefix and dashboard_app:
             self.app.mount(dashboard_prefix, dashboard_app)
+
+
+_CLI_PATH = re.compile(r"^/(api|ws)/(v\d+/)?(qcli|cli)(/|$)")
+
+
+def _checked_public_paths(plugin: object, prefix: object, cli_prefixes: list[str]) -> list[str]:
+    """A host-route plugin's ``public_paths``: each one under the plugin's
+    own mount (on a segment boundary), never ``/*`` alone and never a CLI
+    route; anything else fails startup (``ValueError``)."""
+    paths = list(getattr(plugin, "public_paths", None) or [])
+    if not paths:
+        return []
+    mount = "/" + prefix.strip("/") if isinstance(prefix, str) and prefix.strip("/") else None
+    for path in paths:
+        base = path[:-2] if isinstance(path, str) and path.endswith("/*") else path
+        valid = (
+            mount is not None
+            and isinstance(base, str)
+            and (base == mount or base.startswith(mount + "/"))
+            and "*" not in base
+            and "//" not in base
+            and not any(seg in (".", "..") for seg in base.split("/"))
+            and not _CLI_PATH.match(base + "/")
+            and not any(base == p or base.startswith(p + "/") or p.startswith(base + "/") for p in cli_prefixes)
+        )
+        if not valid:
+            raise ValueError(f"invalid public path: {path}")
+    return paths
 
 
 def create_cli_server(options: CliServerOptions | None = None) -> CliServerResult:

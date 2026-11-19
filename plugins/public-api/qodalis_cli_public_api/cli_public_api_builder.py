@@ -30,7 +30,7 @@ from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import JSONResponse, Response
 
 from qodalis_cli_users import QcliCaller, QcliGuardError
 from qodalis_cli_users.errors import install_guard_error_handler
@@ -80,6 +80,23 @@ def validate_base_path(path: Any, label: str) -> str:
     ):
         raise ValueError(f"invalid {label} base path: {path}")
     return path
+
+
+INVALID_PATH_BASE = "invalid path base"
+
+
+def path_base(request: Request) -> str | None:
+    """The ASGI root path (no trailing ``/``), or ``None`` when it would make
+    a URL leave the host (it starts with two slashes or a slash and a
+    backslash)."""
+    root = request.scope.get("root_path", "") or ""
+    if root.startswith("//") or root.startswith("/\\"):
+        return None
+    return root.rstrip("/")
+
+
+def invalid_path_base() -> Response:
+    return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400)
 
 
 def _stacked_permissions(request: Request) -> list[str]:
@@ -134,7 +151,7 @@ class CliPublicApiPlugin:
     cli_routes: bool = False
     #: The document and Swagger UI are served without sign-in, also under
     #: ``/api/`` on a protected server (the guarded routes are elsewhere).
-    public_routes: bool = True
+    public_paths: list[str] = field(default_factory=list)
     quota_resolver: Optional[QuotaResolver] = None
     retention_days: int = DEFAULT_RETENTION_DAYS
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(timezone.utc))
@@ -409,6 +426,7 @@ class CliPublicApiBuilder:
         )
         holder["plugin"] = plugin
         plugin.router = self._router(plugin)
+        plugin.public_paths = [f"{base_path}/openapi.json", f"{base_path}/swagger", f"{base_path}/swagger/"]
         return plugin
 
     def _router(self, plugin: CliPublicApiPlugin) -> APIRouter:
@@ -417,10 +435,13 @@ class CliPublicApiBuilder:
         js_url, css_url = self._swagger_js_url, self._swagger_css_url
 
         def base_url(request: Request) -> str:
+            # Includes the ASGI root path (an app mounted under a prefix).
             return str(request.base_url).rstrip("/")
 
         @router.api_route("/openapi.json", methods=["GET", "HEAD"], include_in_schema=False)
         async def openapi_json(request: Request) -> Response:
+            if path_base(request) is None:
+                return invalid_path_base()
             body = json.dumps(document.build(base_url(request)), ensure_ascii=False)
             return Response(
                 content=body.encode("utf-8"),
@@ -428,19 +449,20 @@ class CliPublicApiBuilder:
                 headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"},
             )
 
-        async def swagger(request: Request) -> HTMLResponse:
-            root = (request.scope.get("root_path", "") or "").rstrip("/")
-            if root.startswith("//") or not root.startswith("/"):
-                root = ""  # never a protocol-relative URL
+        async def swagger(request: Request) -> Response:
+            root = path_base(request)
+            if root is None:
+                return invalid_path_base()
             title = document.title_of(document.build(base_url(request)))
             return get_swagger_ui_html(
                 openapi_url=f"{root}{plugin.prefix}/openapi.json",
                 title=title,
-                swagger_js_url=js_url,
-                swagger_css_url=css_url,
+                # Root-relative assets (served by the host) follow the root path.
+                swagger_js_url=root + js_url if js_url.startswith("/") else js_url,
+                swagger_css_url=root + css_url if css_url.startswith("/") else css_url,
                 swagger_ui_parameters=dict(SWAGGER_PARAMETERS),
             )
 
-        router.add_api_route("/swagger", swagger, methods=["GET"], include_in_schema=False)
-        router.add_api_route("/swagger/", swagger, methods=["GET"], include_in_schema=False)
+        router.add_api_route("/swagger", swagger, methods=["GET", "HEAD"], include_in_schema=False)
+        router.add_api_route("/swagger/", swagger, methods=["GET", "HEAD"], include_in_schema=False)
         return router
