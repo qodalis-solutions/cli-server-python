@@ -14,7 +14,7 @@ from starlette.websockets import WebSocketDisconnect
 from qodalis_cli import CliEchoCommandProcessor, CliServerOptions, create_cli_server
 from qodalis_cli.abstractions import CliCommandProcessor
 from qodalis_cli_users import CliUsersBuilder, InMemoryApiTokenStore
-from qodalis_cli_users.models import now_ms
+from qodalis_cli_users.models import ApiToken, now_ms
 from qodalis_cli_users.services.auth_service import hash_token
 
 BASE = "/api/v1/qcli"
@@ -120,7 +120,8 @@ class TestCreate:
         assert set(body) == {"token", "apiToken"}
         assert TOKEN_RE.match(body["token"])
         view = body["apiToken"]
-        assert set(view) == {"id", "name", "userId", "userName", "createdAt", "expiresAt", "lastUsedAt"}
+        assert list(view) == ["id", "name", "userId", "userName", "createdAt", "expiresAt", "lastUsedAt", "audience"]
+        assert view["audience"] == "cli"
         assert view["name"] == "my ci-token_1.0"
         assert view["userName"] == "root"
         assert view["lastUsedAt"] is None
@@ -431,3 +432,122 @@ class TestTokenSockets:
         srv.c.delete(f"{BASE}/tokens/{body['apiToken']['id']}", headers=_h(root))
         with srv.c.websocket_connect(f"/ws/qcli/events?ticket={ticket}") as ws:
             assert _closed(ws).code == 4401
+
+
+# =========================================================================
+# Audience
+# =========================================================================
+
+
+class TestAudience:
+    def test_view_order_with_permissions(self, srv: Srv):
+        view = srv.create(srv.root, "scoped", permissions=["commands:execute"])["apiToken"]
+        assert list(view) == [
+            "id", "name", "userId", "userName", "createdAt", "expiresAt", "lastUsedAt", "audience", "permissions",
+        ]
+
+    def test_listed_views_have_audience(self, srv: Srv):
+        root = srv.root
+        srv.create(root, "a")
+        listed = srv.c.get(BASE + "/tokens", headers=_h(root)).json()
+        assert [t["audience"] for t in listed] == ["cli"]
+        assert list(listed[0])[-1] == "audience"
+
+    def test_audience_cli(self, srv: Srv):
+        body = srv.create(srv.root, "a", audience="cli")
+        assert body["apiToken"]["audience"] == "cli"
+        stored = srv.c.portal.call(srv.users.api_token_store.get_token, body["apiToken"]["id"])
+        assert stored.audience == "cli"
+
+    def test_audience_host_is_refused(self, srv: Srv):
+        res = srv.c.post(BASE + "/tokens", headers=_h(srv.root), json={"name": "a", "audience": "host"})
+        assert res.status_code == 400
+        assert res.json() == {"error": "host tokens can only be created by the host application"}
+
+    @pytest.mark.parametrize("audience", ["HOST ", "api", 1, None, True, ["cli"], "CLI"])
+    def test_invalid_audience(self, srv: Srv, audience):
+        res = srv.c.post(BASE + "/tokens", headers=_h(srv.root), json={"name": "a", "audience": audience})
+        assert res.status_code == 400
+        assert res.json() == {"error": "audience must be cli or host"}
+
+
+class _BareTokenStore(InMemoryApiTokenStore):
+    """A custom store unaware of ``audience``: it returns tokens built from
+    the fields it knows (``audience`` takes its default)."""
+
+    @staticmethod
+    def _bare(token: ApiToken | None) -> ApiToken | None:
+        if token is None:
+            return None
+        return ApiToken(
+            id=token.id, user_id=token.user_id, name=token.name, token_hash=token.token_hash,
+            created_at=token.created_at, expires_at=token.expires_at,
+            last_used_at=token.last_used_at, permissions=token.permissions,
+        )
+
+    async def get_token_by_hash(self, token_hash):
+        return self._bare(await super().get_token_by_hash(token_hash))
+
+    async def get_token(self, token_id):
+        return self._bare(await super().get_token(token_id))
+
+    async def get_tokens(self, user_id=None):
+        return [self._bare(t) for t in await super().get_tokens(user_id)]
+
+
+class _DictTokenStore(InMemoryApiTokenStore):
+    """A dict-backed store that drops the key it does not know (a document
+    store with an old schema), and one row with a null ``audience``."""
+
+    FIELDS = ("id", "user_id", "name", "token_hash", "created_at", "expires_at", "last_used_at", "permissions")
+
+    def __init__(self, null_audience: bool = False) -> None:
+        super().__init__()
+        self.rows: dict[str, dict] = {}
+        self.null_audience = null_audience
+
+    def _load(self, row: dict | None) -> ApiToken | None:
+        if row is None:
+            return None
+        data = dict(row)
+        if self.null_audience:
+            data["audience"] = None
+        return ApiToken(**data)
+
+    async def create_token(self, token):
+        self.rows[token.id] = {k: getattr(token, k) for k in self.FIELDS}
+        return self._load(self.rows[token.id])
+
+    async def get_token_by_hash(self, token_hash):
+        return self._load(next((r for r in self.rows.values() if r["token_hash"] == token_hash), None))
+
+    async def get_token(self, token_id):
+        return self._load(self.rows.get(token_id))
+
+    async def get_tokens(self, user_id=None):
+        return [self._load(r) for r in self.rows.values() if user_id is None or r["user_id"] == user_id]
+
+    async def delete_token(self, token_id):
+        self.rows.pop(token_id, None)
+
+    async def update_last_used(self, token_id, last_used_at):
+        if token_id in self.rows:
+            self.rows[token_id]["last_used_at"] = last_used_at
+
+
+@pytest.mark.parametrize("store_factory", [
+    _BareTokenStore, _DictTokenStore, lambda: _DictTokenStore(null_audience=True),
+])
+def test_store_without_audience_behaves_as_cli(store_factory):
+    result, users = _make(CliUsersBuilder().set_api_token_store(store_factory()))
+    with TestClient(result.app) as client:
+        s = Srv(client, users, result)
+        root = s.root
+        body = s.create(root, "old")
+        assert body["apiToken"]["audience"] == "cli"
+        listed = client.get(BASE + "/tokens", headers=_h(root)).json()
+        assert [t["audience"] for t in listed] == ["cli"]
+        res = s.execute(body["token"])
+        assert res.status_code == 200, res.text
+        # The users routes accept it too (a cli token).
+        assert client.get(BASE + "/users", headers=_h(body["token"])).status_code == 200

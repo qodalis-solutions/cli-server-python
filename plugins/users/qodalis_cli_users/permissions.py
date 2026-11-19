@@ -9,7 +9,9 @@ Matching is case-insensitive.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
 
 USERS_READ = "users:read"
 USERS_CREATE = "users:create"
@@ -28,6 +30,86 @@ TOKENS_REVOKE = "tokens:revoke"
 
 ADMIN_GROUP = "admin"
 USERS_GROUP = "users"
+
+#: The users plugin's entries of the permission catalog (surface ``cli``),
+#: added to the server's catalog when the plugin is mounted.
+USERS_PERMISSION_ENTRIES: tuple[dict[str, str], ...] = (
+    {"name": USERS_READ, "description": "See users and their permissions", "group": "Users"},
+    {"name": USERS_CREATE, "description": "Create users", "group": "Users"},
+    {"name": USERS_UPDATE, "description": "Change users, their groups and passwords", "group": "Users"},
+    {"name": USERS_DELETE, "description": "Delete users", "group": "Users"},
+    {"name": GROUPS_READ, "description": "See groups", "group": "Groups"},
+    {"name": GROUPS_CREATE, "description": "Create groups", "group": "Groups"},
+    {"name": GROUPS_UPDATE, "description": "Change groups and their permissions", "group": "Groups"},
+    {"name": GROUPS_DELETE, "description": "Delete groups", "group": "Groups"},
+    {"name": SESSIONS_READ, "description": "See every user's sessions", "group": "Sessions"},
+    {"name": SESSIONS_REVOKE, "description": "End other users' sessions", "group": "Sessions"},
+    {"name": TOKENS_READ, "description": "See every user's API tokens", "group": "Tokens"},
+    {"name": TOKENS_REVOKE, "description": "Revoke other users' API tokens", "group": "Tokens"},
+)
+
+
+@runtime_checkable
+class PermissionCatalog(Protocol):
+    """The server's permission catalog (``qodalis_cli.CliPermissionCatalog``,
+    ``server.builder.permissions``), seen structurally: the plugin does not
+    import core code newer than the core versions it supports.  Entries
+    expose ``name``, ``description``, ``group``, ``surface`` and
+    ``to_dict()``."""
+
+    def add(self, entries: Iterable[Any], surface: str) -> None: ...
+
+    def all(self) -> list[Any]: ...
+
+    def find(self, name: str) -> Any | None: ...
+
+
+@dataclass(frozen=True)
+class _CatalogEntry:
+    name: str
+    description: str
+    group: str
+    surface: str = "host"
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "group": self.group,
+            "surface": self.surface,
+        }
+
+
+class LocalPermissionCatalog:
+    """The plugin's own catalog, used until it is mounted on a server with a
+    catalog (an older core, or the plugin's router included on its own)."""
+
+    def __init__(self) -> None:
+        self._entries: list[_CatalogEntry] = []
+
+    def add(self, entries: Iterable[Any], surface: str) -> None:
+        for entry in entries:
+            get = entry.get if isinstance(entry, Mapping) else (lambda k, e=entry: getattr(e, k, None))
+            name = get("name")
+            if self.find(name) is not None:
+                raise ValueError(f"permission already registered: {name}")
+            self._entries.append(_CatalogEntry(name, get("description"), get("group"), surface))
+
+    def all(self) -> list[Any]:
+        return list(self._entries)
+
+    def find(self, name: str) -> Any | None:
+        if not isinstance(name, str):
+            return None
+        key = name.lower()
+        return next((e for e in self._entries if e.name.lower() == key), None)
+
+
+def users_permission_catalog() -> LocalPermissionCatalog:
+    """A local catalog holding the users plugin's entries."""
+    catalog = LocalPermissionCatalog()
+    catalog.add(USERS_PERMISSION_ENTRIES, "cli")
+    return catalog
 
 
 def permission_matches(granted: str, required: str) -> bool:

@@ -32,12 +32,14 @@ from qodalis_cli_server_abstractions.events import ICliEventBus
 
 from .controllers.groups_controller import create_groups_router
 from .controllers.link_controller import create_link_router
+from .controllers.permissions_controller import create_permissions_router
 from .controllers.sessions_controller import create_sessions_router
 from .controllers.tokens_controller import create_tokens_router
 from .controllers.users_controller import create_users_router
 from .middleware.auth_middleware import create_auth_dependencies
 from .errors import UsersApiError
 from .models import ExternalAuthAdapter
+from .permissions import USERS_PERMISSION_ENTRIES, USERS_READ
 from .server_protection import ServerProtectionMiddleware, _normalize_base
 from .shell_access import UsersShellAccess
 from .services.auth_service import (
@@ -223,7 +225,19 @@ class CliUsersPlugin:
         set_shell_provider = getattr(server, "set_shell_access_provider", None)
         if callable(set_shell_provider):
             set_shell_provider(UsersShellAccess(self.auth_service))
+        self._adopt_permission_catalog(server)
         self._mount_audit(server)
+
+    def _adopt_permission_catalog(self, server: Any) -> None:
+        """Use the server's permission catalog (``server.builder.permissions``,
+        core 1.0.0b29 and later) and add the plugin's entries to it, once.  On
+        an older core the plugin keeps its own catalog."""
+        catalog = getattr(getattr(server, "builder", None), "permissions", None)
+        if catalog is None or not all(callable(getattr(catalog, m, None)) for m in ("add", "all", "find")):
+            return
+        if catalog.find(USERS_READ) is None:
+            catalog.add(USERS_PERMISSION_ENTRIES, "cli")
+        self.auth_service.permission_catalog = catalog
 
     def _mount_audit(self, server: Any) -> None:
         """Mount the audit plugin with the users plugin, so a host that only
@@ -607,6 +621,7 @@ class CliUsersBuilder:
             auth_service, users_service, get_auth, require_permission,
         ))
         router.include_router(create_tokens_router(auth_service, get_auth))
+        router.include_router(create_permissions_router(auth_service, get_auth))
         plugin.link_service = LinkService(auth_service, self._link_approval_url)
         plugin._link_limiter = LinkRateLimiter()
         router.include_router(create_link_router(

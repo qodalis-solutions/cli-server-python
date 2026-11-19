@@ -152,7 +152,9 @@ class ApiToken:
 
     Stores keep only ``token_hash`` (SHA-256 hex of the token), never the
     token itself.  ``permissions`` is an optional scope: ``None`` means the
-    token carries the user's full (live) permissions.
+    token carries the user's full (live) permissions.  ``audience`` is
+    ``cli`` (the CLI routes) or ``host`` (only the host application's guarded
+    routes); a store without it (``None`` or missing) reads as ``cli``.
     """
 
     id: str = ""
@@ -166,6 +168,11 @@ class ApiToken:
     #: Updated at most once per 60 seconds.
     last_used_at: int | None = None
     permissions: list[str] | None = None
+    audience: str | None = "cli"
+
+    @property
+    def is_host(self) -> bool:
+        return self.audience == "host"
 
     def is_expired(self, now: int | None = None) -> bool:
         return self.expires_at is not None and (now if now is not None else now_ms()) >= self.expires_at
@@ -180,6 +187,7 @@ class ApiToken:
             "createdAt": self.created_at,
             "expiresAt": self.expires_at,
             "lastUsedAt": self.last_used_at,
+            "audience": "host" if self.is_host else "cli",
         }
         if self.permissions is not None:
             result["permissions"] = list(self.permissions)
@@ -262,6 +270,9 @@ class CreateApiTokenRequest(_Body):
     #: Typed ``Any`` so missing, ``null`` and wrong types can be told apart.
     expiresInDays: Any = None  # noqa: N815
     permissions: Any = None
+    #: ``cli`` (default); ``host`` tokens are created by the host application
+    #: only.  Told apart from a ``null`` value through ``model_fields_set``.
+    audience: Any = None
 
 
 class CreateGroupRequest(_Body):

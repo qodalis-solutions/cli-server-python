@@ -34,9 +34,11 @@ from ..permissions import (
     ADMIN_GROUP,
     SESSIONS_READ,
     USERS_GROUP,
+    PermissionCatalog,
     has_permission,
     merge_permissions,
     permission_matches,
+    users_permission_catalog,
 )
 from ..stores.interfaces import (
     IApiTokenStore,
@@ -242,6 +244,10 @@ class AuthService:
         #: Set when mounted on a CLI server: user-scoped event delivery.
         self.user_event_sender: UserEventSender | None = None
         self.auth_adapter = auth_adapter
+        #: The permission catalog (``GET /permissions``, host tokens): the
+        #: plugin's own entries until mounted on a server with a catalog,
+        #: then the server's (``server.builder.permissions``).
+        self.permission_catalog: PermissionCatalog = users_permission_catalog()
         self._lockouts: OrderedDict[str, _LockoutState] = OrderedDict()
         self._rate: OrderedDict[str, deque[int]] = OrderedDict()
         self._tickets: dict[str, _Ticket] = {}

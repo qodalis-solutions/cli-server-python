@@ -31,6 +31,24 @@ DAY_MS = 24 * 60 * 60 * 1000
 API_TOKENS_CANNOT_CREATE = "forbidden: API tokens cannot create tokens"
 MANAGED_BY_HOST = "Authentication is managed by the host application"
 
+#: ``cli`` tokens use the CLI routes; ``host`` tokens only the host
+#: application's guarded routes (created through ``users_plugin.api_tokens``).
+API_TOKEN_AUDIENCES = ("cli", "host")
+HOST_TOKENS_CREATED_BY_HOST = "host tokens can only be created by the host application"
+INVALID_AUDIENCE = "audience must be cli or host"
+
+
+def _http_audience(body: CreateApiTokenRequest) -> str:
+    """``POST /tokens`` creates ``cli`` tokens only (absent = ``cli``)."""
+    if "audience" not in body.model_fields_set:
+        return "cli"
+    audience = body.audience
+    if not isinstance(audience, str) or audience not in API_TOKEN_AUDIENCES:
+        raise bad_request(INVALID_AUDIENCE)
+    if audience == "host":
+        raise bad_request(HOST_TOKENS_CREATED_BY_HOST)
+    return audience
+
 
 def _validate_name(raw: Any) -> str:
     if not isinstance(raw, str) or not TOKEN_NAME_RE.match(raw):
@@ -132,6 +150,7 @@ async def create_api_token(
         created_at=now,
         expires_at=expires_at,
         permissions=permissions,
+        audience="cli",
     ))
     await auth_service.audit(
         "token_created", ctx.user.name,
@@ -166,6 +185,7 @@ def create_tokens_router(
     @collection(router, "POST", status_code=201)
     async def create_token(body: CreateApiTokenRequest, ctx: AuthContext = Depends(get_auth)):
         ensure_can_create_tokens(ctx, auth_service.options.api_tokens_with_external_auth)
+        _http_audience(body)
         name = _validate_name(body.name)
         expires_at = _expires_at(body, auth_service.options.allow_non_expiring_tokens, now_ms())
         permissions = scope_permissions(ctx, body.permissions)
