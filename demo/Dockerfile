@@ -14,6 +14,10 @@ RUN cd plugins/admin && npm init -y && npm install @qodalis/cli-server-dashboard
     && python3 scripts/copy_dashboard.py \
     && rm -rf node_modules package.json package-lock.json
 
+# Copy the portal site into the portal plugin (skipped until the package is published)
+RUN cd plugins/portal && (npm install && python3 scripts/copy_portal.py || true) \
+    && rm -rf node_modules package-lock.json
+
 RUN pip install --no-cache-dir ./plugins/filesystem \
     && pip install --no-cache-dir ./plugins/filesystem-json \
     && pip install --no-cache-dir ./plugins/filesystem-sqlite \
@@ -30,7 +34,10 @@ RUN pip install --no-cache-dir ./plugins/filesystem \
     && pip install --no-cache-dir ./plugins/data-explorer-mssql \
     && pip install --no-cache-dir ./plugins/data-explorer-redis \
     && pip install --no-cache-dir ./plugins/data-explorer-elasticsearch \
-    && pip install --no-cache-dir ./plugins/admin
+    && pip install --no-cache-dir ./plugins/admin \
+    && pip install --no-cache-dir ./plugins/public-api \
+    && pip install --no-cache-dir ./plugins/docs \
+    && (pip install --no-cache-dir ./plugins/portal || pip install --no-cache-dir -e ./plugins/portal)
 
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/

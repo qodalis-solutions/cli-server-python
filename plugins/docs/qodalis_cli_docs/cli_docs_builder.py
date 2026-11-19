@@ -70,6 +70,8 @@ class CliDocsPlugin:
     variables: dict[str, str] = field(default_factory=dict)
     #: Host routes: never counted among the CLI's routes.
     cli_routes: bool = False
+    #: Served without sign-in, also under ``/api/`` on a protected server.
+    public_routes: bool = True
 
     def variables_for(self, request: Request) -> dict[str, str]:
         base_url = self.base_url or (str(request.base_url).rstrip("/"))

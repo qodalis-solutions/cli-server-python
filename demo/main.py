@@ -25,8 +25,11 @@ logger = logging.getLogger(__name__)
 # Allow importing from the project root so ``plugins`` is accessible.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from fastapi import APIRouter, Depends
+
 from qodalis_cli import (
     CliMcpOptions,
+    CliPermission,
     CliServerOptions,
     CliShellOptions,
     create_cli_server,
@@ -45,7 +48,10 @@ from qodalis_cli_server_abstractions.jobs import CliJobOptions
 
 from qodalis_cli_jobs import CliJobsBuilder
 from qodalis_cli_admin import CliAdminBuilder, AdminBuildDeps
-from qodalis_cli_users import CliUsersBuilder
+from qodalis_cli_users import CliUsersBuilder, QcliCaller
+from qodalis_cli_public_api import CliPublicApiBuilder, PublicApiQuota
+from qodalis_cli_docs import CliDocsBuilder
+from qodalis_cli_portal import CliPortalBuilder
 
 from processors import (
     CliEchoCommandProcessor,
@@ -117,11 +123,17 @@ from jobs import SampleHealthCheckJob
 file_storage_provider = InMemoryFileStorageProvider()
 
 
-def main() -> None:
-    port = int(os.environ.get("PORT", "8048"))
-    host = os.environ.get("HOST", "0.0.0.0")
+DEMO_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def create_demo_server():  # noqa: ANN201
+    """The demo server (``CliServerResult``), without running it."""
 
     def configure(builder):  # noqa: ANN001
+        # Host permission of the public API (a host token is created with it).
+        builder.add_permissions([
+            CliPermission(name="demo:read", description="Read the demo's public API", group="Demo"),
+        ])
         builder \
             .add_processor(CliEchoCommandProcessor()) \
             .add_processor(CliStatusCommandProcessor()) \
@@ -329,6 +341,60 @@ def main() -> None:
 
     result.app.router.lifespan_context = lifespan_with_plugins
 
+    # -----------------------------------------------------------------------
+    # Public API, guides and the portal
+    # -----------------------------------------------------------------------
+    # A public route guarded by host API tokens (create one for a user with
+    # users_plugin.api_tokens.create(..., ApiTokenCreateOptions(audience="host",
+    # permissions=["demo:read"]))), 1000 requests a day and 60 a minute per
+    # account; its OpenAPI document at /qcli/api/openapi.json, Swagger UI at
+    # /qcli/api/swagger, guides at /qcli/docs/pages and the portal at
+    # /qcli/portal.
+    public = APIRouter()
+    public_api = (
+        CliPublicApiBuilder()
+        .set_users(users_plugin)
+        .set_openapi(public)
+        .set_title("Demo API")
+        .set_quota(lambda caller: PublicApiQuota(requests_per_day=1000, requests_per_minute=60))
+        .build()
+    )
+
+    @public.get("/v1/demo/time", tags=["Demo"])
+    async def demo_time(caller: QcliCaller = Depends(public_api.guard("demo:read"))) -> dict:
+        from datetime import datetime, timezone
+
+        return {"utc": datetime.now(timezone.utc).isoformat(), "account": caller.user_name}
+
+    result.app.include_router(public)
+    result.mount_plugin(public_api)
+
+    docs_plugin = (
+        CliDocsBuilder()
+        .set_name("Qodalis CLI demo")
+        .add_folder(os.path.join(DEMO_DIR, "docs"))
+        .build()
+    )
+    result.mount_plugin(docs_plugin)
+    portal_plugin = (
+        CliPortalBuilder()
+        .set_name("Qodalis CLI demo")
+        .add_section(docs_plugin)
+        .add_section(public_api)
+        .build()
+    )
+    result.mount_plugin(portal_plugin)
+    result.demo_admin_plugin = admin_plugin  # type: ignore[attr-defined]
+    result.demo_portal_plugin = portal_plugin  # type: ignore[attr-defined]
+    return result
+
+
+def main() -> None:
+    port = int(os.environ.get("PORT", "8048"))
+    host = os.environ.get("HOST", "0.0.0.0")
+    result = create_demo_server()
+    admin_plugin = result.demo_admin_plugin  # type: ignore[attr-defined]
+
     logger.info("Qodalis CLI Demo Server (Python) running on http://%s:%d", host, port)
     logger.info("  API: http://%s:%d/api/qcli", host, port)
     logger.info("  Users API: http://%s:%d/api/v1/qcli/users", host, port)
@@ -337,6 +403,9 @@ def main() -> None:
     if admin_plugin.dashboard_app:
         logger.info("  Admin Dashboard: http://%s:%d/qcli/admin", host, port)
     logger.info("  MCP: http://%s:%d/api/qcli/mcp", host, port)
+    logger.info("  Public API: http://%s:%d/qcli/api/swagger", host, port)
+    if result.demo_portal_plugin.site_dir:  # type: ignore[attr-defined]
+        logger.info("  Portal: http://%s:%d/qcli/portal", host, port)
     logger.info("  WebSocket: ws://%s:%d/ws/qcli/events", host, port)
     logger.info("  File storage: %s", type(file_storage_provider).__name__)
 

@@ -123,6 +123,11 @@ class CliServerResult:
     #: plugin mounted with :meth:`mount_plugin`.  Anything else the app
     #: serves is the host application's.  Kept up to date as plugins mount.
     cli_route_prefixes: list[str] = field(default_factory=lambda: list(CORE_CLI_ROUTE_PREFIXES))
+    #: Path prefixes of host routes served without sign-in, also under
+    #: ``/api/`` on a server protected by the users plugin: the prefixes of
+    #: mounted plugins with ``public_routes = True`` (portal, docs, the
+    #: public-api plugin's document).  Never a CLI route.
+    public_route_prefixes: list[str] = field(default_factory=list)
 
     def add_cli_route_prefix(self, prefix: str | None) -> None:
         """Count ``prefix`` among the CLI's routes (see
@@ -172,12 +177,17 @@ class CliServerResult:
         if serves_cli_routes:
             self.add_cli_route_prefix(prefix)
             self.add_cli_route_prefix(getattr(plugin, "dashboard_prefix", None))
+        elif getattr(plugin, "public_routes", False) is True and isinstance(prefix, str) and prefix.strip("/"):
+            public = "/" + prefix.strip().strip("/")
+            if public not in self.public_route_prefixes:
+                self.public_route_prefixes.append(public)
         routes_off = serves_cli_routes and not self.options.cli_routes
         if routes_off:
             if prefix and router is not None and getattr(router, "routes", None):
                 logger.warning("[qcli] CLI routes are turned off; %s is not mounted", prefix)
         elif prefix and router:
-            self.app.include_router(router, prefix=prefix)
+            # A plugin mounted at the root (the portal at "/") has no prefix.
+            self.app.include_router(router, prefix="" if prefix == "/" else prefix)
 
         # Plugins may hook into the server (e.g. the users plugin protects
         # every route and scopes events to authenticated sockets).
