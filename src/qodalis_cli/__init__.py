@@ -55,6 +55,12 @@ from qodalis_cli_server_abstractions.events import (
 )
 from .controllers import create_cli_router, create_cli_version_router, create_filesystem_router
 from .extensions import CliBuilder
+from .permissions import (
+    CORE_PERMISSIONS,
+    CliPermission,
+    CliPermissionCatalog,
+    CliPermissionSurface,
+)
 from .filesystem import FileSystemOptions, FileSystemPathValidator
 
 # Re-export filesystem plugin types for convenience
@@ -143,6 +149,10 @@ __all__ = [
     "create_cli_version_router",
     "create_filesystem_router",
     "CliBuilder",
+    "CORE_PERMISSIONS",
+    "CliPermission",
+    "CliPermissionCatalog",
+    "CliPermissionSurface",
     "CliInstalledPlugin",
     "FileSystemOptions",
     "FileSystemPathValidator",
