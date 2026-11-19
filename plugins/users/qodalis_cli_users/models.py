@@ -172,7 +172,8 @@ class ApiToken:
 
     @property
     def is_host(self) -> bool:
-        return self.audience == "host"
+        """Fail closed: anything but ``cli`` (or no value) is a host token."""
+        return self.audience not in (None, "", "cli")
 
     def is_expired(self, now: int | None = None) -> bool:
         return self.expires_at is not None and (now if now is not None else now_ms()) >= self.expires_at

@@ -18,13 +18,15 @@ import json
 import re
 from typing import Any, Awaitable, Callable
 
+from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
 
-from ._http import SAFE_METHODS, set_scope_auth
+from ._http import SAFE_METHODS, bearer_token, set_scope_auth
 from .errors import UsersApiError
 from .middleware.auth_middleware import authenticate_request
 from .services.auth_service import (
+    API_TOKEN_PREFIX,
     HOST_TOKENS_CANNOT_USE_CLI_ROUTES,
     PASSWORD_CHANGE_REQUIRED,
     AuthContext,
@@ -84,6 +86,15 @@ def is_cli_path(path: str, base_paths: list[str] | None = None) -> bool:
     return any(path == base or path.startswith(base + "/") for base in base_paths or [])
 
 
+#: The longest WebSocket close reason (bytes of UTF-8) a close frame carries.
+MAX_CLOSE_REASON_BYTES = 123
+
+
+def close_reason(text: str) -> str:
+    """``text`` as a WebSocket close reason, ``forbidden`` when too long."""
+    return text if len(text.encode("utf-8")) <= MAX_CLOSE_REASON_BYTES else "forbidden"
+
+
 def http_permission(path: str, method: str, base_paths: list[str] | None = None) -> str | None:
     for pattern, methods, permission in HTTP_RULES:
         if pattern.match(path) and (methods is None or method in methods):
@@ -115,6 +126,7 @@ class ServerProtectionMiddleware:
         ensure_ready: Callable[[], Awaitable[None]] | None = None,
         extra_public: list[tuple[str, frozenset[str] | None]] | None = None,
         base_paths: list[str] | None = None,
+        cli_prefixes: Callable[[], list[str] | None] | None = None,
     ) -> None:
         self.app = app
         self.auth = auth_service
@@ -123,6 +135,10 @@ class ServerProtectionMiddleware:
         #: Custom CLI API base paths (``CliServerOptions.base_path``) — also
         #: protected, wherever they are mounted.
         self.base_paths = base_paths if base_paths is not None else []
+        #: The CLI's route prefixes as the server knows them
+        #: (``CliServerResult.cli_route_prefixes``: the core's, and every
+        #: mounted plugin's API and dashboard prefix), read per request.
+        self.cli_prefixes = cli_prefixes
 
     # ------------------------------------------------------------------
 
@@ -138,6 +154,25 @@ class ServerProtectionMiddleware:
                 if path.rstrip("/") in (base + "/version", base + "/capabilities"):
                     return True
         return False
+
+    def _is_cli(self, path: str) -> bool:
+        prefixes = list(self.base_paths)
+        if self.cli_prefixes is not None:
+            prefixes += list(self.cli_prefixes() or [])
+        return is_cli_path(path, prefixes)
+
+    async def _host_bearer(self, scope: dict) -> bool:
+        """Whether the request carries a valid ``host`` API token as its
+        bearer (refused on CLI paths the middleware does not authenticate:
+        the admin dashboard's files, sockets without a ticket)."""
+        token = bearer_token(Headers(scope=scope))
+        if not token or not token.startswith(API_TOKEN_PREFIX) or not self.auth.api_tokens_enabled:
+            return False
+        try:
+            ctx = await self.auth.authenticate_api_token(token)
+        except UsersApiError:
+            return False
+        return ctx.is_host_token
 
     def _protected(self, path: str) -> bool:
         if path.startswith("/api/") or path.startswith("/ws/"):
@@ -157,19 +192,22 @@ class ServerProtectionMiddleware:
     async def _http(self, scope: dict, receive: Any, send: Any) -> None:
         path: str = scope["path"]
         method: str = scope["method"].upper()
-        if (
-            method == "OPTIONS"
-            or not self._protected(path)
-            or self._is_public(path, method)
-            or SELF_PROTECTED.match(path)
-        ):
+        if method == "OPTIONS" or self._is_public(path, method) or SELF_PROTECTED.match(path):
+            await self.app(scope, receive, send)
+            return
+        if not self._protected(path):
+            # Not authenticated here (e.g. the admin dashboard's files), but a
+            # host token is still refused on the CLI's routes.
+            if self._is_cli(path) and await self._host_bearer(scope):
+                await _send_json(send, 403, {"error": HOST_TOKENS_CANNOT_USE_CLI_ROUTES})
+                return
             await self.app(scope, receive, send)
             return
         if self.ensure_ready is not None:
             await self.ensure_ready()
         try:
             ctx = await authenticate_request(self.auth, Request(scope))
-            if ctx.is_host_token and is_cli_path(path, self.base_paths):
+            if ctx.is_host_token and self._is_cli(path):
                 raise UsersApiError(403, HOST_TOKENS_CANNOT_USE_CLI_ROUTES)
             if ctx.must_change_password:
                 raise UsersApiError(403, PASSWORD_CHANGE_REQUIRED)
@@ -189,6 +227,9 @@ class ServerProtectionMiddleware:
     async def _websocket(self, scope: dict, receive: Any, send: Any) -> None:
         path: str = scope["path"]
         if not self._protected(path):
+            if self._is_cli(path) and await self._host_bearer(scope):
+                await _close(receive, send, 4403, close_reason(HOST_TOKENS_CANNOT_USE_CLI_ROUTES))
+                return
             await self.app(scope, receive, send)
             return
         if self.ensure_ready is not None:
@@ -196,10 +237,23 @@ class ServerProtectionMiddleware:
         ticket = _query_param(scope, "ticket")
         ctx = await self.auth.consume_ticket(ticket)
         if ctx is None:
-            await _close(receive, send, 4401, "unauthorized")
+            # Sockets take tickets only; a host token offered as a bearer is
+            # told why it is refused.
+            if await self._host_bearer(scope):
+                await _close(receive, send, 4403, close_reason(HOST_TOKENS_CANNOT_USE_CLI_ROUTES))
+            else:
+                await _close(receive, send, 4401, "unauthorized")
+            return
+        # The users plugin's own refusals carry their text; a missing
+        # permission keeps "forbidden".
+        if ctx.is_host_token:
+            await _close(receive, send, 4403, close_reason(HOST_TOKENS_CANNOT_USE_CLI_ROUTES))
+            return
+        if ctx.must_change_password:
+            await _close(receive, send, 4403, close_reason(PASSWORD_CHANGE_REQUIRED))
             return
         permission = ws_permission(path)
-        if ctx.must_change_password or (permission and not ctx.can(permission)):
+        if permission and not ctx.can(permission):
             await _close(receive, send, 4403, "forbidden")
             return
         set_scope_auth(scope, ctx)
@@ -236,5 +290,6 @@ async def _close(receive: Any, send: Any, code: int, reason: str) -> None:
 
 
 __all__ = [
-    "AuthContext", "ServerProtectionMiddleware", "http_permission", "is_cli_path", "ws_permission", "SAFE_METHODS",
+    "AuthContext", "ServerProtectionMiddleware", "close_reason", "http_permission", "is_cli_path",
+    "ws_permission", "SAFE_METHODS",
 ]

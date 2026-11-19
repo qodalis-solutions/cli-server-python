@@ -24,6 +24,13 @@ if TYPE_CHECKING:
 USER_NOT_FOUND = "user not found"
 
 
+def _require_user_id(user_id: Any) -> None:
+    """A missing id never reaches a store (it would list or revoke other
+    users' tokens)."""
+    if not isinstance(user_id, str) or not user_id:
+        raise ValueError("user_id is required")
+
+
 @dataclass
 class ApiTokenCreateOptions:
     """A token to create (``users_plugin.api_tokens.create``)."""
@@ -90,6 +97,7 @@ class ApiTokenManager:
             validate_token_name,
         )
 
+        _require_user_id(user_id)
         auth = self.auth_service
         if auth.external_auth and not auth.options.api_tokens_with_external_auth:
             raise UsersApiError(501, MANAGED_BY_HOST)
@@ -120,6 +128,7 @@ class ApiTokenManager:
     async def list(self, user_id: str) -> list[dict[str, Any]]:
         """The user's tokens (both audiences), oldest first; ``[]`` for an
         unknown user."""
+        _require_user_id(user_id)
         tokens = await self.auth_service.api_token_store.get_tokens(user_id)
         tokens.sort(key=lambda t: t.created_at)
         return [await self.auth_service.api_token_view(t) for t in tokens]
@@ -129,6 +138,7 @@ class ApiTokenManager:
         belongs to another user."""
         from ..controllers.tokens_controller import revoke_api_token
 
+        _require_user_id(user_id)
         auth = self.auth_service
         record = await auth.api_token_store.get_token(token_id)
         if record is None or record.user_id != user_id:
@@ -144,6 +154,7 @@ class ApiTokenManager:
     async def grantable_permissions(self, user_id: str, audience: str = "cli") -> list[Any]:
         """The catalog entries the user holds (live permissions, wildcards
         match); for ``host`` only the ``host``-surface ones."""
+        _require_user_id(user_id)
         user = await self._user(user_id)
         audience = self._audience(audience)
         granted = await self.auth_service.user_permissions(user)

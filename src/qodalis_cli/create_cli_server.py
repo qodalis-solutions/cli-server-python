@@ -81,6 +81,12 @@ class CliServerOptions:
     configure: Callable[[CliBuilder], None] | None = None
 
 
+#: The core's own API and socket prefixes (see ``CliServerResult.cli_route_prefixes``).
+CORE_CLI_ROUTE_PREFIXES: tuple[str, ...] = (
+    "/api/qcli", "/api/v1/qcli", "/api/cli", "/api/v1/cli", "/ws/qcli", "/ws/v1/qcli",
+)
+
+
 @dataclass
 class CliServerResult:
     """Return value from ``create_cli_server`` containing the app and services."""
@@ -102,6 +108,20 @@ class CliServerResult:
     #: (``result.event_bus.subscribe("job:*", handler)``).  Plugins mounted
     #: with ``mount_plugin`` publish through it.
     event_bus: CliEventBus = field(default_factory=CliEventBus)
+    #: Path prefixes of the CLI's own routes: the core's API and sockets, the
+    #: custom ``base_path`` and the prefixes (API and dashboard) of every
+    #: plugin mounted with :meth:`mount_plugin`.  Anything else the app
+    #: serves is the host application's.  Kept up to date as plugins mount.
+    cli_route_prefixes: list[str] = field(default_factory=lambda: list(CORE_CLI_ROUTE_PREFIXES))
+
+    def add_cli_route_prefix(self, prefix: str | None) -> None:
+        """Count ``prefix`` among the CLI's routes (see
+        :attr:`cli_route_prefixes`)."""
+        if not isinstance(prefix, str) or not prefix.strip("/"):
+            return
+        normalized = "/" + prefix.strip().strip("/")
+        if normalized not in self.cli_route_prefixes:
+            self.cli_route_prefixes.append(normalized)
 
     def set_shell_access_provider(self, provider: ShellAccessProvider | None) -> None:
         """Let an auth plugin own shell access (the users plugin calls this
@@ -133,6 +153,8 @@ class CliServerResult:
 
         prefix = getattr(plugin, "prefix", None)
         router = getattr(plugin, "router", None)
+        self.add_cli_route_prefix(prefix)
+        self.add_cli_route_prefix(getattr(plugin, "dashboard_prefix", None))
         if prefix and router:
             self.app.include_router(router, prefix=prefix)
 
@@ -339,6 +361,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         mcp=mcp_tools,
         event_bus=event_bus,
     )
+    result.add_cli_route_prefix(opts.base_path)
     server_ref.append(result)
     return result
 
