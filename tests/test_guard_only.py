@@ -230,3 +230,54 @@ def test_cli_routes_false_plugin_mounts_on_a_server_without_cli_routes():
     server.mount_plugin(_stub(False))
     with TestClient(server.app) as client:
         assert client.get("/qcli/x/ping").json() == {"pong": True}
+
+
+# ---------------------------------------------------------------------------
+# Guard-only fails closed: it needs a server without CLI routes
+# ---------------------------------------------------------------------------
+
+
+def test_guard_only_with_cli_routes_on_fails_at_mount():
+    server = create_cli_server(CliServerOptions(configure=_configure))
+    users = CliUsersBuilder().set_guard_only().build()
+    with pytest.raises(ValueError, match=r"^guard-only needs cli_routes=False$"):
+        server.mount_plugin(users)
+
+
+def test_guard_only_server_without_cli_routes_serves_no_mcp():
+    server = create_cli_server(CliServerOptions(configure=_configure, cli_routes=False, mcp=True))
+    users = CliUsersBuilder().set_guard_only().build()
+    server.mount_plugin(users)
+    with TestClient(server.app) as client:
+        assert client.post("/api/qcli/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).status_code == 404
+        assert client.post("/api/v1/qcli/link", json={}).status_code == 404
+
+
+async def test_guard_only_runs_no_sweeps():
+    users = CliUsersBuilder().set_guard_only().build()
+    await users.startup()
+    try:
+        assert users._cleanup_task is None
+    finally:
+        await users.shutdown()
+
+
+def test_admin_dashboard_not_served_without_cli_routes(caplog, tmp_path):
+    from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder
+
+    (tmp_path / "index.html").write_text("<html>dashboard</html>", encoding="utf-8")
+    options = CliServerOptions(cli_routes=False)
+    server = create_cli_server(options)
+    admin = CliAdminBuilder().set_credentials("admin", "secret-pass-1").set_dashboard_path(str(tmp_path)).build(
+        AdminBuildDeps(
+            registry=server.registry, event_socket_manager=server.event_socket_manager,
+            builder=server.builder, server_options=options,
+        ),
+    )
+    assert admin.dashboard_app is not None
+    with caplog.at_level(logging.WARNING):
+        server.mount_plugin(admin)
+    assert "[qcli] the CLI routes are turned off (cli_routes=False); the admin dashboard is not served" in caplog.text
+    with TestClient(server.app) as client:
+        assert client.get("/qcli/admin/").status_code == 404
+        assert client.post("/api/v1/qcli/auth/login", json={}).status_code == 404

@@ -223,6 +223,12 @@ def test_other_paths_under_the_base_are_not_handled():
         assert client.get("/qcli/api").status_code == 404
 
 
+def test_document_answers_head():
+    with _host() as (client, _, _):
+        res = client.head(DOC)
+        assert res.status_code == 200 and res.content == b""
+
+
 def test_custom_base_path():
     with _host(lambda b: b.set_base_path("/developers/api")) as (client, api, _):
         assert client.get("/developers/api/openapi.json").status_code == 200
@@ -237,7 +243,7 @@ def test_base_path_under_api_is_public_on_a_protected_server():
         assert client.get("/api/public/swagger").status_code == 200
 
 
-@pytest.mark.parametrize("path", ["", "/", "api", "/api/", "/a//b", "/a b"])
+@pytest.mark.parametrize("path", ["", "/", "api", "/api/", "/a//b", "/a b", "/a?b", "/a#b", "/a\\b"])
 def test_invalid_base_path(path: str):
     users = _make_users()[1]
     with pytest.raises(ValueError) as exc:
@@ -261,3 +267,12 @@ def test_without_a_source_the_document_is_empty():
 def test_invalid_source():
     with pytest.raises(TypeError):
         CliPublicApiBuilder().set_openapi(42)
+
+
+def test_swagger_under_a_root_path():
+    result, users = _make_users()
+    api = CliPublicApiBuilder().set_users(users).build()
+    result.mount_plugin(api)
+    for root, expected in (("/svc", "'/svc/qcli/api/openapi.json'"), ("//evil.example", "'/qcli/api/openapi.json'")):
+        with TestClient(result.app, root_path=root) as client:
+            assert expected in client.get("/qcli/api/swagger").text

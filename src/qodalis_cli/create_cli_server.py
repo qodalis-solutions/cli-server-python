@@ -187,7 +187,11 @@ class CliServerResult:
 
         dashboard_prefix = getattr(plugin, "dashboard_prefix", None)
         dashboard_app = getattr(plugin, "dashboard_app", None)
-        if dashboard_prefix and dashboard_app and not routes_off:
+        if dashboard_prefix and dashboard_app and routes_off:
+            logger.warning(
+                "[qcli] the CLI routes are turned off (cli_routes=False); the admin dashboard is not served",
+            )
+        elif dashboard_prefix and dashboard_app:
             self.app.mount(dashboard_prefix, dashboard_app)
 
 
