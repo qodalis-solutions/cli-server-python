@@ -38,22 +38,27 @@ for plugin in (docs, public_api, portal):
 
 ## Routes
 
-The portal answers exactly these paths under its mount, GET and HEAD only; anything else (other paths, other methods,
-a missing asset) falls through to the host's routes and the framework's 404, so a portal at `/` never shadows a host
-route such as `GET /v1/rates` or `GET /health`, whatever the order they were added in.
+The portal serves exactly these paths under its mount, GET and HEAD only. Other methods and paths outside them fall
+through to the host's routes and the framework's 404. What happens to an unknown path under `assets/`, `guides/` or
+`reference/` (a missing asset, `guides/a/b`) depends on the mount:
+
+- at `/`, it falls through to the host as well (as does a missing `favicon.svg`), so a root portal never shadows a
+  host route such as `GET /v1/rates`, `GET /health` or `GET /assets/app.js`, whatever the order they were added in;
+- away from `/`, the portal answers it itself with 404 `{"error": "not found"}` (also for a missing `favicon.svg`),
+  because those paths are served without sign-in and must never reach a host route.
 
 | Path (relative to the mount) | Answer |
 |---|---|
 | the mount itself, `/`, `/guides/<slug>`, `/reference`, `/reference/<tag>` | 200 `text/html; charset=utf-8`, `Cache-Control: no-cache`: the site's `index.html` with `<base href="<mount>/" />` |
 | `/portal.json` | 200 JSON, `Cache-Control: no-cache` |
-| `/assets/<file>` | the site's file (`Cache-Control: public, max-age=31536000, immutable`), else not handled |
-| `/favicon.svg` | the site's file, else not handled |
+| `/assets/<file>` | the site's file (`Cache-Control: public, max-age=31536000, immutable`); missing: falls through at `/`, else 404 `{"error": "not found"}` |
+| `/favicon.svg` | the site's file; missing: falls through at `/`, else 404 `{"error": "not found"}` |
 
 The pages are served without sign-in (GET and HEAD), also under `/api/` on a server protected by the users plugin (the
 portal's `public_paths`: the mount, `portal.json`, `favicon.svg`, and everything under `assets/`, `guides/` and
-`reference/`; CLI routes always keep their sign-in). Away from `/`, the portal answers every path under those prefixes
-itself (404 `{"error": "not found"}` for what it does not serve), so a path served without sign-in never reaches a host route; at `/` (never
-under `/api/`) a missing asset falls through to the host instead. A mount that holds CLI routes (`/api`, `/ws`,
+`reference/`; CLI routes always keep their sign-in). As described above, away from `/` the portal answers every path
+under those prefixes itself, so a path served without sign-in never reaches a host route; a portal at `/` declares no
+public paths (it is never under `/api/`). A mount that holds CLI routes (`/api`, `/ws`,
 `/api/v1`, anything under `/api/qcli`, ..., in any letter case) is refused. Under an ASGI `root_path`
 (an app mounted under a prefix) the `<base href>` and the URLs in `portal.json` start with it; a `root_path` starting
 with `//` or `/\` answers 400 `{"error": "invalid path base"}`.
