@@ -192,7 +192,8 @@ class IApiTokenStore(ABC):
     """Persistence interface for API tokens.
 
     ``token_hash`` is the SHA-256 (hex) of the token — raw tokens never reach
-    the store.
+    the store.  Stores must persist ``audience``: dropping it turns host
+    tokens into CLI tokens.
     """
 
     @abstractmethod

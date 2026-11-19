@@ -246,3 +246,200 @@ class TestVariants:
                 assert res.status_code == 403, path
                 assert res.json() == {"error": HOST_TEXT}
             assert srv.request("GET", "/api/host/rates", token).status_code == 200
+
+
+# =========================================================================
+# Fix round 1: fail-closed audience, manager user ids, socket close texts,
+# CLI routes derived from what is mounted
+# =========================================================================
+
+
+class _UpperAudienceStore:
+    """Wraps the in-memory store and reports the audience it was given in
+    another spelling (a custom store that changed the case)."""
+
+    def __new__(cls, audience: str):
+        from qodalis_cli_users import InMemoryApiTokenStore
+
+        class Store(InMemoryApiTokenStore):
+            def _out(self, token):
+                if token is not None and token.audience == "host":
+                    token.audience = audience
+                return token
+
+            async def get_token_by_hash(self, token_hash):
+                return self._out(await super().get_token_by_hash(token_hash))
+
+            async def get_token(self, token_id):
+                return self._out(await super().get_token(token_id))
+
+            async def get_tokens(self, user_id=None):
+                return [self._out(t) for t in await super().get_tokens(user_id)]
+
+        return Store()
+
+
+@pytest.mark.parametrize("stored", ["HOST", "api", " cli"])
+def test_audience_fails_closed(stored: str):
+    result, users = _make(CliUsersBuilder().set_api_token_store(_UpperAudienceStore(stored)))
+    with TestClient(result.app) as client:
+        srv = Srv(client, users, result)
+        token = srv.token(srv.alice())["token"]
+        for method, path, body in (CLI_ROUTES[0], CLI_ROUTES[10], CLI_ROUTES[15]):
+            res = srv.request(method, path, token, body)
+            assert res.status_code == 403, path
+            assert res.json() == {"error": HOST_TEXT}
+        # The host guards still accept it.
+        assert srv.request("GET", "/api/host/rates", token).status_code == 200
+
+
+def test_audience_view_reads_none_and_empty_as_cli():
+    from qodalis_cli_users import ApiToken
+
+    for audience, expected in ((None, "cli"), ("", "cli"), ("cli", "cli"), ("host", "host"), ("HOST", "host")):
+        token = ApiToken(id="t", audience=audience)
+        assert token.to_view("x")["audience"] == expected
+        assert token.is_host is (expected == "host")
+
+
+@pytest.mark.parametrize("user_id", [None, ""])
+async def test_manager_rejects_missing_user_ids(user_id):
+    result, users = _make()
+    await users.ensure_seeded()
+    alice = await users.user_store.create_user("alice", "alice@example.com", ["users"])
+    created = await users.api_tokens.create(alice.id, ApiTokenCreateOptions(name="ci"))
+    calls = [
+        users.api_tokens.create(user_id, ApiTokenCreateOptions(name="x")),
+        users.api_tokens.list(user_id),
+        users.api_tokens.revoke(user_id, created.api_token["id"]),
+        users.api_tokens.grantable_permissions(user_id),
+    ]
+    for call in calls:
+        with pytest.raises(ValueError, match="user_id is required"):
+            await call
+    assert await users.api_token_store.get_token(created.api_token["id"]) is not None
+
+
+def _closed(client: TestClient, path: str, headers: dict[str, str] | None = None) -> WebSocketDisconnect:
+    with client.websocket_connect(path, headers=headers or {}) as ws:
+        with pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_text()
+    return exc.value
+
+
+class TestSockets:
+    @pytest.fixture()
+    def shell_srv(self):
+        result, users = _make(enable_shell=True)
+        with TestClient(result.app) as client:
+            yield Srv(client, users, result)
+
+    @pytest.mark.parametrize("path", ["/ws/qcli/shell", "/ws/v1/qcli/shell", "/ws/qcli/events", "/ws/v1/qcli/logs"])
+    def test_host_token_bearer_closes_4403(self, shell_srv: Srv, path: str):
+        token = shell_srv.token(shell_srv.alice(["rates:read", "shell:execute", "logs:read"]))["token"]
+        exc = _closed(shell_srv.c, path, _h(token))
+        assert (exc.code, exc.reason) == (4403, HOST_TEXT)
+
+    def test_cli_token_bearer_still_needs_a_ticket(self, shell_srv: Srv):
+        token = shell_srv.token(shell_srv.alice(), audience="cli")["token"]
+        assert _closed(shell_srv.c, "/ws/qcli/events", _h(token)).code == 4401
+
+    def test_password_change_required_text(self, shell_srv: Srv):
+        alice = shell_srv.alice(["shell:execute"])
+        session = shell_srv.login("alice", "pass1234")
+        ticket = shell_srv.c.post(BASE + "/sessions/ws-ticket", headers=_h(session)).json()["ticket"]
+        shell_srv.call(lambda: shell_srv.users.user_store.update_user(alice.id, must_change_password=True))
+        exc = _closed(shell_srv.c, f"/ws/qcli/shell?ticket={ticket}")
+        assert (exc.code, exc.reason) == (4403, "password change required")
+
+    def test_missing_shell_permission_keeps_forbidden(self, shell_srv: Srv):
+        shell_srv.alice(["files:read"])
+        session = shell_srv.login("alice", "pass1234")
+        ticket = shell_srv.c.post(BASE + "/sessions/ws-ticket", headers=_h(session)).json()["ticket"]
+        exc = _closed(shell_srv.c, f"/ws/qcli/shell?ticket={ticket}")
+        assert (exc.code, exc.reason) == (4403, "forbidden")
+
+    def test_long_reason_falls_back_to_forbidden(self):
+        from qodalis_cli_users.server_protection import close_reason
+
+        assert close_reason(HOST_TEXT) == HOST_TEXT
+        assert close_reason("x" * 123) == "x" * 123
+        assert close_reason("x" * 124) == "forbidden"
+        assert close_reason("é" * 62) == "forbidden"  # 124 UTF-8 bytes
+
+
+class TestProtectedServerRoutes:
+    """A host route under ``/api/`` next to the CLI's routes, the admin
+    dashboard and plugins mounted at their own prefixes."""
+
+    @pytest.fixture()
+    def full(self):
+        from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder
+
+        result, users = _make()
+
+        @result.app.get("/api/rates", dependencies=[Depends(users.require_permission("rates:read"))])
+        async def api_rates():
+            return {"ok": True}
+
+        admin = CliAdminBuilder().set_users_plugin(users).build(AdminBuildDeps(
+            registry=result.registry,
+            event_socket_manager=result.event_socket_manager,
+            builder=result.builder,
+        ))
+        result.mount_plugin(admin)
+
+        class _Plugin:
+            prefix = "/plugins/reports"
+
+            def __init__(self) -> None:
+                from fastapi import APIRouter
+
+                self.router = APIRouter()
+                self.router.add_api_route("/list", lambda: {"reports": []})
+
+        result.mount_plugin(_Plugin())
+        with TestClient(result.app) as client:
+            yield Srv(client, users, result), admin
+
+    def test_host_route(self, full):
+        srv, _ = full
+        alice = srv.alice()
+        host = srv.token(alice, name="h")["token"]
+        assert srv.request("GET", "/api/rates", host).status_code == 200
+        bob_user = srv.call(lambda: srv.users.user_store.create_user("bob", "bob@example.com", ["users"]))
+        srv.call(lambda: srv.users.group_store.create_group("bob-g", permissions=["rates:read"]))
+        srv.call(lambda: srv.users.user_store.update_user(bob_user.id, groups=["users", "bob-g"]))
+        bob_host = srv.token(bob_user, name="h")["token"]
+        srv.call(lambda: srv.users.user_store.update_user(bob_user.id, groups=["users"]))
+        res = srv.request("GET", "/api/rates", bob_host)
+        assert res.status_code == 403 and res.json() == {"detail": "missing permission: rates:read"}
+        cli = srv.token(alice, audience="cli", name="c")["token"]
+        assert srv.request("GET", "/api/rates", cli).status_code == 200
+        assert srv.request("GET", BASE + "/commands", cli).status_code == 200
+        session = srv.login("alice", "pass1234")
+        assert srv.request("GET", "/api/rates", session).status_code == 200
+        assert srv.request("GET", BASE + "/tokens", session).status_code == 200
+
+    @pytest.mark.parametrize("method,path,body", [
+        ("GET", BASE + "/commands", None),
+        ("GET", BASE + "/tokens", None),
+        ("POST", "/api/qcli/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
+        ("GET", "/qcli/admin/", None),
+        ("GET", "/qcli/admin/index.html", None),
+        ("GET", BASE + "/status", None),
+        ("GET", "/plugins/reports/list", None),
+    ])
+    def test_host_token_refused(self, full, method: str, path: str, body: Any):
+        srv, _ = full
+        token = srv.token(srv.alice())["token"]
+        res = srv.request(method, path, token, body)
+        assert res.status_code == 403, (path, res.text)
+        assert res.json() == {"error": HOST_TEXT}
+
+    def test_mounted_prefixes_are_cli_routes(self, full):
+        srv, _ = full
+        prefixes = srv.result.cli_route_prefixes
+        assert "/qcli/admin" in prefixes and "/plugins/reports" in prefixes
+        # Without a bearer the dashboard's static files stay public.
+        assert srv.request("GET", "/qcli/admin/", None).status_code != 403

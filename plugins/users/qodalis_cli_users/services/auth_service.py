@@ -138,7 +138,7 @@ class AuthContext:
         """Authenticated by a ``host`` API token: accepted only by the host
         application's guarded routes (``require_auth`` /
         ``require_permission``), refused on every CLI route."""
-        return self.api_token is not None and getattr(self.api_token, "audience", None) == "host"
+        return self.api_token is not None and self.api_token.is_host
 
     def can(self, permission: str) -> bool:
         return has_permission(self.permissions, permission)
@@ -906,7 +906,7 @@ class AuthService:
         if entry.api_token_id is not None:
             record = await self.api_token_store.get_token(entry.api_token_id)
             # Host tokens never open the CLI's sockets.
-            if record is None or record.user_id != entry.user_id or record.audience == "host":
+            if record is None or record.user_id != entry.user_id or record.is_host:
                 return None
             try:
                 return await self.context_for_api_token(record)

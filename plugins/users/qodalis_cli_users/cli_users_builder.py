@@ -125,6 +125,8 @@ class CliUsersPlugin:
     _require_cli_auth: Any = field(default=None, repr=False)
     _extra_public: list = field(default_factory=list, repr=False)
     _base_paths: list = field(default_factory=list, repr=False)
+    #: The server's ``cli_route_prefixes`` (live list), set when mounted.
+    _server_cli_prefixes: Optional[list] = field(default=None, repr=False)
     _protected_apps: list = field(default_factory=list, repr=False)
     _cleanup_task: Optional[asyncio.Task] = field(default=None, repr=False)
     #: ``(socket manager, permission)`` of the server's events/logs sockets.
@@ -176,6 +178,7 @@ class CliUsersPlugin:
             ensure_ready=self.ensure_seeded,
             extra_public=self._extra_public,
             base_paths=self._base_paths,
+            cli_prefixes=lambda: self._server_cli_prefixes,
         ))
         app.middleware_stack = None
         self._protected_apps.append(app)
@@ -210,6 +213,9 @@ class CliUsersPlugin:
             base = _normalize_base(base_path)
             if base not in self._base_paths:
                 self._base_paths.append(base)
+        prefixes = getattr(server, "cli_route_prefixes", None)
+        if isinstance(prefixes, list):
+            self._server_cli_prefixes = prefixes
         if self.protect_server:
             self.protect(server.app)
         # Events/logs sockets are bound to their session: closed (4401
