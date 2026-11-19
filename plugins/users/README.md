@@ -61,7 +61,7 @@ result.app.router.lifespan_context = lifespan
 | `set_read_only_users(bool=True)` | `False` | The host owns the users: user writes answer `501` (see [Read-only stores](#read-only-stores)) |
 | `set_read_only_groups(bool=True)` | `False` | The host owns the groups: group writes answer `501` |
 | `set_auth_adapter(adapter)` | `None` | Delegate authentication to the host app (a sync or async callable; see below) |
-| `build(broadcast_fn=None, event_bus=None)` | | Returns a `CliUsersPlugin` (`prefix`, `router`, `startup()`, `shutdown()`, `require_auth`, `require_permission(p)`, `protect(app)`, `auth_service`, stores) |
+| `build(broadcast_fn=None, event_bus=None)` | | Returns a `CliUsersPlugin` (`prefix`, `router`, `startup()`, `shutdown()`, `require_auth`, `require_permission(p)`, `require_cli_auth`, `api_tokens`, `protect(app)`, `auth_service`, stores) |
 
 When mounted with `result.mount_plugin(...)`, user-scoped events (`session-kicked`) go only to event sockets authenticated as that user, and the [server events](#server-events) go to the server's event bus. `broadcast_fn` (JSON strings, sync or async) is only used when the plugin is not mounted on a CLI server (and has no `event_bus`).
 
@@ -75,9 +75,40 @@ async def handler(ctx = Depends(users_plugin.require_permission("deploy:run"))):
 
 `users_plugin.require_auth` only requires an authenticated session.
 
+These two guards are the only places that accept [host tokens](#host-tokens): API tokens a host application issues for its own routes. `users_plugin.require_cli_auth` is `require_auth` that refuses them (`403 forbidden: host tokens cannot use CLI routes`); use it for routes of a CLI plugin of your own that you include by hand. The admin plugin's API uses it.
+
 ## Permissions
 
 Groups carry `permissions` (`resource:action` strings, `*` wildcards such as `users:*` or `*`, case-insensitive). A user's effective permissions are the union of its groups' permissions. Built-in permissions: `users:read|create|update|delete`, `groups:read|create|update|delete`, `sessions:read|revoke`, `audit:read|clear`, `tokens:read|revoke`, plus the server permissions below.
+
+### Permission catalog
+
+The server keeps a catalog of the permissions a token can be given, each with a description and a group, for the dashboard's and the web CLI's token pickers. Core registers 11 entries (`commands:execute`, `shell:execute`, `files:read`, `files:write`, `data:query`, `jobs:read`, `jobs:manage`, `logs:read`, `admin:access`, `audit:read`, `audit:clear`) and this plugin adds 12 when mounted (`users:*`, `groups:*`, `sessions:read|revoke`, `tokens:read|revoke`), all with surface `cli`. The host adds its own routes' permissions with surface `host`:
+
+```python
+from qodalis_cli import CliPermission
+
+def configure(builder):
+    builder.add_permissions([
+        CliPermission(name="rates:read", description="Official exchange rates", group="Rates"),
+        {"name": "banks:read", "description": "Banks and their buy and sell rates", "group": "Rates"},
+    ])  # surface="host" by default; plugins pass surface="cli"
+```
+
+The catalog is for choosing, not for validation: groups and `cli` tokens keep accepting any permission, unknown and wildcard ones included. Only [host tokens](#host-tokens) are checked against it. Registering a name that is already registered fails startup (`permission already registered: <name>`, case-insensitive), so a host that registers `users:read` itself makes mounting this plugin raise. A malformed entry raises `invalid permission entry: <name>`: the name must match `^[a-z0-9_.-]+:[a-z0-9_.-]+$`, the description must be one line of 1-200 characters and the group 1-64 characters.
+
+`GET /api/v1/qcli/permissions` lists the entries: every `cli` entry in registration order (core, then plugins), then every `host` entry.
+
+| Request | Result |
+|---|---|
+| no query, or `?all=false` | `200`, the entries the caller holds (wildcards in its permissions match; a scoped token sees only its scope) |
+| `?all=true` with `users:read` | `200`, every entry |
+| `?all=true` without `users:read` | `403 permission denied: users:read` |
+| `?all=` anything else | `400 all must be true or false` |
+| no credentials | `401 unauthorized` |
+| a host token | `403 forbidden: host tokens cannot use CLI routes` |
+
+Each entry is `{ "name": "files:read", "description": "List, read and download files", "group": "Files", "surface": "cli" }`.
 
 A caller can never grant or exercise more than it holds: group permissions it grants, groups it adds users to, and users it acts on (update, password reset, delete, revoke sessions) must be covered by its own permissions (403).
 
@@ -99,7 +130,9 @@ When mounted on a CLI server, every route and socket requires a users session ex
 | shell WebSocket (opt-in `enable_shell`) | `shell:execute` |
 | admin dashboard (admin plugin with `set_users_plugin`) | `admin:access` |
 
-WebSockets authenticate with a single-use ticket: `POST /sessions/ws-ticket` → `201 { ticket, expiresIn: 30 }`, then connect with `?ticket=<ticket>`. Missing/invalid tickets close with 4401, missing permissions with 4403. Bearer tokens are not accepted in query strings.
+WebSockets authenticate with a single-use ticket: `POST /sessions/ws-ticket` → `201 { ticket, expiresIn: 30 }`, then connect with `?ticket=<ticket>`. Missing/invalid tickets close with 4401, missing permissions with 4403 `forbidden`, a pending password change with 4403 `password change required`. Bearer tokens are not accepted in query strings, nor as a way to open a socket: a host token sent as the `Authorization` bearer closes it with 4403 `forbidden: host tokens cannot use CLI routes`.
+
+**Host tokens are refused on every CLI route and socket**, with `403 forbidden: host tokens cannot use CLI routes` (4403 with that text on sockets), whether or not the server is protected. CLI routes are the core's (`/api/qcli`, `/api/v1/qcli`, `/ws/qcli`, `/ws/v1/qcli`, ...), the server's `base_path`, and the API and dashboard prefixes of every plugin mounted with `result.mount_plugin(...)` (`result.cli_route_prefixes`). A plugin router you include by hand counts only after `result.add_cli_route_prefix(prefix)`. With `set_protect_server(False)` the CLI routes stay unauthenticated, and anonymous and `cli`-token requests are untouched; only `qcli_pat_` bearers that are host tokens are refused (a look-up by hash: no `lastUsedAt` update, no adapter call).
 
 Events and logs sockets stay bound to the session behind their ticket: on logout, revoke (kick), the user being disabled or deleted, or session expiry (detected on every session/user/group change and by the background sweep) they are closed with 4401 `session ended`. Revocations (kick, disable, delete, password reset) first send `session-kicked` to the user's event sockets. Sockets opened through an external auth adapter are re-checked through the adapter every `session_check_interval` (see [External auth adapter](#external-auth-adapter)).
 
@@ -137,7 +170,8 @@ All routes are mounted under `/api/v1/qcli`; collections accept paths with and w
 | `DELETE /audit` | `audit:clear` | Clear the audit log (204; audit plugin) |
 | `GET /tokens` | authenticated | Own API tokens (views) |
 | `GET /tokens?all=true` | `tokens:read` | Every user's API tokens (`all` must be `true`/`false`, else 400) |
-| `POST /tokens` | authenticated, **session only** | `{ name, expiresInDays?, permissions? }` → `201 { token, apiToken }` |
+| `POST /tokens` | authenticated, **session only** | `{ name, expiresInDays?, permissions?, audience? }` → `201 { token, apiToken }` (`audience` absent or `"cli"`; `"host"` → `400 host tokens can only be created by the host application`; anything else → `400 audience must be cli or host`) |
+| `GET /permissions` | authenticated | The [permission catalog](#permission-catalog) entries the caller holds; `?all=true` needs `users:read` |
 | `DELETE /tokens/{id}` | owner or `tokens:revoke` | Revoke (204); unknown or not yours → 404 |
 | `POST /link` | public, 10 per minute per address | `{ client, permissions? }` → `201 { linkId, userCode, verificationUrl, expiresIn, interval }` (see [Linking a terminal](#linking-a-terminal)) |
 | `GET /link/{linkId}` | public | `{ status: 'pending' \| 'denied' }`, or `{ status: 'approved', token, userName, expiresAt }` once; 404 `{ status: 'expired' }` |
@@ -166,19 +200,53 @@ Long-lived, revocable bearer tokens for MCP clients, CI and scripts (sessions ex
 curl -X POST http://localhost:8048/api/v1/qcli/tokens \
   -H "Authorization: Bearer <session token>" -H "Content-Type: application/json" \
   -d '{"name": "claude", "expiresInDays": 30, "permissions": ["commands:execute", "files:read"]}'
-# → 201 { "token": "qcli_pat_…", "apiToken": { "id", "name", "userId", "userName", "createdAt", "expiresAt", "lastUsedAt", "permissions" } }
+# → 201 { "token": "qcli_pat_…", "apiToken": { "id", "name", "userId", "userName", "createdAt", "expiresAt", "lastUsedAt", "audience", "permissions" } }
 ```
 
 - `name`: 1-64 characters of `[A-Za-z0-9._ -]`, unique per user (case-insensitive; duplicate → `409`). At most 20 non-expired tokens per user (`400`; expired tokens stay listed until revoked).
 - `expiresInDays`: integer 1-365, default 90; `null` (never expires) only with `set_allow_non_expiring_tokens(True)`, else `400`.
 - `permissions` (optional scope): every entry must be a valid permission you hold, else `403 forbidden: cannot grant <perm>` (body field errors are `400` first). A scoped token gets the user's **live** permissions intersected with the scope; `[]` is an empty scope; an unscoped token (`permissions` omitted or `null`; omitted in the view) gets all of them.
 - Views never contain the token or its hash; `lastUsedAt` is `null` until first use and updated at most once a minute.
+- `audience` is always in the view: `cli` (every token `POST /tokens` creates) or `host` (see [Host tokens](#host-tokens)).
 
 `Authorization: Bearer qcli_pat_…` is accepted everywhere a session token is (HTTP routes, `POST /sessions/ws-ticket`, the MCP endpoint). An unknown, revoked or expired token, or one whose user is disabled or deleted, gets `401`; `mustChangePassword` applies as for sessions. With a token, `GET`/`DELETE /sessions/current` answer `404 not a session` and password changes `403 forbidden: API tokens cannot change passwords`. Sockets opened with a token's ticket are closed with 4401 `session ended` when the token is revoked or expires or the user is disabled.
 
 With an external auth adapter (`set_auth_adapter`) tokens are off: `POST /tokens` and link approval answer `501` and `qcli_pat_` bearer tokens go to the adapter. `set_allow_api_tokens()` turns them on next to the host's sign-in: `qcli_pat_` bearer tokens are checked against the token store before the adapter (which never sees them), and users signed in by the host create tokens and approve terminal links. The token's user is read from the user store by id, so the store must find the adapter's users and report `disabled`; keep the tokens in a persistent `IApiTokenStore` (the default one forgets them on restart).
 
 Deleting a user deletes their tokens; disabling a user makes their tokens fail (they work again after re-enabling). Creation and revocation are audited as `token_created` / `token_revoked` (details: token name and id).
+
+### Host tokens
+
+A host application can give its users API tokens for its **own** routes, for example an exchange-rates app with `rates:read`. These tokens have the audience `host`. The host creates them through `users_plugin.api_tokens` (`ApiTokenManager`), never through `POST /tokens`. They are accepted only by `users_plugin.require_auth` and `users_plugin.require_permission(...)`, and refused on every CLI route and socket (see [Server protection](#server-protection)).
+
+```python
+from qodalis_cli_users import ApiTokenCreateOptions, UsersApiError
+
+created = await users_plugin.api_tokens.create(user.id, ApiTokenCreateOptions(
+    name="rates", audience="host", permissions=["rates:read"], expires_in_days=30, actor="rates-app",
+))
+created.token        # qcli_pat_… (shown once)
+created.to_dict()    # {"token": ..., "apiToken": {..., "audience": "host", "permissions": ["rates:read"]}}
+
+await users_plugin.api_tokens.list(user.id)                        # views, oldest first, both audiences
+await users_plugin.api_tokens.revoke(user.id, token_id, actor="rates-app")   # False if missing or not the user's
+await users_plugin.api_tokens.grantable_permissions(user.id, "host")         # catalog entries the user holds
+```
+
+`ApiTokenCreateOptions(name, expires_in_days=None, never_expires=False, permissions=None, audience="cli", actor=None)`. `create` has the validation, limits, audit entries (`token_created`, with `actor` or the owner's name) and events of `POST /tokens`. Errors are `UsersApiError` with the status and text the route would answer, checked in this order:
+
+1. external auth without `set_allow_api_tokens()` → `501 Authentication is managed by the host application`
+2. unknown user (looked up by id) → `404 user not found`; disabled → `403 account disabled`
+3. audience other than `cli`/`host` → `400 audience must be cli or host`
+4. name and expiry as `POST /tokens`; `never_expires` needs `set_allow_non_expiring_tokens()` (`400 non-expiring tokens are not allowed`); with `expires_in_days` too → `400 expiresInDays and neverExpires cannot both be set`
+5. permission syntax as `POST /tokens`
+6. host tokens only: no permissions → `400 host tokens need permissions`; an entry that is not a `host` entry of the catalog (case-insensitive; wildcards never match) → `400 not a host permission: <p>`. Entries are stored in the catalog's spelling (`RATES:READ` → `rates:read`)
+7. every entry held by the user's live permissions (wildcards in groups count: `rates:*` grants `rates:read`) → else `403 forbidden: cannot grant <p>`
+8. name taken → `409 token '<name>' already exists`; more than 20 tokens (both audiences together) → `400 a user may have at most 20 tokens`
+
+A `None` or empty `user_id` raises `ValueError` in every method, before any store is read. `grantable_permissions(user_id, "cli")` returns every catalog entry the user holds, `"host"` only the host ones; an unknown user is `404 user not found`.
+
+The catalog is checked only when a token is created; on every request the guard checks the user's live permissions, so a host token keeps working when its entry is no longer registered. Revocation (`DELETE /tokens/{id}`, deleting or disabling the user) is the same for both audiences, and the 20-token limit and name uniqueness count both. A stored audience that is missing, `None` or empty reads as `cli`; **any other value but `cli` is treated as host** (fail closed). A host route without a guard can tell a host token from the context the protection middleware stored: `qodalis_cli.security.get_auth_context(request).is_host_token`.
 
 Use a token with the server's MCP endpoint — see the main README, [*Using the MCP endpoint from an MCP client*](../../README.md#using-the-mcp-endpoint-from-an-mcp-client):
 
@@ -253,6 +321,8 @@ Implement any of `IUserStore`, `ISessionStore`, `ICredentialStore`, `IAuditStore
 ```python
 users_plugin = CliUsersBuilder().set_user_store(PostgresUserStore(pool)).build()
 ```
+
+An `IApiTokenStore` must persist `ApiToken.audience`: a store that drops it turns host tokens into CLI tokens (rows without it read as `cli`).
 
 ## External auth adapter
 
