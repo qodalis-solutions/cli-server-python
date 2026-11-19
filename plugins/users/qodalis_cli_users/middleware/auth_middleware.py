@@ -4,7 +4,10 @@
 to an :class:`AuthContext` holding the **live** user and its effective
 permissions, and enforces CSRF (B9) and the ``mustChangePassword`` gate (B4).
 ``get_auth_pending`` is the same without the password-change gate (for the
-few endpoints allowed while a password change is pending).
+few endpoints allowed while a password change is pending).  ``get_cli_auth``
+also refuses ``host`` API tokens (403): the users plugin's own routes use it,
+while ``get_auth`` (``require_auth`` / ``require_permission``) guards the
+host application's routes and accepts them.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from fastapi import Depends, Request
 
 from .._http import SAFE_METHODS, bearer_token, get_scope_auth, has_bearer, origin_allowed
 from ..errors import forbidden, unauthorized
-from ..services.auth_service import AuthContext, AuthService
+from ..services.auth_service import HOST_TOKENS_CANNOT_USE_CLI_ROUTES, AuthContext, AuthService
 
 GetAuth = Callable[[Request], Awaitable[AuthContext]]
 
@@ -43,11 +46,40 @@ async def authenticate_request(auth_service: AuthService, request: Request) -> A
     return await auth_service.authenticate_token(token)
 
 
+def ensure_cli_audience(ctx: AuthContext) -> None:
+    """403 for a ``host`` API token on a CLI route."""
+    if ctx.is_host_token:
+        raise forbidden(HOST_TOKENS_CANNOT_USE_CLI_ROUTES)
+
+
+def cli_only(get: GetAuth) -> GetAuth:
+    """``get`` that also refuses ``host`` API tokens."""
+
+    async def dependency(request: Request) -> AuthContext:
+        ctx = await get(request)
+        ensure_cli_audience(ctx)
+        return ctx
+
+    return dependency
+
+
+def permission_dependency(get: GetAuth, permission: str) -> Callable[..., Awaitable[AuthContext]]:
+    """FastAPI dependency: ``get``'s caller holding ``permission`` (403)."""
+
+    async def dependency(ctx: AuthContext = Depends(get)) -> AuthContext:
+        if not ctx.can(permission):
+            raise forbidden(f"missing permission: {permission}")
+        return ctx
+
+    return dependency
+
+
 def create_auth_dependencies(
     auth_service: AuthService,
     ensure_ready: Callable[[], Awaitable[None]] | None = None,
-) -> tuple[GetAuth, Callable[[str], Callable[..., Awaitable[AuthContext]]], GetAuth]:
-    """Return ``(get_auth, require_permission, get_auth_pending)``."""
+) -> tuple[GetAuth, Callable[[str], Callable[..., Awaitable[AuthContext]]], GetAuth, GetAuth]:
+    """Return ``(get_auth, require_permission, get_auth_pending,
+    get_cli_auth)``."""
 
     async def get_auth_pending(request: Request) -> AuthContext:
         if ensure_ready is not None:
@@ -62,15 +94,18 @@ def create_auth_dependencies(
         auth_service.ensure_password_changed(ctx)
         return ctx
 
+    async def get_cli_auth(request: Request) -> AuthContext:
+        ctx = await get_auth_pending(request)
+        # Before the password-change gate: a host token gets this 403 whatever
+        # the user's state.
+        ensure_cli_audience(ctx)
+        auth_service.ensure_password_changed(ctx)
+        return ctx
+
     def require_permission(permission: str) -> Callable[..., Awaitable[AuthContext]]:
-        async def dependency(ctx: AuthContext = Depends(get_auth)) -> AuthContext:
-            if not ctx.can(permission):
-                raise forbidden(f"missing permission: {permission}")
-            return ctx
+        return permission_dependency(get_auth, permission)
 
-        return dependency
-
-    return get_auth, require_permission, get_auth_pending
+    return get_auth, require_permission, get_auth_pending, get_cli_auth
 
 
 def bearer_token_from(request: Request) -> str | None:  # backwards compat

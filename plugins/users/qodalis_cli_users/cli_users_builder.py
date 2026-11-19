@@ -36,7 +36,7 @@ from .controllers.permissions_controller import create_permissions_router
 from .controllers.sessions_controller import create_sessions_router
 from .controllers.tokens_controller import create_tokens_router
 from .controllers.users_controller import create_users_router
-from .middleware.auth_middleware import create_auth_dependencies
+from .middleware.auth_middleware import cli_only, create_auth_dependencies, permission_dependency
 from .errors import UsersApiError
 from .models import ExternalAuthAdapter
 from .permissions import USERS_PERMISSION_ENTRIES, USERS_READ
@@ -120,6 +120,9 @@ class CliUsersPlugin:
     #: including ``host`` tokens (accepted only by ``require_auth`` /
     #: ``require_permission``).
     api_tokens: Optional[ApiTokenManager] = None
+    #: The users routes' authentication (``require_auth`` that refuses
+    #: ``host`` API tokens).
+    _require_cli_auth: Any = field(default=None, repr=False)
     _extra_public: list = field(default_factory=list, repr=False)
     _base_paths: list = field(default_factory=list, repr=False)
     _protected_apps: list = field(default_factory=list, repr=False)
@@ -262,7 +265,7 @@ class CliUsersPlugin:
     async def authorize_audit(self, request: Request, permission: str) -> Any:
         """The users plugin's guard of the audit API (a session or token with
         ``permission``), used when it does not protect the whole server."""
-        ctx = await self.require_auth(request)
+        ctx = await self._require_cli_auth(request)
         if not ctx.can(permission):
             raise UsersApiError(403, f"missing permission: {permission}")
         return ctx
@@ -610,27 +613,35 @@ class CliUsersBuilder:
 
         # Requests made before startup() (e.g. apps without a lifespan) still
         # see the seeded built-ins.
-        get_auth, require_permission, get_auth_pending = create_auth_dependencies(
+        get_auth, require_permission, get_auth_pending, get_cli_auth = create_auth_dependencies(
             auth_service, ensure_ready=plugin.ensure_seeded,
         )
+        # Host routes (require_auth / require_permission) accept host tokens;
+        # the plugin's own routes refuse them.
         plugin.require_auth = get_auth
         plugin.require_permission = require_permission
+        plugin._require_cli_auth = get_cli_auth
+        get_cli_auth_pending = cli_only(get_auth_pending)
+
+        def require_cli_permission(permission: str) -> Any:
+            return permission_dependency(get_cli_auth, permission)
+
         router.include_router(create_sessions_router(
-            auth_service, get_auth, require_permission,
-            ensure_ready=plugin.ensure_seeded, get_auth_pending=get_auth_pending,
+            auth_service, get_cli_auth, require_cli_permission,
+            ensure_ready=plugin.ensure_seeded, get_auth_pending=get_cli_auth_pending,
         ))
         router.include_router(create_users_router(
-            auth_service, users_service, get_auth, require_permission,
-            get_auth_pending=get_auth_pending,
+            auth_service, users_service, get_cli_auth, require_cli_permission,
+            get_auth_pending=get_cli_auth_pending,
         ))
         router.include_router(create_groups_router(
-            auth_service, users_service, get_auth, require_permission,
+            auth_service, users_service, get_cli_auth, require_cli_permission,
         ))
-        router.include_router(create_tokens_router(auth_service, get_auth))
-        router.include_router(create_permissions_router(auth_service, get_auth))
+        router.include_router(create_tokens_router(auth_service, get_cli_auth))
+        router.include_router(create_permissions_router(auth_service, get_cli_auth))
         plugin.link_service = LinkService(auth_service, self._link_approval_url)
         plugin._link_limiter = LinkRateLimiter()
         router.include_router(create_link_router(
-            auth_service, plugin.link_service, get_auth, plugin._link_limiter,
+            auth_service, plugin.link_service, get_cli_auth, plugin._link_limiter,
         ))
         return plugin

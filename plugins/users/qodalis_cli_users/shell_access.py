@@ -51,7 +51,8 @@ class UsersShellAccess:
             raw = websocket.scope.get("query_string", b"").decode("latin-1")
             ticket = (parse_qs(raw).get("ticket") or [None])[0]
             ctx = await self.auth.consume_ticket(ticket)
-        if ctx is None:
+        # Host API tokens never open the CLI's shell.
+        if ctx is None or ctx.is_host_token:
             return None
         return UsersShellPrincipal(
             user_id=ctx.user.id,
@@ -63,7 +64,7 @@ class UsersShellAccess:
 
     def can_open(self, principal: UsersShellPrincipal) -> bool:
         ctx = principal.context
-        return not ctx.must_change_password and ctx.can(SHELL_PERMISSION)
+        return not ctx.is_host_token and not ctx.must_change_password and ctx.can(SHELL_PERMISSION)
 
     async def is_active(self, principal: UsersShellPrincipal) -> bool | str:
         """``True`` while valid; ``False`` (session ended) or
