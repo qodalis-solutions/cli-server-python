@@ -82,7 +82,10 @@ class _CatalogEntry:
 
 class LocalPermissionCatalog:
     """The plugin's own catalog, used until it is mounted on a server with a
-    catalog (an older core, or the plugin's router included on its own)."""
+    catalog (an older core, or the plugin's router included on its own).
+
+    Not a general-purpose catalog: it holds the plugin's fixed entries only,
+    with no validation and no all-or-nothing ``add``."""
 
     def __init__(self) -> None:
         self._entries: list[_CatalogEntry] = []

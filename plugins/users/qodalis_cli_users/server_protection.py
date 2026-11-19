@@ -28,6 +28,7 @@ from .middleware.auth_middleware import authenticate_request
 from .services.auth_service import (
     API_TOKEN_PREFIX,
     HOST_TOKENS_CANNOT_USE_CLI_ROUTES,
+    hash_token,
     PASSWORD_CHANGE_REQUIRED,
     AuthContext,
     AuthService,
@@ -164,15 +165,13 @@ class ServerProtectionMiddleware:
     async def _host_bearer(self, scope: dict) -> bool:
         """Whether the request carries a valid ``host`` API token as its
         bearer (refused on CLI paths the middleware does not authenticate:
-        the admin dashboard's files, sockets without a ticket)."""
+        the admin dashboard's files, sockets without a ticket).  A look-up
+        only: nothing is written (``last_used_at`` stays as it is)."""
         token = bearer_token(Headers(scope=scope))
         if not token or not token.startswith(API_TOKEN_PREFIX) or not self.auth.api_tokens_enabled:
             return False
-        try:
-            ctx = await self.auth.authenticate_api_token(token)
-        except UsersApiError:
-            return False
-        return ctx.is_host_token
+        record = await self.auth.api_token_store.get_token_by_hash(hash_token(token))
+        return record is not None and record.is_host
 
     def _protected(self, path: str) -> bool:
         if path.startswith("/api/") or path.startswith("/ws/"):

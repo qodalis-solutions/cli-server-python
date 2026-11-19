@@ -116,7 +116,9 @@ class CliServerResult:
 
     def add_cli_route_prefix(self, prefix: str | None) -> None:
         """Count ``prefix`` among the CLI's routes (see
-        :attr:`cli_route_prefixes`)."""
+        :attr:`cli_route_prefixes`).  :meth:`mount_plugin` does it for every
+        plugin it mounts; a plugin whose router the host includes by hand
+        (``app.include_router``) is not counted unless the host calls this."""
         if not isinstance(prefix, str) or not prefix.strip("/"):
             return
         normalized = "/" + prefix.strip().strip("/")

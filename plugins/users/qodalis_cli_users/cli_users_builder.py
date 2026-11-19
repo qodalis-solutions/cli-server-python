@@ -116,13 +116,14 @@ class CliUsersPlugin:
     require_auth: Any = None
     #: ``require_permission("perm")`` → FastAPI dependency (403 if missing).
     require_permission: Any = None
+    #: FastAPI dependency for CLI routes of other plugins (e.g. the admin
+    #: API): ``require_auth`` that also refuses ``host`` API tokens (403
+    #: ``forbidden: host tokens cannot use CLI routes``).
+    require_cli_auth: Any = None
     #: API tokens the host creates, lists and revokes for its users,
     #: including ``host`` tokens (accepted only by ``require_auth`` /
     #: ``require_permission``).
     api_tokens: Optional[ApiTokenManager] = None
-    #: The users routes' authentication (``require_auth`` that refuses
-    #: ``host`` API tokens).
-    _require_cli_auth: Any = field(default=None, repr=False)
     _extra_public: list = field(default_factory=list, repr=False)
     _base_paths: list = field(default_factory=list, repr=False)
     #: The server's ``cli_route_prefixes`` (live list), set when mounted.
@@ -249,7 +250,15 @@ class CliUsersPlugin:
         catalog = getattr(getattr(server, "builder", None), "permissions", None)
         if catalog is None or not all(callable(getattr(catalog, m, None)) for m in ("add", "all", "find")):
             return
-        if catalog.find(USERS_READ) is None:
+        # Skipped only on a remount (the entry is the plugin's own); a host or
+        # plugin that registered users:read itself fails startup.
+        existing = catalog.find(USERS_READ)
+        own = USERS_PERMISSION_ENTRIES[0]
+        if not (
+            existing is not None
+            and getattr(existing, "surface", None) == "cli"
+            and getattr(existing, "description", None) == own["description"]
+        ):
             catalog.add(USERS_PERMISSION_ENTRIES, "cli")
         self.auth_service.permission_catalog = catalog
 
@@ -271,7 +280,7 @@ class CliUsersPlugin:
     async def authorize_audit(self, request: Request, permission: str) -> Any:
         """The users plugin's guard of the audit API (a session or token with
         ``permission``), used when it does not protect the whole server."""
-        ctx = await self._require_cli_auth(request)
+        ctx = await self.require_cli_auth(request)
         if not ctx.can(permission):
             raise UsersApiError(403, f"missing permission: {permission}")
         return ctx
@@ -626,7 +635,7 @@ class CliUsersBuilder:
         # the plugin's own routes refuse them.
         plugin.require_auth = get_auth
         plugin.require_permission = require_permission
-        plugin._require_cli_auth = get_cli_auth
+        plugin.require_cli_auth = get_cli_auth
         get_cli_auth_pending = cli_only(get_auth_pending)
 
         def require_cli_permission(permission: str) -> Any:
