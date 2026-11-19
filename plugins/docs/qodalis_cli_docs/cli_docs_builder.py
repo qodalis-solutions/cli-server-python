@@ -41,6 +41,11 @@ PAGE_NOT_FOUND = "page not found"
 _NO_CACHE = {"Cache-Control": "no-cache"}
 
 
+class _Json(JSONResponse):
+    media_type = "application/json; charset=utf-8"
+
+
+
 def validate_base_path(path: Any) -> str:
     """Starts with ``/``, no trailing ``/``, not ``/`` itself."""
     if (
@@ -173,20 +178,20 @@ def _router(plugin: CliDocsPlugin) -> APIRouter:
     router = APIRouter()
     by_slug = {page.slug: page for page in plugin.pages}
 
-    async def list_pages(request: Request) -> JSONResponse:
+    async def list_pages(request: Request) -> _Json:
         if _path_base_invalid(request):
-            return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400)
+            return _Json({"error": INVALID_PATH_BASE}, status_code=400)
         # Page order is the titles' as written, before variables are replaced.
         variables = plugin.variables_for(request)
-        return JSONResponse([apply_variables(p, variables).summary() for p in plugin.pages], headers=_NO_CACHE)
+        return _Json([apply_variables(p, variables).summary() for p in plugin.pages], headers=_NO_CACHE)
 
-    async def get_page(slug: str, request: Request) -> JSONResponse:
+    async def get_page(slug: str, request: Request) -> _Json:
         if _path_base_invalid(request):
-            return JSONResponse({"error": INVALID_PATH_BASE}, status_code=400)
+            return _Json({"error": INVALID_PATH_BASE}, status_code=400)
         page = by_slug.get(slug)
         if page is None:
-            return JSONResponse({"error": PAGE_NOT_FOUND}, status_code=404)
-        return JSONResponse(apply_variables(page, plugin.variables_for(request)).to_dict(), headers=_NO_CACHE)
+            return _Json({"error": PAGE_NOT_FOUND}, status_code=404)
+        return _Json(apply_variables(page, plugin.variables_for(request)).to_dict(), headers=_NO_CACHE)
 
     router.add_api_route("/pages", list_pages, methods=["GET", "HEAD"], include_in_schema=False)
     # ``path`` so an encoded ``/`` (``..%2Fsecret``) still gets the plugin's 404.

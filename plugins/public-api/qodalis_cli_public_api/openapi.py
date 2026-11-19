@@ -134,9 +134,10 @@ class PublicOpenApiDocument:
         schemes = components.setdefault("securitySchemes", {})
         if SCHEME_NAME not in schemes:
             schemes[SCHEME_NAME] = dict(SECURITY_SCHEME)
-        if "security" not in document:
+        # An explicitly empty list counts as unset, as on the other servers.
+        if not document.get("security"):
             document["security"] = [{SCHEME_NAME: []}]
-        if "servers" not in document:
+        if not document.get("servers"):
             document["servers"] = [{"url": self.server_url or request_base_url.rstrip("/")}]
         return document
 

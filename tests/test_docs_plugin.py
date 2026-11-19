@@ -309,3 +309,9 @@ def test_symlinks_and_large_files_are_skipped(tmp_path: Path, caplog):
         plugin = CliDocsBuilder().add_folder(str(folder)).build()
     assert [p.slug for p in plugin.pages] == ["ok"]
     assert "a symbolic link" in caplog.text and "larger than 1 MB" in caplog.text
+
+
+def test_json_content_type():
+    with _client() as client:
+        for path in ("/qcli/docs/pages", "/qcli/docs/pages/index", "/qcli/docs/pages/nope"):
+            assert client.get(path).headers["content-type"] == "application/json; charset=utf-8", path
