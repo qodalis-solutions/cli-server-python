@@ -764,3 +764,88 @@ def test_bearer_scheme_case(scheme: str):
         assert res.status_code == 403 and res.json() == {"error": HOST_TEXT}
         res = client.get("/api/host/rates", headers={"Authorization": f"{scheme} {token}"})
         assert res.status_code == 200
+
+
+# =========================================================================
+# Final review fixes: public routes ignore host bearers, empty actor,
+# unguarded host routes do not touch lastUsedAt
+# =========================================================================
+
+
+def _public_requests(srv: Srv) -> list[tuple[str, str, Any]]:
+    link = srv.request("POST", BASE + "/link", None, {"client": "term"}).json()
+    return [
+        ("POST", BASE + "/sessions", {"username": "nobody", "password": "wrong-pass"}),
+        ("GET", "/api/qcli/versions", None),
+        ("GET", BASE + "/version", None),
+        ("GET", BASE + "/capabilities", None),
+        ("GET", BASE + "/auth/mode", None),
+        ("GET", "/api/qcli/health", None),
+        ("POST", BASE + "/link", {"client": "term"}),
+        ("GET", f"{BASE}/link/{link['linkId']}", None),
+        ("GET", BASE + "/link/unknown-id", None),
+    ]
+
+
+def _shape(res) -> Any:
+    try:
+        body = res.json()
+    except ValueError:
+        return res.status_code, res.text
+    if isinstance(body, dict) and "linkId" in body:
+        body = sorted(body)
+    return res.status_code, body
+
+
+@pytest.mark.parametrize("protect", [True, False])
+def test_public_routes_ignore_host_bearers(protect: bool):
+    result, users = _with_admin(CliUsersBuilder().set_protect_server(protect))
+    with TestClient(result.app) as client:
+        srv = Srv(client, users, result)
+        token = srv.token(srv.alice())["token"]
+        for method, path, body in _public_requests(srv):
+            anonymous = srv.request(method, path, None, body)
+            with_host = srv.request(method, path, token, body)
+            assert _shape(with_host) == _shape(anonymous), (path, with_host.text)
+        # Non-public CLI routes still refuse it.
+        for method, path, body in (("GET", BASE + "/link/code/ABCD-EFGH", None), ("GET", BASE + "/commands", None)):
+            res = srv.request(method, path, token, body)
+            assert res.status_code == 403 and res.json() == {"error": HOST_TEXT}, path
+
+
+async def test_empty_actor_is_recorded_as_given():
+    result, users = _make()
+    await users.ensure_seeded()
+    alice = await users.user_store.create_user("alice", "alice@example.com", ["users"])
+    created = await users.api_tokens.create(alice.id, ApiTokenCreateOptions(name="ci", actor=""))
+    await users.api_tokens.revoke(alice.id, created.api_token["id"], actor="")
+    entries = [e for e in await users.audit_store.get_entries() if e.event in ("token_created", "token_revoked")]
+    assert sorted((e.event, e.actor, e.actor_id) for e in entries) == [
+        ("token_created", "", None), ("token_revoked", "", None),
+    ]
+    created = await users.api_tokens.create(alice.id, ApiTokenCreateOptions(name="ci2", actor=None))
+    entries = [e for e in await users.audit_store.get_entries() if e.event == "token_created"]
+    assert ("alice", alice.id) in [(e.actor, e.actor_id) for e in entries]
+
+
+def test_unguarded_host_route_does_not_touch_last_used(srv: Srv):
+    @srv.result.app.get("/api/unguarded")
+    async def unguarded(request: Request):
+        from qodalis_cli.security import get_auth_context
+
+        return {"host": get_auth_context(request).is_host_token}
+
+    created = srv.token(srv.alice())
+    token, token_id = created["token"], created["apiToken"]["id"]
+    res = srv.request("GET", "/api/unguarded", token)
+    assert res.status_code == 200 and res.json() == {"host": True}
+    assert srv.call(srv.users.api_token_store.get_token, token_id).last_used_at is None
+    # The host's guard writes it.
+    assert srv.request("GET", "/api/host/rates", token).status_code == 200
+    assert srv.call(srv.users.api_token_store.get_token, token_id).last_used_at is not None
+
+
+def test_cli_token_on_cli_route_still_touches_last_used(srv: Srv):
+    created = srv.token(srv.alice(), audience="cli")
+    assert srv.request("GET", BASE + "/commands", created["token"]).status_code == 200
+    assert srv.call(srv.users.api_token_store.get_token, created["apiToken"]["id"]).last_used_at is not None

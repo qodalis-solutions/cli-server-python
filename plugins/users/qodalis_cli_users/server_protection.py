@@ -42,6 +42,9 @@ Rule = tuple[re.Pattern[str], frozenset[str] | None, str | None]
 #: Always public (method set ``None`` = any method).
 PUBLIC_PATHS: list[tuple[re.Pattern[str], frozenset[str] | None]] = [
     (re.compile(r"^/api/v1/qcli/sessions/?$"), frozenset({"POST"})),
+    # Terminal links: a terminal asks for a link and polls it (``server add``).
+    (re.compile(r"^/api/v1/qcli/link/?$"), frozenset({"POST"})),
+    (re.compile(r"^/api/v1/qcli/link/(?!code(/|$))[^/]+/?$"), frozenset({"GET", "HEAD"})),
     (re.compile(r"^/api/(qcli|cli|v1/qcli|v1/cli)/versions?/?$"), frozenset({"GET", "HEAD"})),
     (re.compile(r"^/api/(qcli|cli|v1/qcli|v1/cli)/capabilities/?$"), frozenset({"GET", "HEAD"})),
     (re.compile(r"^/(api/)?(qcli/)?health(z|/.*)?$"), None),
@@ -230,9 +233,16 @@ class ServerProtectionMiddleware:
         if self.ensure_ready is not None:
             await self.ensure_ready()
         try:
-            ctx = await authenticate_request(self.auth, Request(scope))
-            if ctx.is_host_token and self._is_cli(path):
+            ctx = await authenticate_request(self.auth, Request(scope), touch_api_token=False)
+            cli = self._is_cli(path)
+            if ctx.is_host_token and cli:
                 raise UsersApiError(403, HOST_TOKENS_CANNOT_USE_CLI_ROUTES)
+            if ctx.is_host_token and not cli:
+                # A host route: its guard (require_auth / require_permission)
+                # records the use; an unguarded route does not.
+                ctx.last_used_pending = True
+            elif ctx.api_token is not None:
+                await self.auth.touch_api_token(ctx.api_token)
             if ctx.must_change_password:
                 raise UsersApiError(403, PASSWORD_CHANGE_REQUIRED)
             permission = http_permission(path, method, self.base_paths)

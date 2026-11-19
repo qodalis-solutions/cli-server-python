@@ -25,8 +25,12 @@ GetAuth = Callable[[Request], Awaitable[AuthContext]]
 ORIGIN_NOT_ALLOWED = "origin not allowed"
 
 
-async def authenticate_request(auth_service: AuthService, request: Request) -> AuthContext:
-    """Authenticate an HTTP request (no password-change gate)."""
+async def authenticate_request(
+    auth_service: AuthService, request: Request, *, touch_api_token: bool = True,
+) -> AuthContext:
+    """Authenticate an HTTP request (no password-change gate).
+    ``touch_api_token=False`` leaves an API token's ``last_used_at`` for the
+    caller to record."""
     if auth_service.external_auth:
         # Ambient (adapter/cookie) credentials: state-changing requests
         # without a bearer token must come from an allowed Origin (CSRF);
@@ -39,11 +43,11 @@ async def authenticate_request(auth_service: AuthService, request: Request) -> A
                 auth_service.options.trust_proxy,
             ):
                 raise forbidden(ORIGIN_NOT_ALLOWED)
-        return await auth_service.authenticate_external(request)
+        return await auth_service.authenticate_external(request, touch_api_token=touch_api_token)
     token = bearer_token(request.headers)
     if not token:
         raise unauthorized()
-    return await auth_service.authenticate_token(token)
+    return await auth_service.authenticate_token(token, touch_api_token=touch_api_token)
 
 
 def ensure_cli_audience(ctx: AuthContext) -> None:
@@ -86,6 +90,9 @@ def create_auth_dependencies(
             await ensure_ready()
         ctx = get_scope_auth(request.scope)
         if isinstance(ctx, AuthContext):
+            if ctx.last_used_pending and ctx.api_token is not None:
+                ctx.last_used_pending = False
+                await auth_service.touch_api_token(ctx.api_token)
             return ctx
         return await authenticate_request(auth_service, request)
 
