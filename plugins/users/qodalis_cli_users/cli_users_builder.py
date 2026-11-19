@@ -60,6 +60,7 @@ from .services.link_service import (
     LinkService,
     validate_link_approval_url,
 )
+from .services.api_token_manager import ApiTokenManager
 from .services.users_service import UsersService
 from .stores.in_memory_api_token_store import InMemoryApiTokenStore
 from .stores.in_memory_credential_store import InMemoryCredentialStore
@@ -115,6 +116,10 @@ class CliUsersPlugin:
     require_auth: Any = None
     #: ``require_permission("perm")`` → FastAPI dependency (403 if missing).
     require_permission: Any = None
+    #: API tokens the host creates, lists and revokes for its users,
+    #: including ``host`` tokens (accepted only by ``require_auth`` /
+    #: ``require_permission``).
+    api_tokens: Optional[ApiTokenManager] = None
     _extra_public: list = field(default_factory=list, repr=False)
     _base_paths: list = field(default_factory=list, repr=False)
     _protected_apps: list = field(default_factory=list, repr=False)
@@ -592,6 +597,7 @@ class CliUsersBuilder:
             cleanup_interval_ms=self._cleanup_interval_ms,
             protect_server=self._protect_server,
             audit_plugin=audit_plugin,
+            api_tokens=ApiTokenManager(auth_service),
         )
 
         # The users plugin records its events in the audit plugin's store,

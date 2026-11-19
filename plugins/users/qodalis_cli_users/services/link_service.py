@@ -257,7 +257,7 @@ class LinkService:
         ensure_can_create_tokens(
             ctx, bool(ctx.external) and self.auth_service.options.api_tokens_with_external_auth,
         )
-        permissions = scope_permissions(ctx, link.permissions)
+        permissions = scope_permissions(ctx.permissions, link.permissions)
         # Claimed before the token exists, so a parallel approval or deny gets 404
         # instead of leaving a second token behind.
         link.status = "approving"
@@ -267,7 +267,8 @@ class LinkService:
             while created is None:
                 try:
                     created = await create_api_token(
-                        self.auth_service, ctx, link_token_name(link.client, suffix),
+                        self.auth_service, ctx.user, (ctx.user.name, ctx.user.id),
+                        link_token_name(link.client, suffix),
                         permissions, default_token_expiry(),
                     )
                 except UsersApiError as exc:
@@ -283,7 +284,7 @@ class LinkService:
         # terminal can no longer collect it, so the token goes too.
         self.sweep()
         if self._links.get(link.link_id) is not link:
-            await revoke_api_token(self.auth_service, ctx, record)
+            await revoke_api_token(self.auth_service, (ctx.user.name, ctx.user.id), record)
             raise not_found(NOT_FOUND)
         link.status = "approved"
         link.token = token
