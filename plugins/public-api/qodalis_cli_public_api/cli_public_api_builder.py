@@ -89,10 +89,11 @@ INVALID_PATH_BASE = "invalid path base"
 
 def path_base(request: Request) -> str | None:
     """The ASGI root path (no trailing ``/``), or ``None`` when it would make
-    a URL leave the host (it starts with two slashes or a slash and a
-    backslash)."""
+    a URL leave the host: it starts with two slashes or a slash and a
+    backslash, or holds whitespace or control characters (browsers drop them,
+    so a slash, a tab and a slash become ``//``)."""
     root = request.scope.get("root_path", "") or ""
-    if root.startswith("//") or root.startswith("/\\"):
+    if root.startswith("//") or root.startswith("/\\") or any(c.isspace() or ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in root):
         return None
     return root.rstrip("/")
 
@@ -303,6 +304,9 @@ class CliPublicApiPlugin:
         """Decrement every window, also when the task is cancelled (natively)
         meanwhile: an interrupted decrement is retried (at most three times)
         and the cancellation is raised again once all are done."""
+        # The retry assumes a decrement either applied or did not: a store that
+        # applies it and is then cancelled before returning is decremented
+        # twice for that window (its counters floor at 0).
         cancelled: BaseException | None = None
         for window in reversed(windows):
             for _ in range(3):

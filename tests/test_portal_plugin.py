@@ -201,12 +201,22 @@ def test_path_base():
         assert body["api"]["swagger"] == "/svc/qcli/api/swagger"
 
 
-@pytest.mark.parametrize("root", ["//evil.example", "/\\evil.example"])
+@pytest.mark.parametrize("root", [
+    "//evil.example", "/\\evil.example", "/\t/evil.example", "/\r/evil.example", "/\n/evil.example", "/a b",
+])
 def test_invalid_path_base(root: str):
     with _host(root_path=root) as client:
         for path in ("/qcli/portal/", "/qcli/portal/portal.json"):
             res = client.get(path)
             assert (res.status_code, res.json()) == (400, {"error": "invalid path base"})
+            assert res.headers["content-type"] == "application/json; charset=utf-8"
+
+
+def test_own_404_content_type():
+    with _host() as client:
+        res = client.get("/qcli/portal/assets/missing.js")
+        assert (res.status_code, res.json()) == (404, {"error": "not found"})
+        assert res.headers["content-type"] == "application/json; charset=utf-8"
 
 
 def test_no_site_serves_nothing(tmp_path: Path, caplog):

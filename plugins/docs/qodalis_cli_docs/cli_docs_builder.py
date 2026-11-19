@@ -169,9 +169,10 @@ INVALID_PATH_BASE = "invalid path base"
 
 
 def _path_base_invalid(request: Request) -> bool:
-    """A root path that would make ``{{baseUrl}}`` leave the host."""
+    """A root path that would make ``{{baseUrl}}`` leave the host: ``//``,
+    ``/\\``, or whitespace / control characters (browsers drop them)."""
     root = request.scope.get("root_path", "") or ""
-    return root.startswith("//") or root.startswith("/\\")
+    return root.startswith("//") or root.startswith("/\\") or any(c.isspace() or ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in root)
 
 
 def _router(plugin: CliDocsPlugin) -> APIRouter:
