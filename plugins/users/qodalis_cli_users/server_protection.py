@@ -128,6 +128,7 @@ class ServerProtectionMiddleware:
         extra_public: list[tuple[str, frozenset[str] | None]] | None = None,
         base_paths: list[str] | None = None,
         cli_prefixes: Callable[[], list[str] | None] | None = None,
+        enforce: bool = True,
     ) -> None:
         self.app = app
         self.auth = auth_service
@@ -140,6 +141,10 @@ class ServerProtectionMiddleware:
         #: (``CliServerResult.cli_route_prefixes``: the core's, and every
         #: mounted plugin's API and dashboard prefix), read per request.
         self.cli_prefixes = cli_prefixes
+        #: ``False`` without server protection (``set_protect_server(False)``):
+        #: nothing is authenticated, only ``host`` API tokens are refused on
+        #: the CLI's routes and sockets.
+        self.enforce = enforce
 
     # ------------------------------------------------------------------
 
@@ -191,6 +196,17 @@ class ServerProtectionMiddleware:
     async def _http(self, scope: dict, receive: Any, send: Any) -> None:
         path: str = scope["path"]
         method: str = scope["method"].upper()
+        if not self.enforce:
+            if (
+                method != "OPTIONS"
+                and not self._is_public(path, method)
+                and self._is_cli(path)
+                and await self._host_bearer(scope)
+            ):
+                await _send_json(send, 403, {"error": HOST_TOKENS_CANNOT_USE_CLI_ROUTES})
+                return
+            await self.app(scope, receive, send)
+            return
         if method == "OPTIONS" or self._is_public(path, method) or SELF_PROTECTED.match(path):
             await self.app(scope, receive, send)
             return
@@ -225,7 +241,7 @@ class ServerProtectionMiddleware:
 
     async def _websocket(self, scope: dict, receive: Any, send: Any) -> None:
         path: str = scope["path"]
-        if not self._protected(path):
+        if not self.enforce or not self._protected(path):
             if self._is_cli(path) and await self._host_bearer(scope):
                 await _close(receive, send, 4403, close_reason(HOST_TOKENS_CANNOT_USE_CLI_ROUTES))
                 return
