@@ -4,8 +4,9 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
-## Unreleased
+## 1.0.0b29
 
+- The admin plugin embeds dashboard 1.0.0-beta.26: pick a new token's permissions from the server's list, host tokens marked, and a Requests today column when the server counts API usage. The portal plugin embeds `@qodalis/cli-server-portal` 1.0.0-beta.26.
 - **Permission catalog.** The server keeps the permissions an API token can be given, each with a description and a group: core registers 11 (`commands:execute`, `shell:execute`, `files:read|write`, `data:query`, `jobs:read|manage`, `logs:read`, `admin:access`, `audit:read|clear`), the users plugin 12 when mounted, and the host its own with `builder.add_permissions([CliPermission(name="rates:read", description="Official exchange rates", group="Rates")])` (plain dicts too; `surface="host"` by default, plugins pass `"cli"`). `builder.permissions` reads it. A malformed entry or a name already registered (case-insensitive) fails startup with `invalid permission entry: <name>` / `permission already registered: <name>`; a host that registers `users:read` makes mounting the users plugin raise. The catalog is for choosing: groups and `cli` tokens accept any permission as before.
 - **Users: `GET /api/v1/qcli/permissions`.** The catalog entries the caller holds (`?all=true` with `users:read`: every entry; else `403 permission denied: users:read`), every `cli` entry first, then the host's. The dashboard and the web CLI build their token pickers from it.
 - **Users: token `audience`.** Every token is `cli` (the default; existing tokens and stores without the field read as `cli`) or `host`; token views carry `audience`. `POST /tokens` creates `cli` tokens only (`"host"` → `400 host tokens can only be created by the host application`, anything else → `400 audience must be cli or host`). A stored value other than `cli` (or none) counts as host. Custom `IApiTokenStore`s must persist `audience`.

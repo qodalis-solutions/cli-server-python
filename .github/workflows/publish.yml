@@ -29,6 +29,10 @@ jobs:
           pip install ./plugins/audit
           pip install ./plugins/users
           pip install ./plugins/admin
+          pip install ./plugins/public-api
+          pip install ./plugins/docs
+          # Editable: the portal's wheel needs the portal site, bundled further down.
+          pip install -e ./plugins/portal
           pip install ./plugins/aws
           pip install -e ".[test]"
 
@@ -157,14 +161,14 @@ jobs:
           verbose: true
           attestations: false
 
-      - name: Build aws and data explorer plugins
+      - name: Build aws, public API, docs and data explorer plugins
         run: |
-          for plugin in aws data-explorer data-explorer-sql data-explorer-postgres data-explorer-mysql \
+          for plugin in aws public-api docs data-explorer data-explorer-sql data-explorer-postgres data-explorer-mysql \
                         data-explorer-mssql data-explorer-mongo data-explorer-redis data-explorer-elasticsearch; do
             python -m build plugins/$plugin/ --outdir dist-plugins/
           done
 
-      - name: Publish aws and data explorer plugins to PyPI
+      - name: Publish aws, public API, docs and data explorer plugins to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_TOKEN }}
@@ -194,6 +198,27 @@ jobs:
         with:
           password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-admin/
+          skip-existing: true
+          verbose: true
+          attestations: false
+
+      # The wheel embeds the portal site from the npm package @qodalis/cli-server-portal
+      - name: Bundle the portal site into the portal plugin
+        run: |
+          npm ci --ignore-scripts --prefix plugins/portal
+          python plugins/portal/scripts/copy_portal.py
+          test -f plugins/portal/qodalis_cli_portal/site/index.html
+
+      - name: Build portal plugin
+        run: |
+          python -m build plugins/portal/ --outdir dist-plugin-portal/
+          python -m zipfile -l dist-plugin-portal/*.whl | grep -q "qodalis_cli_portal/site/index.html"
+
+      - name: Publish portal plugin to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+          packages-dir: dist-plugin-portal/
           skip-existing: true
           verbose: true
           attestations: false
