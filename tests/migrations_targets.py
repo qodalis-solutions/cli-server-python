@@ -10,7 +10,7 @@ import sqlite3
 from typing import Any, Awaitable, Callable
 from urllib.parse import unquote, urlsplit
 
-from qodalis_cli_migrations import (
+from qodalis_cli_databases import (
     CliSqlConnection,
     mssql_connection,
     mysql_connection,

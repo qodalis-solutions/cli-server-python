@@ -39,27 +39,27 @@ The database and parent directories are created automatically. Uses WAL journal 
 
 The files live in `QcliFiles` (columns `Id`, `Path`, `Name`, `Type`, `Content`, `Size`, `Permissions`,
 `CreatedAt`, `ModifiedAt`, `ParentPath`; index `IX_QcliFiles_ParentPath`), the name every server gives the
-plugin's table. The schema is versioned by the [migrations plugin](../migrations/README.md) (source
+plugin's table. The schema is versioned by the [databases plugin](../databases/README.md)'s migrations (source
 `qcli-filesystem`, history in `QcliMigrations` / `QcliMigrationRuns` of the same database), applied before the
 first operation: a database of a previous release has its `files` table and columns renamed, the data kept.
 `legacy_table_names=True` keeps the old names instead.
 
-To see the schema in the dashboard and the terminal, register the provider's database with the migrations plugin:
+To see the schema in the dashboard and the terminal, register the provider's database with the databases plugin:
 
 ```python
-migrations = (
-    CliMigrationsBuilder()
+databases = (
+    CliDatabasesBuilder()
     .add_database("files", CliMigrationDatabaseOptions(provider.connection))
     .add_source("files", provider.migration_source)
     .build()
 )
-result.mount_plugin(migrations)
+result.mount_plugin(databases)
 ```
 
 ## Dependencies
 
 - `qodalis-cli-server-plugin-filesystem`
-- `qodalis-cli-server-plugin-migrations`
+- `qodalis-cli-server-plugin-databases`
 
 ## License
 

@@ -1,4 +1,4 @@
-"""MCP tools of the migrations plugin (``migrations_*``), registered on the CLI server's MCP tool registry when
+"""MCP tools of the databases plugin (``databases_*``, ``migrations_*``), registered on the CLI server's MCP tool registry when
 the plugin is mounted.  Imported lazily (requires ``qodalis_cli``)."""
 
 from __future__ import annotations
@@ -8,14 +8,15 @@ from typing import Any, Awaitable, Callable
 
 from qodalis_cli.mcp import McpCallContext, McpTool, McpToolResult, object_schema
 
+from .commands import describe_databases, describe_stats
 from .controller import TO_REQUIRED, caller_name
-from .migrations import MIGRATIONS_READ, MIGRATIONS_RUN, CliMigrations
+from .databases import DATABASES_READ, DATABASES_MIGRATE, CliDatabases
 from .runner import CliMigrationRunOptions
 
 READ_ONLY = {"readOnlyHint": True}
 DESTRUCTIVE = {"destructiveHint": True}
 
-_DATABASE = {"type": "string", "description": "Database name (see migrations_status without one)"}
+_DATABASE = {"type": "string", "description": "Database name (see databases_list)"}
 _FORCE = {"type": "boolean", "description": "Run although a migration is changed or missing"}
 
 Handler = Callable[[dict[str, Any], McpCallContext], Awaitable[McpToolResult]]
@@ -35,17 +36,17 @@ def _optional(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-class MigrationsMcpToolProvider:
-    """``migrations_status``, ``migrations_runs``, ``migrations_sql`` (``migrations:read``),
-    ``migrations_up`` and ``migrations_down`` (``migrations:run``)."""
+class DatabasesMcpToolProvider:
+    """``databases_list``, ``databases_stats``, ``migrations_status``, ``migrations_runs``, ``migrations_sql``
+    (``databases:read``), ``migrations_up`` and ``migrations_down`` (``databases:migrate``)."""
 
-    name = "migrations"
+    name = "databases"
 
-    def __init__(self, migrations: CliMigrations) -> None:
-        self.migrations = migrations
+    def __init__(self, databases: CliDatabases) -> None:
+        self.databases = databases
 
     def get_tools(self, context: McpCallContext) -> list[McpTool]:
-        m = self.migrations
+        m = self.databases
 
         async def status(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
             if not _optional(args.get("database")):
@@ -65,6 +66,14 @@ class MigrationsMcpToolProvider:
                 text=text or "No migrations",
                 structured={"name": db.name, "dialect": db.dialect, "sources": db.source_names, "migrations": states},
             )
+
+        async def list_databases(_args: dict[str, Any], _: McpCallContext) -> McpToolResult:
+            databases = await m.overview()
+            return McpToolResult(text=describe_databases(databases), structured={"databases": databases})
+
+        async def stats(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
+            value = await m.stats(m.require(args["database"]).name)
+            return McpToolResult(text=describe_stats(value), structured=value)
 
         async def runs(args: dict[str, Any], _: McpCallContext) -> McpToolResult:
             try:
@@ -103,11 +112,24 @@ class MigrationsMcpToolProvider:
 
         return [
             McpTool(
+                "databases_list",
+                "The server's databases: dialect, size, and applied, pending and problem migration counts",
+                object_schema({}),
+                _guarded(list_databases), [DATABASES_READ], dict(READ_ONLY),
+            ),
+            McpTool(
+                "databases_stats",
+                "A database's server version and uptime, size (data, indexes, log), connections (active, open, max), "
+                "load counters (queries, transactions, rows; cumulative since start), cache hit ratio and largest tables",
+                object_schema({"database": _DATABASE}, ["database"]),
+                _guarded(stats), [DATABASES_READ], dict(READ_ONLY),
+            ),
+            McpTool(
                 "migrations_status",
                 "Without a database: every database with its applied, pending and problem counts. With one: its "
                 "migrations and their status (applied, pending, changed, missing, failed)",
                 object_schema({"database": _DATABASE}),
-                _guarded(status), [MIGRATIONS_READ], dict(READ_ONLY),
+                _guarded(status), [DATABASES_READ], dict(READ_ONLY),
             ),
             McpTool(
                 "migrations_runs",
@@ -116,7 +138,7 @@ class MigrationsMcpToolProvider:
                     "database": _DATABASE,
                     "limit": {"type": "integer", "default": 20, "description": "Maximum runs (1-100)"},
                 }, ["database"]),
-                _guarded(runs), [MIGRATIONS_READ], dict(READ_ONLY),
+                _guarded(runs), [DATABASES_READ], dict(READ_ONLY),
             ),
             McpTool(
                 "migrations_sql",
@@ -126,7 +148,7 @@ class MigrationsMcpToolProvider:
                     "direction": {"type": "string", "description": "up (default) or down"},
                     "to": {"type": "string", "description": "As for migrations_up / migrations_down"},
                 }, ["database"]),
-                _guarded(sql), [MIGRATIONS_READ], dict(READ_ONLY),
+                _guarded(sql), [DATABASES_READ], dict(READ_ONLY),
             ),
             McpTool(
                 "migrations_up",
@@ -137,7 +159,7 @@ class MigrationsMcpToolProvider:
                     "to": {"type": "string", "description": "Stop after this migration (id or source:id); omit for all pending"},
                     "force": _FORCE,
                 }, ["database"]),
-                _guarded(run("up")), [MIGRATIONS_RUN],
+                _guarded(run("up")), [DATABASES_MIGRATE],
             ),
             McpTool(
                 "migrations_down",
@@ -147,6 +169,6 @@ class MigrationsMcpToolProvider:
                     "to": {"type": "string", "description": "Roll back to this migration, keeping it (id or source:id), or base for everything"},
                     "force": _FORCE,
                 }, ["database", "to"]),
-                _guarded(run("down")), [MIGRATIONS_RUN], dict(DESTRUCTIVE),
+                _guarded(run("down")), [DATABASES_MIGRATE], dict(DESTRUCTIVE),
             ),
         ]

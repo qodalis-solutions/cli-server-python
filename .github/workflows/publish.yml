@@ -22,7 +22,7 @@ jobs:
           pip install ./packages/abstractions
           pip install ./plugins/filesystem
           pip install ./plugins/filesystem-json
-          pip install ./plugins/migrations
+          pip install ./plugins/databases
           pip install ./plugins/filesystem-sqlite
           pip install ./plugins/filesystem-s3
           pip install ./plugins/weather
@@ -89,20 +89,20 @@ jobs:
           verbose: true
           attestations: false
 
-      # The wheel embeds the dashboard's Migrations page from the npm package @qodalis/cli-dashboard-module-migrations
-      - name: Build migrations plugin
+      # The wheel embeds the dashboard's Databases page from the npm package @qodalis/cli-dashboard-module-databases
+      - name: Build databases plugin
         run: |
-          npm install --no-save --no-package-lock --ignore-scripts --prefix plugins/migrations @qodalis/cli-dashboard-module-migrations
-          python plugins/migrations/scripts/copy_dashboard.py
-          test -f plugins/migrations/qodalis_cli_migrations/dashboard/extension.js
-          python -m build plugins/migrations/ --outdir dist-plugin-migrations/
-          python -m zipfile -l dist-plugin-migrations/*.whl | grep -q "qodalis_cli_migrations/dashboard/extension.js"
+          npm install --no-save --no-package-lock --ignore-scripts --prefix plugins/databases @qodalis/cli-dashboard-module-databases
+          python plugins/databases/scripts/copy_dashboard.py
+          test -f plugins/databases/qodalis_cli_databases/dashboard/extension.js
+          python -m build plugins/databases/ --outdir dist-plugin-databases/
+          python -m zipfile -l dist-plugin-databases/*.whl | grep -q "qodalis_cli_databases/dashboard/extension.js"
 
-      - name: Publish migrations plugin to PyPI
+      - name: Publish databases plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_TOKEN }}
-          packages-dir: dist-plugin-migrations/
+          packages-dir: dist-plugin-databases/
           skip-existing: true
           verbose: true
           attestations: false

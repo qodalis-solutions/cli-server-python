@@ -10,7 +10,7 @@ import tempfile
 
 import pytest
 
-from qodalis_cli_migrations import (
+from qodalis_cli_databases import (
     CliMigration,
     CliMigrationDatabaseOptions,
     CliMigrationError,

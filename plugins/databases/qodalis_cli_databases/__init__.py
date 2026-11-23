@@ -1,6 +1,6 @@
-"""Qodalis CLI migrations plugin: versioned schema changes of PostgreSQL, MySQL/MariaDB, SQL Server and SQLite
-databases, applied under a lock, recorded, and shown, run and rolled back from the dashboard, the terminal, MCP
-and the API."""
+"""Qodalis CLI databases plugin: the server's PostgreSQL, MySQL/MariaDB, SQL Server and SQLite databases, their
+stats (size, connections, load, largest tables) and their migrations (versioned schema changes applied under a
+lock, recorded, and shown, run and rolled back from the dashboard, the terminal, MCP and the API)."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from __future__ import annotations
 __plugin_icon__ = "🗄️"
 
 from .builder import (
-    MIGRATIONS_PERMISSION_ENTRIES,
-    MIGRATIONS_PREFIX,
-    CliMigrationsBuilder,
-    CliMigrationsPlugin,
+    DATABASES_PERMISSION_ENTRIES,
+    DATABASES_PREFIX,
+    CliDatabasesBuilder,
+    CliDatabasesPlugin,
 )
 from .connection import (
     SQL_DIALECTS,
@@ -23,8 +23,8 @@ from .connection import (
     postgres_connection,
     sqlite_connection,
 )
-from .controller import create_migrations_router
-from .commands import CliMigrationsCommandProcessor
+from .controller import create_databases_router
+from .commands import CliDatabasesCommandProcessor
 from .dialects import (
     adopt_legacy_table,
     column_exists,
@@ -34,7 +34,8 @@ from .dialects import (
     rename_table,
     table_exists,
 )
-from .migrations import MIGRATION_RUN_EVENT, MIGRATIONS_READ, MIGRATIONS_RUN, CliMigrations
+from .databases import MIGRATION_RUN_EVENT, DATABASES_READ, DATABASES_MIGRATE, CliDatabases
+from .stats import collect_size, collect_stats
 from .runner import (
     CliMigrationDatabaseOptions,
     CliMigrationError,
@@ -48,10 +49,10 @@ from .runner import (
 from .sources import CliMigration, CliMigrationSource, CliMigrationStep, CodeSource, SqlFolderSource, code_source, sql_folder_source
 
 __all__ = [
-    "MIGRATIONS_PERMISSION_ENTRIES",
-    "MIGRATIONS_PREFIX",
-    "CliMigrationsBuilder",
-    "CliMigrationsPlugin",
+    "DATABASES_PERMISSION_ENTRIES",
+    "DATABASES_PREFIX",
+    "CliDatabasesBuilder",
+    "CliDatabasesPlugin",
     "SQL_DIALECTS",
     "CliSqlConnection",
     "CliSqlDialect",
@@ -60,8 +61,8 @@ __all__ = [
     "mysql_connection",
     "postgres_connection",
     "sqlite_connection",
-    "create_migrations_router",
-    "CliMigrationsCommandProcessor",
+    "create_databases_router",
+    "CliDatabasesCommandProcessor",
     "adopt_legacy_table",
     "column_exists",
     "quote_ident",
@@ -70,9 +71,11 @@ __all__ = [
     "rename_table",
     "table_exists",
     "MIGRATION_RUN_EVENT",
-    "MIGRATIONS_READ",
-    "MIGRATIONS_RUN",
-    "CliMigrations",
+    "DATABASES_READ",
+    "DATABASES_MIGRATE",
+    "CliDatabases",
+    "collect_size",
+    "collect_stats",
     "CliMigrationDatabaseOptions",
     "CliMigrationError",
     "CliMigrationRun",

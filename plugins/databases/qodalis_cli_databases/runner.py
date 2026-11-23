@@ -54,7 +54,7 @@ def _now() -> datetime:
 
 @dataclass
 class CliMigrationState:
-    """A migration with its status (``GET /api/v1/qcli/migrations/{db}``)."""
+    """A migration with its status (``GET /api/v1/qcli/databases/{db}/migrations``)."""
 
     source: str
     id: str

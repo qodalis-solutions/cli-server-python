@@ -932,7 +932,7 @@ Each plugin is a separate package under [`plugins/`](plugins) with its own READM
 | [`qodalis-cli-server-plugin-audit`](plugins/audit/README.md) | `qodalis_cli_audit` | Audit log and its API (`/api/v1/qcli/audit`), in memory or a store of your own |
 | [`qodalis-cli-server-plugin-admin`](plugins/admin/README.md) | `qodalis_cli_admin` | Admin dashboard at `/qcli/admin` and its API |
 | [`qodalis-cli-server-plugin-jobs`](plugins/jobs/README.md) | `qodalis_cli_jobs` | Scheduled background jobs with history and logs; per-job `max_concurrent_runs` and overlap policy (skip, queue, cancel), retries holding their slot ([Concurrency](plugins/jobs/README.md#concurrency)) |
-| [`qodalis-cli-server-plugin-migrations`](plugins/migrations/README.md) | `qodalis_cli_migrations` | Versioned schema changes of PostgreSQL, MySQL, SQL Server and SQLite databases under a lock, with history and runs, the API (`/api/v1/qcli/migrations`), terminal `migrations` and MCP tools |
+| [`qodalis-cli-server-plugin-databases`](plugins/databases/README.md) | `qodalis_cli_databases` | The server's PostgreSQL, MySQL, SQL Server and SQLite databases: stats (size, connections, load, largest tables) and versioned schema migrations under a lock with history and runs; the API (`/api/v1/qcli/databases`), terminal `databases`, MCP tools and the dashboard's Databases page |
 | [`qodalis-cli-server-plugin-filesystem`](plugins/filesystem/README.md) | `qodalis_cli_filesystem` | `IFileStorageProvider` with in-memory and OS providers (installed with the server) |
 | [`...-filesystem-json`](plugins/filesystem-json/README.md), [`-sqlite`](plugins/filesystem-sqlite/README.md), [`-s3`](plugins/filesystem-s3/README.md) | `qodalis_cli_filesystem_json`, `_sqlite`, `_s3` | Persistent file storage |
 | [`qodalis-cli-server-plugin-data-explorer`](plugins/data-explorer/README.md) | `qodalis_cli_data_explorer` | Data explorer routes and executor |
@@ -1000,7 +1000,7 @@ Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abst
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e packages/abstractions/ -e plugins/filesystem/ -e plugins/filesystem-json/ \
-    -e plugins/migrations/ -e plugins/filesystem-sqlite/ -e plugins/filesystem-s3/ -e plugins/weather/ \
+    -e plugins/databases/ -e plugins/filesystem-sqlite/ -e plugins/filesystem-s3/ -e plugins/weather/ \
     -e plugins/jobs/ -e plugins/audit/ -e plugins/users/ -e plugins/admin/
 pip install -e ".[test]"
 pytest                                   # the suite CI runs (tests/)

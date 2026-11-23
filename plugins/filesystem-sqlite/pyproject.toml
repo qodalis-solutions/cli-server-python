@@ -26,7 +26,7 @@ classifiers = [
 dependencies = [
     "qodalis-cli-server-abstractions>=1.0.0b17",
     "qodalis-cli-server-plugin-filesystem",
-    "qodalis-cli-server-plugin-migrations>=1.0.0b29",
+    "qodalis-cli-server-plugin-databases>=1.0.0b29",
 ]
 
 [project.urls]

@@ -1,4 +1,4 @@
-"""Database connections the migrations plugin runs on: a session holds one connection for a while (a lock, a
+"""Database connections the databases plugin runs on: a session holds one connection for a while (a lock, a
 transaction) and runs every statement on it, in order.  Adapters wrap the usual drivers; the plugin needs none
 of them installed."""
 
