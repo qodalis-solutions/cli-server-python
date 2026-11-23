@@ -349,3 +349,103 @@ async def test_remove_empty_directory(provider: SqliteFileStorageProvider):
     await provider.mkdir("/empty")
     await provider.remove("/empty")
     assert not await provider.exists("/empty")
+
+
+# ---------------------------------------------------------------------------
+# Table names (#83): QcliFiles, upgrade from the previous release's ``files``
+# ---------------------------------------------------------------------------
+
+_LEGACY_SCHEMA = """
+CREATE TABLE files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    path TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('file', 'directory')),
+    content TEXT,
+    size INTEGER NOT NULL DEFAULT 0,
+    permissions TEXT DEFAULT '644',
+    created_at TEXT NOT NULL,
+    modified_at TEXT NOT NULL,
+    parent_path TEXT
+);
+CREATE INDEX idx_files_parent ON files(parent_path);
+INSERT INTO files (path, name, type, size, permissions, created_at, modified_at, parent_path)
+    VALUES ('/', '', 'directory', 0, 'drwxr-xr-x', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00', NULL);
+INSERT INTO files (path, name, type, content, size, permissions, created_at, modified_at, parent_path)
+    VALUES ('/old.txt', 'old.txt', 'file', 'kept', 4, '-rw-r--r--', '2026-01-02T00:00:00+00:00', '2026-01-02T00:00:00+00:00', '/');
+"""
+
+
+def _legacy_db(tmp_path) -> str:
+    import sqlite3
+
+    path = str(tmp_path / "files.db")
+    conn = sqlite3.connect(path)
+    conn.executescript(_LEGACY_SCHEMA)
+    conn.close()
+    return path
+
+
+def _tables(path: str) -> list[str]:
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    try:
+        return sorted(r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%'"))
+    finally:
+        conn.close()
+
+
+@pytest.mark.asyncio
+async def test_new_database_uses_qcli_files_with_pascal_case_columns(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "new.db")
+    provider = SqliteFileStorageProvider(SqliteProviderOptions(db_path=path))
+    await provider.write_file("/a/b.txt", "hi")
+    assert _tables(path) == ["IX_QcliFiles_ParentPath", "QcliFiles", "QcliMigrationRuns", "QcliMigrations"]
+    conn = sqlite3.connect(path)
+    columns = [r[1] for r in conn.execute('PRAGMA table_info("QcliFiles")')]
+    conn.close()
+    assert columns == ["Id", "Path", "Name", "Type", "Content", "Size", "Permissions", "CreatedAt", "ModifiedAt", "ParentPath"]
+    stat = await provider.stat("/a/b.txt")
+    assert stat.size == 2 and stat.created
+
+
+@pytest.mark.asyncio
+async def test_upgrade_renames_the_previous_files_table_keeping_the_data(tmp_path):
+    path = _legacy_db(tmp_path)
+    provider = SqliteFileStorageProvider(SqliteProviderOptions(db_path=path))
+    assert await provider.read_file("/old.txt") == "kept"
+    assert (await provider.stat("/old.txt")).created == "2026-01-02T00:00:00+00:00"
+    assert [e.name for e in await provider.list("/")] == ["old.txt"]
+    assert _tables(path) == ["IX_QcliFiles_ParentPath", "QcliFiles", "QcliMigrationRuns", "QcliMigrations"]
+    states = await provider._runner.status()
+    assert [(s.source, s.id, s.status) for s in states] == [("qcli-filesystem", "1", "applied"), ("qcli-filesystem", "2", "applied")]
+    # a second start has nothing to do
+    again = SqliteFileStorageProvider(SqliteProviderOptions(db_path=path))
+    assert await again.read_file("/old.txt") == "kept"
+    _, total = await again._runner.runs()
+    assert total == 2
+
+
+@pytest.mark.asyncio
+async def test_legacy_table_names_keep_the_files_table(tmp_path):
+    path = _legacy_db(tmp_path)
+    provider = SqliteFileStorageProvider(SqliteProviderOptions(db_path=path, legacy_table_names=True))
+    await provider.write_file("/new.txt", "x")
+    assert await provider.read_file("/old.txt") == "kept"
+    assert "files" in _tables(path) and "QcliFiles" not in _tables(path)
+
+
+@pytest.mark.asyncio
+async def test_custom_prefix_and_table_name(tmp_path):
+    path = str(tmp_path / "custom.db")
+    plain = SqliteFileStorageProvider(SqliteProviderOptions(db_path=path, table_prefix=""))
+    await plain.write_file("/x.txt", "1")
+    assert {"Files", "Migrations", "MigrationRuns"} <= set(_tables(path))
+    named = SqliteFileStorageProvider(SqliteProviderOptions(db_path=str(tmp_path / "named.db"), tables={"Files": "MyFiles"}))
+    await named.write_file("/y.txt", "2")
+    assert "MyFiles" in _tables(str(tmp_path / "named.db"))
+    with pytest.raises(ValueError, match="invalid table name"):
+        SqliteFileStorageProvider(SqliteProviderOptions(db_path=":memory:", tables={"Files": "bad name;"}))
