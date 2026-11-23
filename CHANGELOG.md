@@ -6,6 +6,8 @@ PEP 440 for `1.0.0-beta.19`).
 
 ## Unreleased
 
+- **Plugin table names** (#83): abstractions `qcli_table_name(base, CliTableNameOptions, legacy)`, `is_sql_identifier`, `DEFAULT_TABLE_PREFIX`: tables plugins create are `Qcli` + PascalCase with PascalCase columns, the same in the three servers.
+- **Plugins declare more when mounted**: `route_permissions` (`CliRoutePermission(path, read, write)`: `read` for GET/HEAD, `write` otherwise, the longest path wins, enforced by the users plugin on a protected server; a path outside the plugin's prefix fails with `invalid route permission: <path>`), `module` (its terminal commands), `permissions` (added to the catalog) and `mcp_providers` (its MCP tools).
 - **Dashboard extensions** (cli-server-dashboard `docs/extensions.md`): `builder.add_dashboard_extension(CliDashboardExtension(...))` (or a mapping with the JSON field names), or a mounted plugin's `dashboard_extensions`, adds a page to the admin dashboard, which loads `entry` (an ES module the plugin serves) and mounts it. The admin plugin lists them at `GET /api/v1/qcli/dashboard/extensions` (`{"extensions": [...]}`, registration order, unset optional fields left out, behind the dashboard's sign-in and `admin:access`, `Cache-Control: no-cache`). Invalid entries raise `ValueError` `invalid dashboard extension: <reason>`, a repeated id `dashboard extension already registered: <id>`.
 
 ## 1.0.0b29

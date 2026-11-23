@@ -112,6 +112,24 @@ def http_permission(path: str, method: str, base_paths: list[str] | None = None)
     return None
 
 
+def declared_permission(path: str, method: str, rules: list[Any] | None) -> str | None:
+    """The permission plugins declared for ``path`` (``route_permissions``):
+    the longest matching path wins; ``read`` for GET and HEAD, ``write``
+    (else ``read``) otherwise."""
+    best = None
+    for rule in rules or []:
+        base = "/" + str(getattr(rule, "path", "")).strip("/")
+        if (path.rstrip("/") == base or path.startswith(base + "/")) and (
+            best is None or len(base) > len("/" + str(best.path).strip("/"))
+        ):
+            best = rule
+    if best is None:
+        return None
+    if method in ("GET", "HEAD"):
+        return best.read
+    return getattr(best, "write", None) or best.read
+
+
 def _normalize_base(path: str) -> str:
     return "/" + path.strip().strip("/")
 
@@ -136,6 +154,7 @@ class ServerProtectionMiddleware:
         cli_prefixes: Callable[[], list[str] | None] | None = None,
         enforce: bool = True,
         public_paths: Callable[[], list[str] | None] | None = None,
+        route_permissions: Callable[[], list[Any] | None] | None = None,
     ) -> None:
         self.app = app
         self.auth = auth_service
@@ -156,6 +175,9 @@ class ServerProtectionMiddleware:
         #: the public API document): ``CliServerResult.public_paths``, read
         #: per request (``/*`` = everything under it).  Never a CLI path.
         self.public_paths = public_paths
+        #: Permissions mounted plugins declared for their routes
+        #: (``CliServerResult.route_permissions``), read per request.
+        self.route_permissions = route_permissions
 
     # ------------------------------------------------------------------
 
@@ -267,6 +289,8 @@ class ServerProtectionMiddleware:
             if ctx.must_change_password:
                 raise UsersApiError(403, PASSWORD_CHANGE_REQUIRED)
             permission = http_permission(path, method, self.base_paths)
+            if permission is None and self.route_permissions is not None:
+                permission = declared_permission(path, method, self.route_permissions())
             if permission and not ctx.can(permission):
                 raise UsersApiError(403, f"missing permission: {permission}")
         except UsersApiError as exc:
