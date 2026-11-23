@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from qodalis_cli_filesystem.providers.os_provider import OsFileStorageProvider, OsProviderOptions
 
 from .controllers import create_cli_router, create_cli_version_router
+from .dashboard_modules import data_explorer_page, filesystem_page
 from .controllers.filesystem_controller import create_filesystem_router
 from .extensions import CliBuilder
 from .filesystem import FileSystemPathValidator
@@ -89,6 +90,10 @@ class CliServerOptions:
     #: ``False`` turns off FastAPI's own ``/docs``, ``/redoc`` and
     #: ``/openapi.json`` for the whole app.
     app_docs: bool = True
+    #: The dashboard pages the core serves (``filesystem``, ``data-explorer``, see
+    #: :mod:`qodalis_cli.dashboard_modules`): by id, another build's directory or ``False`` to leave the page out.
+    #: By default each is served from the copy in its package when the feature is on.
+    dashboard_pages: dict[str, str | bool] = field(default_factory=dict)
     configure: Callable[[CliBuilder], None] | None = None
 
 
@@ -146,6 +151,20 @@ class CliServerResult:
         if normalized not in self.cli_route_prefixes:
             self.cli_route_prefixes.append(normalized)
 
+    def add_dashboard_page(self, page: Any) -> None:
+        """Serve a dashboard module page (:class:`DashboardModulePage`: files at its prefix, outside the API) and
+        list its extension in the admin dashboard.  A second page with the same id is skipped with a warning;
+        without CLI routes nothing is served."""
+        if not self.options.cli_routes:
+            return
+        page_id = page.extension.get("id")
+        if any(e.id == page_id for e in self.builder.dashboard_extensions):
+            logger.warning("[qcli] the dashboard page %s is already served; %s is not mounted", page_id, page.prefix)
+            return
+        self.add_cli_route_prefix(page.prefix)
+        self.builder.add_dashboard_extension(page.extension)
+        self.app.mount(page.prefix, page.app)
+
     def set_shell_access_provider(self, provider: ShellAccessProvider | None) -> None:
         """Let an auth plugin own shell access (the users plugin calls this
         when mounted, selecting the ``users`` shell mode)."""
@@ -156,7 +175,8 @@ class CliServerResult:
         """Mount a plugin using its built-in prefix.
 
         Reads ``prefix`` and ``router`` from the plugin result, and optionally
-        ``dashboard_prefix`` / ``dashboard_app`` for plugins that serve a UI.
+        ``dashboard_prefix`` / ``dashboard_app`` for plugins that serve a UI and
+        ``dashboard_pages`` (dashboard module pages, see :meth:`add_dashboard_page`).
         A plugin with ``cli_routes = False`` serves host routes (public API,
         docs, portal): its prefix is not counted among the CLI's routes, and
         it is the only kind mounted on a server without CLI routes.
@@ -221,6 +241,9 @@ class CliServerResult:
         # Pages the plugin adds to the admin dashboard
         for extension in getattr(plugin, "dashboard_extensions", None) or []:
             self.builder.add_dashboard_extension(extension)
+        if not routes_off:
+            for page in getattr(plugin, "dashboard_pages", None) or []:
+                self.add_dashboard_page(page)
 
         # Plugins may hook into the server (e.g. the users plugin protects
         # every route and scopes events to authenticated sockets).
@@ -476,6 +499,16 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     )
     result.add_cli_route_prefix(opts.base_path)
     server_ref.append(result)
+
+    # The dashboard pages of the APIs the core serves
+    if fs_provider is not None:
+        page = filesystem_page(opts.dashboard_pages.get("filesystem"))
+        if page is not None:
+            result.add_dashboard_page(page)
+    if builder.data_explorer_registrations:
+        page = data_explorer_page(opts.dashboard_pages.get("data-explorer"))
+        if page is not None:
+            result.add_dashboard_page(page)
     return result
 
 

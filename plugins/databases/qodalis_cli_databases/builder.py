@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from qodalis_cli_server_abstractions import CliModule, CliRoutePermission, IAuditStore, ICliCommandProcessor
 
 from .commands import CliDatabasesCommandProcessor
-from .dashboard_page import DATABASES_DASHBOARD_PREFIX, find_databases_page, databases_page
+from .dashboard_page import databases_page
 from .controller import create_databases_router
 from .databases import DATABASES_READ, DATABASES_MIGRATE, CliDatabases
 from .runner import CliMigrationDatabaseOptions, CliMigrationRun, CliMigrationRunner, CliMigrationRunOptions
@@ -67,9 +67,7 @@ class CliDatabasesPlugin:
     #: ``databases:read`` and ``databases:migrate``, added to the server's permission catalog when mounted.
     permissions: list[dict[str, str]] = field(default_factory=list)
     #: The dashboard's Databases page (``/qcli/databases``), when its build is there.
-    dashboard_prefix: str | None = None
-    dashboard_app: Any = None
-    dashboard_extensions: list[dict[str, Any]] = field(default_factory=list)
+    dashboard_pages: list[Any] = field(default_factory=list)
     _startup: list[str] = field(default_factory=list, repr=False)
 
     @property
@@ -168,8 +166,7 @@ class CliDatabasesBuilder:
                 runner.add_source(source)
             databases.add(runner)
         databases.audit_store = self._audit_store
-        page_dir = None if self._dashboard_dir is False else find_databases_page(self._dashboard_dir or None)  # type: ignore[arg-type]
-        page = databases_page(page_dir) if page_dir else None
+        page = databases_page(self._dashboard_dir)
         return CliDatabasesPlugin(
             prefix=DATABASES_PREFIX,
             router=create_databases_router(databases),
@@ -177,8 +174,6 @@ class CliDatabasesBuilder:
             module=_DatabasesModule(CliDatabasesCommandProcessor(databases)),
             route_permissions=[CliRoutePermission(DATABASES_PREFIX, DATABASES_READ, DATABASES_MIGRATE)],
             permissions=list(DATABASES_PERMISSION_ENTRIES),
-            dashboard_prefix=DATABASES_DASHBOARD_PREFIX if page else None,
-            dashboard_app=page[0] if page else None,
-            dashboard_extensions=[page[1]] if page else [],
+            dashboard_pages=[page] if page else [],
             _startup=[name for name, options, _ in self._databases if options.apply_on_startup],
         )

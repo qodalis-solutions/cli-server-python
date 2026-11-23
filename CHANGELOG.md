@@ -6,6 +6,18 @@ PEP 440 for `1.0.0-beta.19`).
 
 ## Unreleased
 
+- **Dashboard pages move into the plugins** that serve their APIs: the dashboard's Jobs, Audit, API tokens,
+  Filesystem and Data explorer pages are modules (`@qodalis/cli-dashboard-module-<name>`) embedded in
+  `qodalis-cli-server-plugin-jobs`, `-audit`, `-users`, `-filesystem` and `-data-explorer`
+  (`scripts/copy_dashboard.py`) and served at `/qcli/modules/<id>` as dashboard extensions, with the permissions the
+  pages need (`jobs:read`, `audit:read`, `files:read`, `data:query`; tokens none). The core serves Filesystem and
+  Data explorer with their APIs (`CliServerOptions.dashboard_pages` points at another build or leaves one out); the
+  plugins have `set_dashboard_dir(path | False)`. A plugin lists its pages in `dashboard_pages`; the helper is
+  `qodalis_cli_server_abstractions.dashboard_modules` (re-exported as `qodalis_cli.dashboard_modules`), and the
+  databases plugin uses it too.
+- **Dashboard extensions: `widgets` and `search`.** An extension may name slots it fills besides its page
+  (`overview`: cards on the dashboard's Overview, `palette`: entries in its command palette) and a `search` path
+  (`/?q=`) the command palette opens. Jobs declares both slots and a search, Audit a search, Databases `overview`.
 - **Databases** (`qodalis-cli-server-plugin-databases`, `qodalis_cli_databases`, new): the server's PostgreSQL (`asyncpg`), MySQL/MariaDB (`aiomysql`), SQL Server (`pymssql`) and SQLite (`sqlite3`) databases, with their stats and migrations. `CliDatabasesBuilder().add_database(...).add_sql_folder(...).build()`, mounted with `mount_plugin`.
   - **Stats** (`GET /api/v1/qcli/databases/{db}/stats`, terminal `databases stats`, MCP `databases_stats`):
     - server version and uptime;

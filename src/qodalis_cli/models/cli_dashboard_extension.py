@@ -15,6 +15,8 @@ _LANGUAGE = re.compile(r"^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
 _WHITESPACE_OR_CONTROL = re.compile(r"[\s\x00-\x1f\x7f]")
 _NOT_IN_EMOJI = re.compile(r"[\s<>\"'/\\]")
 _HTTP_URL = re.compile(r"^https?://[^/]", re.IGNORECASE)
+_WIDGET = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+_SEARCH = re.compile(r"^/[^\s\x00-\x1f\x7f]{0,99}$")
 
 
 def _invalid(reason: str) -> ValueError:
@@ -92,6 +94,12 @@ class CliDashboardExtension:
     styles: tuple[str, ...] | None = field(default=None)
     #: Shown in the page's error panel.
     version: str | None = None
+    #: Slots the module fills besides its page (``overview``: cards on the dashboard's Overview; ``palette``:
+    #: entries in its command palette), at most 5.
+    widgets: tuple[str, ...] | None = field(default=None)
+    #: A path below the page ending where the search text goes (``/?q=``): the command palette offers
+    #: "Search <title> for ..." and opens it.
+    search: str | None = None
 
     @classmethod
     def of(cls, value: CliDashboardExtension | Mapping[str, Any]) -> CliDashboardExtension:
@@ -101,6 +109,7 @@ class CliDashboardExtension:
         if not isinstance(value, Mapping):
             raise _invalid("not an extension or a mapping")
         styles = value.get("styles")
+        widgets = value.get("widgets")
         return cls(
             id=value.get("id"),  # type: ignore[arg-type]
             title=value.get("title"),  # type: ignore[arg-type]
@@ -112,6 +121,8 @@ class CliDashboardExtension:
             permission=value.get("permission"),
             styles=tuple(styles) if isinstance(styles, (list, tuple)) else styles,
             version=value.get("version"),
+            widgets=tuple(widgets) if isinstance(widgets, (list, tuple)) else widgets,
+            search=value.get("search"),
         )
 
     def validated(self) -> CliDashboardExtension:
@@ -152,6 +163,15 @@ class CliDashboardExtension:
             styles = tuple(self.styles)
         if self.version is not None and (not isinstance(self.version, str) or not 1 <= len(self.version) <= 50):
             raise _invalid(f"{ext_id}: version must be 1-50 characters")
+        widgets = None
+        if self.widgets is not None:
+            if not isinstance(self.widgets, (list, tuple)) or len(self.widgets) > 5 or not all(
+                isinstance(w, str) and _WIDGET.match(w) for w in self.widgets
+            ):
+                raise _invalid(f"{ext_id}: widgets must be at most 5 slot names")
+            widgets = tuple(dict.fromkeys(self.widgets)) or None
+        if self.search is not None and (not isinstance(self.search, str) or not _SEARCH.match(self.search)):
+            raise _invalid(f"{ext_id}: search must be a path starting with /")
         return CliDashboardExtension(
             id=ext_id,
             title=self.title,
@@ -163,6 +183,8 @@ class CliDashboardExtension:
             permission=self.permission,
             styles=styles,
             version=self.version,
+            widgets=widgets,
+            search=self.search,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -179,4 +201,8 @@ class CliDashboardExtension:
             out["styles"] = list(self.styles)
         if self.version is not None:
             out["version"] = self.version
+        if self.widgets:
+            out["widgets"] = list(self.widgets)
+        if self.search is not None:
+            out["search"] = self.search
         return out

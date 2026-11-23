@@ -248,6 +248,13 @@ or a job's latest; returns the count per job id. `JobHistoryLimits.expired_ids(e
 in memory, a database store should delete set-based). History retention uses `prune_history`; for a store without it, it falls back to `prune(before)` with the
 global `max_age` (the longer `failed_max_age` when set), without count limits, per-job overrides or the kept latest run.
 
+## Dashboard page
+
+The admin dashboard's Jobs page is the module `@qodalis/cli-dashboard-module-jobs`, embedded in this package
+(`qodalis_cli_jobs/dashboard`, copied at build by `scripts/copy_dashboard.py` from the sibling `cli-server-dashboard` repo, else
+the npm package) and served at `/qcli/modules/jobs`, outside the API, when the plugin is mounted; it is listed as a
+dashboard extension (permission `jobs:read`), with cards on the Overview (`widgets`: `overview`), entries in the command palette (`palette`) and a search (`/?q=`). `CliJobsBuilder().set_dashboard_dir(path)` serves another build, `set_dashboard_dir(False)` leaves the page out.
+
 ## License
 
 MIT

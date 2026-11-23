@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from fastapi import APIRouter, Request
 
 from qodalis_cli_audit import CliAuditBuilder, CliAuditPlugin
+from qodalis_cli_server_abstractions.dashboard_modules import DASHBOARD_MODULES_PREFIX, module_page_of
 from qodalis_cli_server_abstractions.events import ICliEventBus
 
 from .controllers.groups_controller import create_groups_router
@@ -84,6 +86,20 @@ from .stores.interfaces import (
 logger = logging.getLogger(__name__)
 
 PREFIX = "/api/v1/qcli"
+
+#: The dashboard's API tokens page (``@qodalis/cli-dashboard-module-tokens``): its registration, served at
+#: ``/qcli/modules/tokens``. No permission: every user sees their own tokens.
+TOKENS_DASHBOARD_PAGE = {
+    "id": "tokens",
+    "title": "API tokens",
+    "titles": {
+        "es": "Tokens de API", "fr": "Jetons d’API", "de": "API-Tokens", "pt": "Tokens de API", "it": "Token API",
+        "ja": "API トークン", "ko": "API 토큰", "zh": "API 令牌", "ru": "API-токены", "ro": "Tokenuri API",
+    },
+    "icon": "🔑",
+    "group": "access",
+    "order": 10,
+}
 DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000
 #: Re-check interval (seconds) of events/logs sockets opened through the
 #: external auth adapter: the server's ``shell.session_check_interval``
@@ -167,6 +183,8 @@ class CliUsersPlugin:
     audit_plugin: Optional[CliAuditPlugin] = None
     #: Link requests (``/link``): terminals linked through the browser.
     link_service: Optional[LinkService] = None
+    #: The dashboard's API tokens page, when the package carries its build (not in guard-only mode).
+    dashboard_pages: list = field(default_factory=list)
     _link_limiter: Optional[LinkRateLimiter] = field(default=None, repr=False)
     _seeded: bool = field(default=False, repr=False)
     #: Guard-only: mounted on a server without CLI routes (the guards work).
@@ -476,6 +494,7 @@ class CliUsersBuilder:
         self._cleanup_interval_ms = DEFAULT_CLEANUP_INTERVAL_MS
         self._link_approval_url = DEFAULT_LINK_APPROVAL_URL
         self._guard_only = False
+        self._dashboard_dir: str | bool | None = None
 
     def set_user_store(self, store: IUserStore) -> CliUsersBuilder:
         self._user_store = store
@@ -602,6 +621,12 @@ class CliUsersBuilder:
         self._protect_server = protect
         return self
 
+    def set_dashboard_dir(self, directory: str | bool) -> CliUsersBuilder:
+        """Where the dashboard's API tokens page is (``@qodalis/cli-dashboard-module-tokens``'s build); by
+        default the copy in this package (``scripts/copy_dashboard.py``). ``False`` leaves the page out."""
+        self._dashboard_dir = directory
+        return self
+
     def set_guard_only(self, on: bool = True) -> CliUsersBuilder:
         """Guard-only mode, for a service that only validates tokens (e.g. a
         public API next to the service that runs the CLI): no users routes
@@ -706,6 +731,12 @@ class CliUsersBuilder:
             api_tokens=ApiTokenManager(auth_service),
             guard_only=self._guard_only,
         )
+        if not self._guard_only:
+            page = module_page_of(
+                os.path.dirname(os.path.abspath(__file__)), self._dashboard_dir,
+                f"{DASHBOARD_MODULES_PREFIX}/tokens", TOKENS_DASHBOARD_PAGE,
+            )
+            plugin.dashboard_pages = [page] if page else []
 
         # The users plugin records its events in the audit plugin's store,
         # also after it joined the host's audit plugin (another store).

@@ -65,8 +65,21 @@ jobs:
 
       # -- Plugin packages --
 
+      # The wheels embed the dashboard's pages of their APIs, from the npm packages @qodalis/cli-dashboard-module-*
+      - name: Embed the dashboard pages
+        run: |
+          for pair in jobs:jobs:qodalis_cli_jobs audit:audit:qodalis_cli_audit users:tokens:qodalis_cli_users \
+                      filesystem:filesystem:qodalis_cli_filesystem data-explorer:data-explorer:qodalis_cli_data_explorer; do
+            IFS=: read -r plugin module package <<< "$pair"
+            npm install --no-save --no-package-lock --ignore-scripts --prefix plugins/$plugin @qodalis/cli-dashboard-module-$module
+            python plugins/$plugin/scripts/copy_dashboard.py
+            test -f plugins/$plugin/$package/dashboard/extension.js
+          done
+
       - name: Build filesystem plugin
-        run: python -m build plugins/filesystem/ --outdir dist-plugin-filesystem/
+        run: |
+          python -m build plugins/filesystem/ --outdir dist-plugin-filesystem/
+          python -m zipfile -l dist-plugin-filesystem/*.whl | grep -q "qodalis_cli_filesystem/dashboard/extension.js"
 
       - name: Publish filesystem plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -144,7 +157,9 @@ jobs:
           attestations: false
 
       - name: Build jobs plugin
-        run: python -m build plugins/jobs/ --outdir dist-plugin-jobs/
+        run: |
+          python -m build plugins/jobs/ --outdir dist-plugin-jobs/
+          python -m zipfile -l dist-plugin-jobs/*.whl | grep -q "qodalis_cli_jobs/dashboard/extension.js"
 
       - name: Publish jobs plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -157,7 +172,9 @@ jobs:
 
       # Before the users plugin, which depends on it.
       - name: Build audit plugin
-        run: python -m build plugins/audit/ --outdir dist-plugin-audit/
+        run: |
+          python -m build plugins/audit/ --outdir dist-plugin-audit/
+          python -m zipfile -l dist-plugin-audit/*.whl | grep -q "qodalis_cli_audit/dashboard/extension.js"
 
       - name: Publish audit plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -169,7 +186,9 @@ jobs:
           attestations: false
 
       - name: Build users plugin
-        run: python -m build plugins/users/ --outdir dist-plugin-users/
+        run: |
+          python -m build plugins/users/ --outdir dist-plugin-users/
+          python -m zipfile -l dist-plugin-users/*.whl | grep -q "qodalis_cli_users/dashboard/extension.js"
 
       - name: Publish users plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -186,6 +205,7 @@ jobs:
                         data-explorer-mssql data-explorer-mongo data-explorer-redis data-explorer-elasticsearch; do
             python -m build plugins/$plugin/ --outdir dist-plugins/
           done
+          python -m zipfile -l dist-plugins/qodalis_cli_server_plugin_data_explorer-*.whl | grep -q "qodalis_cli_data_explorer/dashboard/extension.js"
 
       - name: Publish aws, public API, docs and data explorer plugins to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

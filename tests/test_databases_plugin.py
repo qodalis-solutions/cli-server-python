@@ -248,4 +248,5 @@ def test_serves_the_dashboards_databases_page_to_anyone_and_registers_it(tmp_pat
         assert js.headers["cache-control"] == "no-cache"
         assert c.get(API).status_code == 401
 
-    assert CliDatabasesBuilder().set_dashboard_dir(False).build().dashboard_extensions == []
+    assert extension.widgets == ("overview",)
+    assert CliDatabasesBuilder().set_dashboard_dir(False).build().dashboard_pages == []
