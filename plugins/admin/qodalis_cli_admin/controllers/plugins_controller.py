@@ -28,6 +28,19 @@ def create_plugins_router(
         plugins = getattr(builder, "installed_plugins", None) or []
         return [p.to_dict() for p in plugins]
 
+    @router.get("/dashboard/extensions")
+    async def list_dashboard_extensions(
+        _user: dict[str, Any] = Depends(auth_dependency),
+    ) -> JSONResponse:
+        """Pages plugins add to the dashboard, in registration order.  Every
+        page is listed; the dashboard hides those the user may not see and
+        each plugin's own API enforces access."""
+        extensions = getattr(builder, "dashboard_extensions", None) or []
+        return JSONResponse(
+            content={"extensions": [e.to_dict() for e in extensions]},
+            headers={"Cache-Control": "no-cache"},
+        )
+
     @router.get("/plugins")
     async def list_plugins(
         _user: dict[str, Any] = Depends(auth_dependency),
