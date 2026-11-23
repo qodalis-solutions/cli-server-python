@@ -23,6 +23,7 @@ RUN cd plugins/admin && npm init -y && npm install @qodalis/cli-server-dashboard
 
 RUN pip install --no-cache-dir ./plugins/filesystem \
     && pip install --no-cache-dir ./plugins/filesystem-json \
+    && pip install --no-cache-dir ./plugins/migrations \
     && pip install --no-cache-dir ./plugins/filesystem-sqlite \
     && (pip install --no-cache-dir ./plugins/filesystem-s3 || true) \
     && pip install --no-cache-dir ./plugins/weather \
