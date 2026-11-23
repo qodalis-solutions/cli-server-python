@@ -9,14 +9,18 @@ from qodalis_cli_server_abstractions.jobs import (
     ICliJobStorageProvider,
     JobExecution,
     JobExecutionQuery,
+    JobExecutionSummary,
     JobHistoryLimits,
     JobState,
+    summarize_job_runs,
 )
 from qodalis_cli_server_abstractions.jobs.job_execution_query import as_utc
 
 
 class InMemoryJobStorageProvider(ICliJobStorageProvider):
-    """In-memory implementation — data is lost on server restart."""
+    """In-memory implementation — data is lost on server restart.  Lists
+    return the executions with their logs (they are in memory already; see
+    ``JobExecutionQuery.include_logs``)."""
 
     def __init__(self) -> None:
         self._executions: dict[str, list[JobExecution]] = {}
@@ -58,6 +62,16 @@ class InMemoryJobStorageProvider(ICliJobStorageProvider):
         matches = [e for e in self._executions_by_id.values() if query.matches(e)]
         matches.sort(key=lambda e: as_utc(e.started_at), reverse=True)
         return matches[query.offset: query.offset + query.limit], len(matches)
+
+    async def summarize_executions(
+        self, since: datetime.datetime, job_ids: list[str] | None = None
+    ) -> list[JobExecutionSummary]:
+        """Runs per job and status since ``since``, grouped in memory."""
+        cutoff = as_utc(since)
+        return summarize_job_runs(
+            e for e in self._executions_by_id.values()
+            if as_utc(e.started_at) >= cutoff and (job_ids is None or e.job_id in job_ids)
+        )
 
     async def prune(self, before: datetime.datetime) -> int:
         """Delete the executions that started before ``before``."""

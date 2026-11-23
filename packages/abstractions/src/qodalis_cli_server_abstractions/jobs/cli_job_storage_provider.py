@@ -5,7 +5,8 @@ import datetime
 from collections.abc import Mapping
 
 from .job_execution import JobExecution
-from .job_execution_query import JobExecutionQuery
+from .job_execution_query import JobExecutionQuery, as_utc
+from .job_execution_summary import JobExecutionSummary, summarize_job_runs
 from .job_history_retention import JobHistoryLimits
 from .job_state import JobState
 
@@ -27,7 +28,9 @@ class ICliJobStorageProvider(abc.ABC):
         offset: int = 0,
         status: str | None = None,
     ) -> tuple[list[JobExecution], int]:
-        """Return executions for a job as ``(items, total_count)``.
+        """Return executions for a job as ``(items, total_count)``.  A store
+        may leave the logs out (setting ``log_count``); :meth:`get_execution`
+        returns a run with its logs.
 
         Args:
             job_id: The job identifier.
@@ -54,6 +57,28 @@ class ICliJobStorageProvider(abc.ABC):
             return await self.get_executions(job_id, limit=limit, offset=0, status=status)
 
         return await query.merge(query.job_ids, list_job)
+
+    async def summarize_executions(
+        self, since: datetime.datetime, job_ids: list[str] | None = None
+    ) -> list[JobExecutionSummary]:
+        """Per job and status, how many runs started at or after ``since`` and
+        when the newest one started ("last success per job", "runs in the last
+        24 hours") without loading the runs.  Only the jobs of ``job_ids``, or
+        every job.  The default pages through :meth:`query_executions`
+        (without logs; it needs ``job_ids`` when that is the default too) and
+        groups in memory; database stores override it with a ``GROUP BY``."""
+        page_size = 500
+        runs: list[JobExecution] = []
+        offset = 0
+        while True:
+            items, total = await self.query_executions(JobExecutionQuery(
+                job_ids=job_ids, since=as_utc(since), limit=page_size, offset=offset,
+            ))
+            runs.extend(items)
+            offset += len(items)
+            if len(items) < page_size or offset >= total:
+                break
+        return summarize_job_runs(runs)
 
     async def prune(self, before: datetime.datetime) -> int:
         """Deletes the executions (and their logs) that started before
@@ -96,7 +121,7 @@ class ICliJobStorageProvider(abc.ABC):
 
     @abc.abstractmethod
     async def get_execution(self, execution_id: str) -> JobExecution | None:
-        """Retrieve a single execution by its identifier."""
+        """Retrieve a single execution by its identifier, with its logs."""
         ...
 
     @abc.abstractmethod
