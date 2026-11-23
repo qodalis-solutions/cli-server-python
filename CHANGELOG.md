@@ -4,8 +4,9 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
-## Unreleased
+## 1.0.0b30
 
+- The admin plugin embeds dashboard 1.0.0-beta.27 (plugins' pages as modules, Users and Account pages, a forced password change at sign-in, Qodalis CLI 2.8.0 in its Terminal); the portal plugin serves `@qodalis/cli-server-portal` 1.0.0-beta.27.
 - **Users and Account pages.** The users plugin serves the dashboard's Users page (users, groups, sessions; `users:read`, at `/qcli/modules/users`) and Account page (the signed-in user's profile and password change; every user, at `/qcli/modules/account`), both from `@qodalis/cli-dashboard-module-users` (embedded in `qodalis_cli_users/dashboard_users`; `set_users_dashboard_dir(path | False)`), also when the host application signs users in. New dashboard extension group `account`: listed in the dashboard's account menu (the signed-in user's menu) instead of the sidebar.
 - **Job history without logs in lists, and a run summary** (cli-server-dotnet#96, as on the .NET and Node servers). `JobExecutionQuery.include_logs` (default `False`) and `JobExecution.log_count` / `log_entry_count`: a store may list runs without their log entries and set `log_count` instead; `get_execution` (the run detail endpoint, `server jobs logs`, the dashboard's log panel) always has them, and the list endpoints' `logCount` uses the store's count. The scheduler asks for the logs when it finishes the runs a previous process left running. New `ICliJobStorageProvider.summarize_executions(since, job_ids=None)`: per job and status, the number of runs and the start of the newest one (`JobExecutionSummary`, `summarize_job_runs`); in memory in the in-memory store, by default from `query_executions` a page at a time. The in-memory store keeps the logs in its lists. (The Python server has no SQL job store, so there are no indexes to add.)
 - **Dashboard pages move into the plugins** that serve their APIs: the dashboard's Jobs, Audit, API tokens,
