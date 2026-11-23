@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
 from typing import Any
 
@@ -202,3 +203,32 @@ def test_route_permissions_must_be_under_the_plugin_prefix():
     plugin.route_permissions = [CliRoutePermission("/api/v1/qcli/users", "migrations:read")]
     with pytest.raises(ValueError, match="invalid route permission: /api/v1/qcli/users"):
         result.mount_plugin(plugin)
+
+
+def test_serves_the_dashboards_migrations_page_to_anyone_and_registers_it(tmp_path):
+    (tmp_path / "extension.js").write_text("export default {};")
+    (tmp_path / "extension.css").write_text(".x{}")
+    db = sqlite3.connect(":memory:", check_same_thread=False)
+    result = create_cli_server(CliServerOptions())
+    users = CliUsersBuilder().set_default_admin_password(ROOT_PASS).set_rate_limit(1000).build()
+    result.mount_plugin(users)
+    plugin = (
+        CliMigrationsBuilder()
+        .add_database("main", CliMigrationDatabaseOptions(sqlite_connection(db)))
+        .set_dashboard_dir(str(tmp_path))
+        .build()
+    )
+    result.mount_plugin(plugin)
+
+    extension = next(e for e in result.builder.dashboard_extensions if e.id == "migrations")
+    assert (extension.group, extension.permission, extension.icon) == ("data", "migrations:read", "🗄️")
+    assert extension.titles["ro"] == "Migrări"
+    assert re.fullmatch(r"/qcli/migrations/extension\.js\?v=[0-9a-f]{12}", extension.entry)
+    with TestClient(result.app) as c:
+        js = c.get("/qcli/migrations/extension.js")
+        assert js.status_code == 200
+        assert js.text == "export default {};"
+        assert js.headers["cache-control"] == "no-cache"
+        assert c.get(API).status_code == 401
+
+    assert CliMigrationsBuilder().set_dashboard_dir(False).build().dashboard_extensions == []

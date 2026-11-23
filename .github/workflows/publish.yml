@@ -89,8 +89,14 @@ jobs:
           verbose: true
           attestations: false
 
+      # The wheel embeds the dashboard's Migrations page from the npm package @qodalis/cli-dashboard-module-migrations
       - name: Build migrations plugin
-        run: python -m build plugins/migrations/ --outdir dist-plugin-migrations/
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --prefix plugins/migrations @qodalis/cli-dashboard-module-migrations
+          python plugins/migrations/scripts/copy_dashboard.py
+          test -f plugins/migrations/qodalis_cli_migrations/dashboard/extension.js
+          python -m build plugins/migrations/ --outdir dist-plugin-migrations/
+          python -m zipfile -l dist-plugin-migrations/*.whl | grep -q "qodalis_cli_migrations/dashboard/extension.js"
 
       - name: Publish migrations plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

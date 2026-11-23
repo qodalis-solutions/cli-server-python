@@ -94,3 +94,11 @@ point at empty databases the tests may use.
 ## License
 
 MIT
+
+## Dashboard page
+
+The admin dashboard shows a Migrations page (group Data, `migrations:read`): the databases, each one's migrations by
+status, the runs, and, with `migrations:run`, Apply pending / Migrate to here / Roll back to here with the SQL each run
+executes. It is `@qodalis/cli-dashboard-module-migrations`, copied into the package at build
+(`scripts/copy_dashboard.py`), served at `/qcli/migrations` and registered as a dashboard extension when mounted.
+`set_dashboard_dir(path)` serves another build, `set_dashboard_dir(False)` leaves the page out.

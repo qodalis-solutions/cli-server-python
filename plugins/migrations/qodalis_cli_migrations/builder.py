@@ -11,6 +11,7 @@ from fastapi import APIRouter
 from qodalis_cli_server_abstractions import CliModule, CliRoutePermission, IAuditStore, ICliCommandProcessor
 
 from .commands import CliMigrationsCommandProcessor
+from .dashboard_page import MIGRATIONS_DASHBOARD_PREFIX, find_migrations_page, migrations_page
 from .controller import create_migrations_router
 from .migrations import MIGRATIONS_READ, MIGRATIONS_RUN, CliMigrations
 from .runner import CliMigrationDatabaseOptions, CliMigrationRun, CliMigrationRunner, CliMigrationRunOptions
@@ -65,6 +66,10 @@ class CliMigrationsPlugin:
     route_permissions: list[CliRoutePermission] = field(default_factory=list)
     #: ``migrations:read`` and ``migrations:run``, added to the server's permission catalog when mounted.
     permissions: list[dict[str, str]] = field(default_factory=list)
+    #: The dashboard's Migrations page (``/qcli/migrations``), when its build is there.
+    dashboard_prefix: str | None = None
+    dashboard_app: Any = None
+    dashboard_extensions: list[dict[str, Any]] = field(default_factory=list)
     _startup: list[str] = field(default_factory=list, repr=False)
 
     @property
@@ -117,6 +122,7 @@ class CliMigrationsBuilder:
     def __init__(self) -> None:
         self._databases: list[tuple[str, CliMigrationDatabaseOptions, list[CliMigrationSource]]] = []
         self._audit_store: IAuditStore | None = None
+        self._dashboard_dir: str | bool | None = None
 
     def add_database(self, name: str, options: CliMigrationDatabaseOptions) -> "CliMigrationsBuilder":
         """Registers a database (its name is used in the API, the terminal and the dashboard)."""
@@ -148,6 +154,12 @@ class CliMigrationsBuilder:
         self._audit_store = store
         return self
 
+    def set_dashboard_dir(self, directory: str | bool) -> "CliMigrationsBuilder":
+        """Where the dashboard's Migrations page is (``@qodalis/cli-dashboard-module-migrations``'s build); by
+        default the copy inside the package.  ``False`` leaves the page out."""
+        self._dashboard_dir = directory
+        return self
+
     def build(self) -> CliMigrationsPlugin:
         migrations = CliMigrations()
         for name, options, sources in self._databases:
@@ -156,6 +168,8 @@ class CliMigrationsBuilder:
                 runner.add_source(source)
             migrations.add(runner)
         migrations.audit_store = self._audit_store
+        page_dir = None if self._dashboard_dir is False else find_migrations_page(self._dashboard_dir or None)  # type: ignore[arg-type]
+        page = migrations_page(page_dir) if page_dir else None
         return CliMigrationsPlugin(
             prefix=MIGRATIONS_PREFIX,
             router=create_migrations_router(migrations),
@@ -163,5 +177,8 @@ class CliMigrationsBuilder:
             module=_MigrationsModule(CliMigrationsCommandProcessor(migrations)),
             route_permissions=[CliRoutePermission(MIGRATIONS_PREFIX, MIGRATIONS_READ, MIGRATIONS_RUN)],
             permissions=list(MIGRATIONS_PERMISSION_ENTRIES),
+            dashboard_prefix=MIGRATIONS_DASHBOARD_PREFIX if page else None,
+            dashboard_app=page[0] if page else None,
+            dashboard_extensions=[page[1]] if page else [],
             _startup=[name for name, options, _ in self._databases if options.apply_on_startup],
         )
