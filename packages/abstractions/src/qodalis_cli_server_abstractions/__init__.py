@@ -55,8 +55,20 @@ from .data_explorer_types import (
 )
 from .data_explorer_provider import IDataExplorerProvider
 from .cli_stream_command_processor import ICliStreamCommandProcessor, is_stream_capable
+from .table_names import (
+    DEFAULT_TABLE_PREFIX,
+    CliTableNameOptions,
+    is_sql_identifier,
+    qcli_table_name,
+)
+from .route_permissions import CliRoutePermission
 
 __all__ = [
+    "DEFAULT_TABLE_PREFIX",
+    "CliTableNameOptions",
+    "is_sql_identifier",
+    "qcli_table_name",
+    "CliRoutePermission",
     "ICliCommandAuthor",
     "CliCommandAuthor",
     "DEFAULT_LIBRARY_AUTHOR",

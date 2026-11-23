@@ -129,6 +129,11 @@ class CliServerResult:
     #: mounted plugins (portal, docs, the public-api plugin's document).  An
     #: entry ending in ``/*`` covers everything under it.  Never a CLI route.
     public_paths: list[str] = field(default_factory=list)
+    #: Permissions mounted plugins declared for their routes
+    #: (``route_permissions``: :class:`CliRoutePermission`), enforced by the
+    #: users plugin on a protected server: ``read`` for GET and HEAD,
+    #: ``write`` otherwise; the longest path wins.
+    route_permissions: list[Any] = field(default_factory=list)
 
     def add_cli_route_prefix(self, prefix: str | None) -> None:
         """Count ``prefix`` among the CLI's routes (see
@@ -196,6 +201,23 @@ class CliServerResult:
             if path not in self.public_paths:
                 self.public_paths.append(path)
 
+        # Permissions of the plugin's routes, under its own prefix
+        for rule in getattr(plugin, "route_permissions", None) or []:
+            self.route_permissions.append(_checked_route_permission(rule, prefix))
+        # The plugin's terminal commands, its permissions (catalog, ``cli``
+        # surface) and its MCP tools
+        module = getattr(plugin, "module", None)
+        if module is not None:
+            self.builder.add_module(module)
+        permissions = getattr(plugin, "permissions", None)
+        if permissions:
+            known = {p.name for p in self.builder.permissions.all()}
+            fresh = [p for p in permissions if _permission_name(p) not in known]
+            if fresh:
+                self.builder.add_permissions(fresh, surface="cli")
+        for provider in getattr(plugin, "mcp_providers", None) or []:
+            self.mcp.add_provider(provider)
+
         # Pages the plugin adds to the admin dashboard
         for extension in getattr(plugin, "dashboard_extensions", None) or []:
             self.builder.add_dashboard_extension(extension)
@@ -214,6 +236,26 @@ class CliServerResult:
             )
         elif dashboard_prefix and dashboard_app:
             self.app.mount(dashboard_prefix, dashboard_app)
+
+
+def _permission_name(entry: Any) -> Any:
+    return entry.get("name") if isinstance(entry, dict) else getattr(entry, "name", None)
+
+
+def _checked_route_permission(rule: Any, prefix: Any) -> Any:
+    """A plugin's route permission: its path is its prefix or under it (on a
+    segment boundary), else ``ValueError`` (``invalid route permission: <path>``)."""
+    path = getattr(rule, "path", None)
+    mount = "/" + prefix.strip("/") if isinstance(prefix, str) and prefix.strip("/") else None
+    valid = (
+        mount is not None
+        and isinstance(path, str)
+        and (path.rstrip("/") == mount or path.startswith(mount + "/"))
+        and isinstance(getattr(rule, "read", None), str)
+    )
+    if not valid:
+        raise ValueError(f"invalid route permission: {path}")
+    return rule
 
 
 _CLI_PATH = re.compile(r"^/(api|ws)/(v\d+/)?(qcli|cli)(/|$)")
