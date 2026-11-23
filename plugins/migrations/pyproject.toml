@@ -43,3 +43,6 @@ packages = ["qodalis_cli_migrations"]
 
 [tool.hatch.build.targets.sdist]
 include = ["qodalis_cli_migrations/**"]
+
+[tool.hatch.build]
+artifacts = ["qodalis_cli_migrations/dashboard/**"]
