@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir ./packages/abstractions
 COPY plugins/ plugins/
 RUN pip install --no-cache-dir ./plugins/filesystem \
     && pip install --no-cache-dir ./plugins/filesystem-json \
+    && pip install --no-cache-dir ./plugins/migrations \
     && pip install --no-cache-dir ./plugins/filesystem-sqlite \
     && pip install --no-cache-dir ./plugins/weather
 

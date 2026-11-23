@@ -22,6 +22,7 @@ jobs:
           pip install ./packages/abstractions
           pip install ./plugins/filesystem
           pip install ./plugins/filesystem-json
+          pip install ./plugins/migrations
           pip install ./plugins/filesystem-sqlite
           pip install ./plugins/filesystem-s3
           pip install ./plugins/weather
@@ -84,6 +85,18 @@ jobs:
         with:
           password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist-plugin-filesystem-json/
+          skip-existing: true
+          verbose: true
+          attestations: false
+
+      - name: Build migrations plugin
+        run: python -m build plugins/migrations/ --outdir dist-plugin-migrations/
+
+      - name: Publish migrations plugin to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+          packages-dir: dist-plugin-migrations/
           skip-existing: true
           verbose: true
           attestations: false
