@@ -129,3 +129,10 @@ Queries run in order: permissions, rate limit (per user id, or client address wh
 ## License
 
 MIT
+
+## Dashboard page
+
+The admin dashboard's Data explorer page (`@qodalis/cli-dashboard-module-data-explorer`) is embedded in this package
+(`qodalis_cli_data_explorer/dashboard`, copied at build by `scripts/copy_dashboard.py`). The server serves it at
+`/qcli/modules/data-explorer` and lists it (permission `data:query`) when a provider is registered;
+`CliServerOptions(dashboard_pages={"data-explorer": path})` serves another build, `False` leaves it out.

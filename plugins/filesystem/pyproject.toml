@@ -34,3 +34,6 @@ packages = ["qodalis_cli_filesystem"]
 
 [tool.hatch.build.targets.sdist]
 include = ["qodalis_cli_filesystem/**"]
+
+[tool.hatch.build]
+artifacts = ["qodalis_cli_filesystem/dashboard/**"]

@@ -974,9 +974,19 @@ result.builder.add_dashboard_extension(CliDashboardExtension(
     permission="billing:read",
     entry="/billing/admin/extension.js",   # served by your plugin, same origin
     styles=("/billing/admin/extension.css",),
+    widgets=("overview",),                 # optional: cards on the dashboard's Overview ("palette": palette entries)
+    search="/?q=",                         # optional: the command palette's "Search Billing for ..."
 ))
 # or from a plugin object: dashboard_extensions = [...] (read by mount_plugin)
 ```
+
+A page built in the dashboard's repo (`modules/<name>`, npm `@qodalis/cli-dashboard-module-<name>`) is embedded in
+the plugin that serves its API and served with `qodalis_cli_server_abstractions.dashboard_modules`:
+`module_page_of(package_dir, directory, prefix, registration)` finds the build (the package's `dashboard/` copy) and
+returns a page (files served without caching at `prefix`, outside the API, and the extension with hashed `entry` and
+`styles`); a plugin lists it in `dashboard_pages` and `mount_plugin` serves and registers it
+(`result.add_dashboard_page(page)` for a page of your own). The Jobs, Audit, API tokens, Filesystem, Data explorer and
+Databases pages are served this way, at `/qcli/modules/<id>` (Databases at `/qcli/databases`).
 
 The admin plugin lists them at `GET /api/v1/qcli/dashboard/extensions` (behind the dashboard's sign-in). Every
 page is listed whatever the caller's permissions; the dashboard hides what the user may not see and the plugin's

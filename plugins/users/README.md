@@ -296,6 +296,13 @@ result.mount_plugin(users)
 Tokens must be created and revoked from one service only: the name's uniqueness and the 20-token limit are checked in
 the process that creates the token.
 
+## Dashboard page (API tokens)
+
+The admin dashboard's API tokens page is the module `@qodalis/cli-dashboard-module-tokens`, embedded in this package
+(`qodalis_cli_users/dashboard`, copied at build by `scripts/copy_dashboard.py` from the sibling `cli-server-dashboard` repo, else
+the npm package) and served at `/qcli/modules/tokens`, outside the API, when the plugin is mounted; it is listed as a
+dashboard extension (no permission: each user sees their own tokens); not in guard-only mode. `CliUsersBuilder().set_dashboard_dir(path)` serves another build, `set_dashboard_dir(False)` leaves the page out.
+
 ## Linking a terminal
 
 `server add` in the web CLI links a terminal to the server through the browser, like the OAuth device flow:

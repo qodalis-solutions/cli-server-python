@@ -17,6 +17,7 @@ set stores the one mounted last is kept.
 from __future__ import annotations
 
 import logging
+import os
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -25,12 +26,29 @@ from typing import Any, Awaitable, Callable, Optional
 from fastapi import APIRouter, Request
 
 from qodalis_cli_server_abstractions.audit import AuditEntry, IAuditStore
+from qodalis_cli_server_abstractions.dashboard_modules import DASHBOARD_MODULES_PREFIX, module_page_of
 from qodalis_cli_server_abstractions.events import CliEventAudience, ICliEventBus
 
 from .cli_audit_controller import create_audit_router
 from .in_memory_audit_store import InMemoryAuditStore
 
 PREFIX = "/api/v1/qcli/audit"
+
+#: The dashboard's Audit page (``@qodalis/cli-dashboard-module-audit``): its registration, served at
+#: ``/qcli/modules/audit`` by the audit plugin that serves the log (once per server).
+AUDIT_DASHBOARD_PAGE = {
+    "id": "audit",
+    "title": "Audit",
+    "titles": {
+        "es": "Auditoría", "fr": "Audit", "de": "Audit", "pt": "Auditoria", "it": "Audit",
+        "ja": "監査", "ko": "감사", "zh": "审计", "ru": "Аудит", "ro": "Audit",
+    },
+    "icon": "🛡",
+    "group": "operations",
+    "order": 30,
+    "permission": "audit:read",
+    "search": "/?q=",
+}
 
 #: Permission of the ``audit:recorded`` event's audience.
 _AUDIT_READ = "audit:read"
@@ -70,6 +88,8 @@ class CliAuditPlugin:
     #: The server's event bus (set when mounted): ``audit:recorded`` after
     #: each entry recorded through :meth:`log` (or by the users plugin).
     event_bus: Optional[ICliEventBus] = None
+    #: The dashboard's Audit page, when the package carries its build.
+    dashboard_pages: list = field(default_factory=list)
     router: APIRouter = field(init=False, repr=False)
     _listeners: list = field(default_factory=list, repr=False)
 
@@ -145,6 +165,7 @@ class CliAuditBuilder:
 
     def __init__(self) -> None:
         self._store: IAuditStore | None = None
+        self._dashboard_dir: str | bool | None = None
 
     def set_store(self, store: IAuditStore) -> CliAuditBuilder:
         """Keep the log in ``store`` (default: in memory, the latest 1000
@@ -152,9 +173,20 @@ class CliAuditBuilder:
         self._store = store
         return self
 
+    def set_dashboard_dir(self, directory: str | bool) -> CliAuditBuilder:
+        """Where the dashboard's Audit page is (``@qodalis/cli-dashboard-module-audit``'s build); by default the
+        copy in this package (``scripts/copy_dashboard.py``). ``False`` leaves the page out."""
+        self._dashboard_dir = directory
+        return self
+
     def build(self) -> CliAuditPlugin:
+        page = module_page_of(
+            os.path.dirname(os.path.abspath(__file__)), self._dashboard_dir,
+            f"{DASHBOARD_MODULES_PREFIX}/audit", AUDIT_DASHBOARD_PAGE,
+        )
         return CliAuditPlugin(
             prefix=PREFIX,
             store=self._store or InMemoryAuditStore(),
             store_set=self._store is not None,
+            dashboard_pages=[page] if page else [],
         )

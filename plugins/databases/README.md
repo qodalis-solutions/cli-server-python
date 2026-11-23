@@ -127,7 +127,8 @@ With `databases:migrate`, it adds Apply pending, Migrate to here and Roll back t
 executes.
 
 The page is `@qodalis/cli-dashboard-module-databases`. It is copied into the package at build
-(`scripts/copy_dashboard.py`), served at `/qcli/databases` and registered as a dashboard extension when mounted.
+(`scripts/copy_dashboard.py`), served at `/qcli/databases` and registered as a dashboard extension when mounted, with cards on the dashboard's
+Overview (`widgets`: `overview`).
 `set_dashboard_dir(path)` serves another build, and `set_dashboard_dir(False)` leaves the page out.
 
 ## Helpers for store authors

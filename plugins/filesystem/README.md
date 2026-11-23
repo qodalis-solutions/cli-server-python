@@ -61,6 +61,13 @@ All providers implement the following async methods:
 
 Requests to paths outside the whitelist raise `FileStoragePermissionError`. An allowed root itself cannot be removed or moved/renamed (as source or target) either: those calls raise `FileStoragePermissionError` too (403 over HTTP), while everything inside the root can.
 
+## Dashboard page
+
+The admin dashboard's Filesystem page (`@qodalis/cli-dashboard-module-filesystem`) is embedded in this package
+(`qodalis_cli_filesystem/dashboard`, copied at build by `scripts/copy_dashboard.py`). The server serves it at
+`/qcli/modules/filesystem` and lists it (permission `files:read`) when the filesystem API is on;
+`CliServerOptions(dashboard_pages={"filesystem": path})` serves another build, `False` leaves it out.
+
 ## License
 
 MIT

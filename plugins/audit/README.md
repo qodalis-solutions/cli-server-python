@@ -81,6 +81,13 @@ audit_plugin = CliAuditBuilder().set_store(MyAuditStore()).build()
 `IAuditStore.prune(before)` (Unix time in ms) deletes old entries; run it on a schedule for a store that keeps
 everything (the default implementation keeps everything and returns 0).
 
+## Dashboard page
+
+The admin dashboard's Audit page is the module `@qodalis/cli-dashboard-module-audit`, embedded in this package
+(`qodalis_cli_audit/dashboard`, copied at build by `scripts/copy_dashboard.py` from the sibling `cli-server-dashboard` repo, else
+the npm package) and served at `/qcli/modules/audit`, outside the API, when the plugin is mounted; it is listed as a
+dashboard extension (permission `audit:read`), with a search (`/?q=`); the audit plugin that serves the log serves it, once per server. `CliAuditBuilder().set_dashboard_dir(path)` serves another build, `set_dashboard_dir(False)` leaves the page out.
+
 ## License
 
 MIT
