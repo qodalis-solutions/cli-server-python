@@ -954,6 +954,34 @@ result.mount_plugin(users_plugin)  # protects every route and socket of the serv
 
 The users plugin README shows the full lifespan wiring, server protection, permissions and [API tokens](plugins/users/README.md#api-tokens).
 
+## Dashboard Extensions
+
+A plugin can add its own pages to the admin dashboard. It serves an ES module (built with
+`@qodalis/cli-server-dashboard-kit`, so it looks like the dashboard) and registers it; the dashboard lists the
+page in its navigation for users holding `permission`, loads the module when the page is opened and mounts it.
+Contract: [cli-server-dashboard `docs/extensions.md`](https://github.com/qodalis-solutions/cli-server-dashboard/blob/develop/docs/extensions.md).
+
+```python
+from qodalis_cli.models import CliDashboardExtension
+
+result.builder.add_dashboard_extension(CliDashboardExtension(
+    id="billing",                          # /qcli/admin/x/billing
+    title="Billing",
+    titles={"de": "Abrechnung"},
+    icon="💳",
+    group="data",                          # overview, operations, data, access, system
+    permission="billing:read",
+    entry="/billing/admin/extension.js",   # served by your plugin, same origin
+    styles=("/billing/admin/extension.css",),
+))
+# or from a plugin object: dashboard_extensions = [...] (read by mount_plugin)
+```
+
+The admin plugin lists them at `GET /api/v1/qcli/dashboard/extensions` (behind the dashboard's sign-in). Every
+page is listed whatever the caller's permissions; the dashboard hides what the user may not see and the plugin's
+own API enforces access. Invalid entries raise `ValueError` (`invalid dashboard extension: <reason>`,
+`dashboard extension already registered: <id>`).
+
 ## Docker
 
 ```bash

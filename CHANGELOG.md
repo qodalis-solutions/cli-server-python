@@ -4,6 +4,10 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## Unreleased
+
+- **Dashboard extensions** (cli-server-dashboard `docs/extensions.md`): `builder.add_dashboard_extension(CliDashboardExtension(...))` (or a mapping with the JSON field names), or a mounted plugin's `dashboard_extensions`, adds a page to the admin dashboard, which loads `entry` (an ES module the plugin serves) and mounts it. The admin plugin lists them at `GET /api/v1/qcli/dashboard/extensions` (`{"extensions": [...]}`, registration order, unset optional fields left out, behind the dashboard's sign-in and `admin:access`, `Cache-Control: no-cache`). Invalid entries raise `ValueError` `invalid dashboard extension: <reason>`, a repeated id `dashboard extension already registered: <id>`.
+
 ## 1.0.0b29
 
 - The admin plugin embeds dashboard 1.0.0-beta.26: pick a new token's permissions from the server's list, host tokens marked, and a Requests today column when the server counts API usage. The portal plugin embeds `@qodalis/cli-server-portal` 1.0.0-beta.26.

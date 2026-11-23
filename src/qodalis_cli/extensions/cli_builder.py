@@ -9,6 +9,7 @@ from qodalis_cli_server_abstractions import (
 
 from ..abstractions import ICliCommandProcessor, ICliModule
 from ..filesystem import FileSystemOptions
+from ..models.cli_dashboard_extension import CliDashboardExtension
 from ..models.cli_installed_plugin import (
     CORE_DISTRIBUTION,
     CliInstalledPlugin,
@@ -50,6 +51,7 @@ class CliBuilder:
         self._file_storage_provider: IFileStorageProvider | None = None
         self._data_explorer_registrations: list[_DataExplorerRegistration] = []
         self._installed_plugins: list[CliInstalledPlugin] = []
+        self._dashboard_extensions: list[CliDashboardExtension] = []
         self.add_installed_plugin(CORE_DISTRIBUTION)
         self._permissions = CliPermissionCatalog()
         self._permissions.add(CORE_PERMISSIONS, "cli")
@@ -104,6 +106,33 @@ class CliBuilder:
             )
         )
         return self
+
+    def add_dashboard_extension(self, extension: CliDashboardExtension | Mapping[str, Any]) -> CliBuilder:
+        """Add a page to the admin dashboard: the dashboard lists it in its
+        navigation and loads ``entry`` (an ES module the plugin serves) when it
+        is opened.  Served by the admin plugin at
+        ``GET /api/v1/qcli/dashboard/extensions``, in registration order.
+        Raises ``ValueError`` (``invalid dashboard extension: <reason>`` /
+        ``dashboard extension already registered: <id>``).
+
+        Example::
+
+            builder.add_dashboard_extension(CliDashboardExtension(
+                id="billing", title="Billing", icon="💳", group="data",
+                permission="billing:read", entry="/billing/admin/extension.js",
+                styles=("/billing/admin/extension.css",),
+            ))
+        """
+        valid = CliDashboardExtension.of(extension).validated()
+        if any(e.id == valid.id for e in self._dashboard_extensions):
+            raise ValueError(f"dashboard extension already registered: {valid.id}")
+        self._dashboard_extensions.append(valid)
+        return self
+
+    @property
+    def dashboard_extensions(self) -> list[CliDashboardExtension]:
+        """The dashboard extensions registered so far, in registration order."""
+        return list(self._dashboard_extensions)
 
     @property
     def installed_plugins(self) -> list[CliInstalledPlugin]:

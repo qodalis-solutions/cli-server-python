@@ -196,6 +196,10 @@ class CliServerResult:
             if path not in self.public_paths:
                 self.public_paths.append(path)
 
+        # Pages the plugin adds to the admin dashboard
+        for extension in getattr(plugin, "dashboard_extensions", None) or []:
+            self.builder.add_dashboard_extension(extension)
+
         # Plugins may hook into the server (e.g. the users plugin protects
         # every route and scopes events to authenticated sockets).
         on_mount = getattr(plugin, "on_mount", None)
