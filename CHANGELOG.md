@@ -4,6 +4,10 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## 1.0.0b31
+
+- The admin plugin embeds dashboard 1.0.0-beta.28: plugin pages no longer change the dashboard's layout (the modules' styles are scoped to their own elements, so Server resources, Events and the other pages keep their columns); the portal plugin serves `@qodalis/cli-server-portal` 1.0.0-beta.28.
+
 ## 1.0.0b30
 
 - The admin plugin embeds dashboard 1.0.0-beta.27 (plugins' pages as modules, Users and Account pages, a forced password change at sign-in, Qodalis CLI 2.8.0 in its Terminal); the portal plugin serves `@qodalis/cli-server-portal` 1.0.0-beta.27.

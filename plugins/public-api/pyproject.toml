@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-public-api"
-version = "1.0.0b30"
+version = "1.0.0b31"
 description = "Public API plugin for Qodalis CLI servers — routes guarded by host API tokens with per-account quotas, token usage, the public OpenAPI document and Swagger UI"
 readme = { text = "", content-type = "text/plain" }
 license = "MIT"
