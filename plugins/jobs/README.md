@@ -247,6 +247,15 @@ job id to its `JobHistoryLimits`, `None` to keep all; other job ids use `default
 or a job's latest; returns the count per job id. `JobHistoryLimits.expired_ids(executions, now)` selects one job's runs
 in memory, a database store should delete set-based). History retention uses `prune_history`; for a store without it, it falls back to `prune(before)` with the
 global `max_age` (the longer `failed_max_age` when set), without count limits, per-job overrides or the kept latest run.
+A store may also implement `summarize_executions(since, job_ids=None)`: per job and status, the number of runs started
+since a time and the start of the newest one (`JobExecutionSummary`), without loading the runs (a database store uses a
+`GROUP BY`); the default reads the runs through `query_executions` a page at a time and groups them.
+
+Lists may leave the log entries out: `JobExecutionQuery.include_logs` (default `False`) asks for them, and a store that
+leaves them out sets `log_count` on each run (the API's `logCount` reads `log_entry_count`, either one).
+`get_execution` returns one run with its logs; the run detail endpoint, `server jobs logs` and the dashboard read logs
+through it, and the scheduler asks for the logs of the runs it finishes after a restart. The in-memory store keeps the
+logs in its lists.
 
 ## Dashboard page
 

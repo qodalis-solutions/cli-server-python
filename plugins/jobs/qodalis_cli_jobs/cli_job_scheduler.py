@@ -336,9 +336,11 @@ class CliJobScheduler:
                 stale: list[JobExecution] = []
                 offset = 0
                 while True:
-                    items, total = await self._storage.get_executions(
-                        reg.id, limit=100, offset=offset, status="running"
-                    )
+                    # With logs: the last entry tells when the run stopped
+                    items, total = await self.query_executions(JobExecutionQuery(
+                        job_ids=[reg.id], status="running", limit=100, offset=offset,
+                        include_logs=True,
+                    ))
                     stale.extend(e for e in items if e.status == "running")
                     offset += len(items)
                     if not items or offset >= total:

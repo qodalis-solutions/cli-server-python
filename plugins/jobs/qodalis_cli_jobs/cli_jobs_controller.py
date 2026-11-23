@@ -107,7 +107,7 @@ def _execution_item(e: JobExecution) -> dict[str, Any]:
         "duration": e.duration,
         "error": e.error,
         "retryAttempt": e.retry_attempt,
-        "logCount": len(e.logs),
+        "logCount": e.log_entry_count,
         "properties": e.properties,
     }
 

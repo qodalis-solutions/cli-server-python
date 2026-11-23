@@ -21,9 +21,21 @@ class JobExecution:
     completed_at: datetime.datetime | None = None
     duration: float | None = None  # milliseconds
     error: str | None = None
+    #: Log entries recorded during execution.  A store may leave them out of
+    #: lists (see ``JobExecutionQuery.include_logs``); ``get_execution``
+    #: returns a run with its logs.
     logs: list[JobLogEntry] = field(default_factory=list)
     retry_attempt: int = 0
     #: The host's own values for this execution (e.g. ``items`` and
     #: ``changed`` counts): set by the job (``context.properties``), saved with
     #: the execution and returned by the jobs API.  Values must serialize to JSON.
     properties: dict[str, Any] = field(default_factory=dict)
+    #: How many log entries the execution has when a list left ``logs`` out;
+    #: ``None`` when ``logs`` is complete.
+    log_count: int | None = None
+
+    @property
+    def log_entry_count(self) -> int:
+        """The number of log entries: ``log_count`` when the logs were left
+        out, else the length of ``logs``."""
+        return self.log_count if self.log_count is not None else len(self.logs)

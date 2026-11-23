@@ -5,6 +5,7 @@ from .cli_job_options import CliJobOptions
 from .cli_job_storage_provider import ICliJobStorageProvider
 from .job_execution import JobExecution
 from .job_execution_query import JobExecutionQuery
+from .job_execution_summary import JobExecutionSummary, summarize_job_runs
 from .job_history_retention import (
     CliJobHistoryOptions,
     Duration,
@@ -30,6 +31,8 @@ __all__ = [
     "ICliJobStorageProvider",
     "JobExecution",
     "JobExecutionQuery",
+    "JobExecutionSummary",
+    "summarize_job_runs",
     "JobState",
     "JobLogEntry",
 ]

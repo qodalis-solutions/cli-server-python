@@ -34,6 +34,10 @@ class JobExecutionQuery:
     limit: int = 20
     #: Number of executions to skip.
     offset: int = 0
+    #: Load each execution's log entries.  Lists may leave them out (a
+    #: database store then sets ``log_count`` instead); ``get_execution``
+    #: always returns a run with its logs.
+    include_logs: bool = False
 
     def matches(self, execution: JobExecution) -> bool:
         """Whether ``execution`` passes the job, status and since filters."""
