@@ -40,4 +40,4 @@ packages = ["qodalis_cli_users"]
 include = ["qodalis_cli_users/**"]
 
 [tool.hatch.build]
-artifacts = ["qodalis_cli_users/dashboard/**"]
+artifacts = ["qodalis_cli_users/dashboard/**", "qodalis_cli_users/dashboard_users/**"]

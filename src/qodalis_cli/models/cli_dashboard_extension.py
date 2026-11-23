@@ -7,8 +7,9 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-#: The navigation groups; any other value becomes ``system``.
-DASHBOARD_EXTENSION_GROUPS = ("overview", "operations", "data", "access", "system")
+#: The navigation groups; any other value becomes ``system``. ``account`` is listed in the dashboard's account menu
+#: (the signed-in user's menu) instead of the sidebar.
+DASHBOARD_EXTENSION_GROUPS = ("overview", "operations", "data", "access", "system", "account")
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 _LANGUAGE = re.compile(r"^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$")
@@ -84,7 +85,8 @@ class CliDashboardExtension:
     titles: Mapping[str, str] | None = None
     #: One emoji, or an http(s) or root-relative image URL.
     icon: str | None = None
-    #: ``overview``, ``operations``, ``data``, ``access``, ``system`` (default).
+    #: ``overview``, ``operations``, ``data``, ``access``, ``system`` (default), or ``account``: listed in the
+    #: dashboard's account menu (the signed-in user's menu) instead of the sidebar.
     group: str | None = None
     #: Order within the group (default 100).
     order: int | None = None

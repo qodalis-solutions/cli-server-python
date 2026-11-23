@@ -296,12 +296,22 @@ result.mount_plugin(users)
 Tokens must be created and revoked from one service only: the name's uniqueness and the 20-token limit are checked in
 the process that creates the token.
 
-## Dashboard page (API tokens)
+## Dashboard pages
 
-The admin dashboard's API tokens page is the module `@qodalis/cli-dashboard-module-tokens`, embedded in this package
-(`qodalis_cli_users/dashboard`, copied at build by `scripts/copy_dashboard.py` from the sibling `cli-server-dashboard` repo, else
-the npm package) and served at `/qcli/modules/tokens`, outside the API, when the plugin is mounted; it is listed as a
-dashboard extension (no permission: each user sees their own tokens); not in guard-only mode. `CliUsersBuilder().set_dashboard_dir(path)` serves another build, `set_dashboard_dir(False)` leaves the page out.
+The plugin serves three pages of the admin dashboard, embedded in this package (copied at build by
+`scripts/copy_dashboard.py` from the sibling `cli-server-dashboard` repo, else the npm package) and served outside the
+API when the plugin is mounted (not in guard-only mode; also when the host application signs users in):
+
+- **Users** (users, groups, sessions; `users:read`, with the palette's user search): the module
+  `@qodalis/cli-dashboard-module-users` in `qodalis_cli_users/dashboard_users`, served at `/qcli/modules/users`.
+- **Account** (the signed-in user's profile and password change; every user, in the dashboard's account menu, group
+  `account`): the same build, served again at `/qcli/modules/account`; the module renders the page for this id and
+  hides the password change when the host application signs users in.
+- **API tokens** (each user sees their own tokens): `@qodalis/cli-dashboard-module-tokens` in
+  `qodalis_cli_users/dashboard`, served at `/qcli/modules/tokens`.
+
+`CliUsersBuilder().set_users_dashboard_dir(path)` (Users and Account) and `set_dashboard_dir(path)` (API tokens) serve
+another build; `False` leaves the pages out.
 
 ## Linking a terminal
 
