@@ -1,9 +1,10 @@
-"""The migrations API — ``/api/v1/qcli/migrations``.
+"""The databases API — ``/api/v1/qcli/databases``.
 
-``GET /`` databases, ``GET /{db}`` migrations, ``GET /{db}/runs``, ``GET /{db}/sql`` (dry run),
-``POST /{db}/up``, ``POST /{db}/down``.  Errors answer ``{"error": "..."}``: 404 unknown database or
-migration, 409 busy or blocked.  On a protected server reading needs ``migrations:read`` and running
-``migrations:run`` (declared as route permissions).
+``GET /`` databases, ``GET /{db}`` one, ``GET /{db}/stats``, ``GET /{db}/migrations``,
+``GET /{db}/migrations/runs``, ``GET /{db}/migrations/sql`` (dry run), ``POST /{db}/migrations/up``,
+``POST /{db}/migrations/down``.  Errors answer ``{"error": "..."}``: 404 unknown database or migration, 400 bad
+input, 409 busy or blocked.  On a protected server reading needs ``databases:read`` and running migrations
+``databases:migrate`` (declared as route permissions).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any, Awaitable, Callable
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from .migrations import CliMigrations
+from .databases import CliDatabases
 from .runner import CliMigrationError, CliMigrationRunOptions
 
 #: Key under ``scope["state"]`` where an auth plugin stores the caller (shared with ``qodalis_cli.security``).
@@ -61,19 +62,29 @@ def _guarded(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]
     return wrapper
 
 
-def create_migrations_router(migrations: CliMigrations) -> APIRouter:
+def create_databases_router(databases: CliDatabases) -> APIRouter:
     router = APIRouter()
 
     @router.get("")
     @router.get("/")
     @_guarded
     async def overview() -> Any:
-        return {"databases": await migrations.overview()}
+        return {"databases": await databases.overview()}
 
     @router.get("/{db}")
     @_guarded
     async def database(db: str) -> Any:
-        runner = migrations.require(db)
+        return await databases.summary(db)
+
+    @router.get("/{db}/stats")
+    @_guarded
+    async def stats(db: str) -> Any:
+        return await databases.stats(db)
+
+    @router.get("/{db}/migrations")
+    @_guarded
+    async def database_migrations(db: str) -> Any:
+        runner = databases.require(db)
         states = await runner.status()
         return {
             "name": runner.name,
@@ -82,7 +93,7 @@ def create_migrations_router(migrations: CliMigrations) -> APIRouter:
             "migrations": [s.to_dict() for s in states],
         }
 
-    @router.get("/{db}/runs")
+    @router.get("/{db}/migrations/runs")
     @_guarded
     async def runs(db: str, request: Request) -> Any:
         def number(name: str, default: int) -> int:
@@ -93,13 +104,13 @@ def create_migrations_router(migrations: CliMigrations) -> APIRouter:
 
         size = min(100, max(1, number("size", 20)))
         page = max(1, number("page", 1))
-        items, total = await migrations.require(db).runs(size, (page - 1) * size)
+        items, total = await databases.require(db).runs(size, (page - 1) * size)
         return {"items": [r.to_dict() for r in items], "total": total}
 
-    @router.get("/{db}/sql")
+    @router.get("/{db}/migrations/sql")
     @_guarded
     async def sql(db: str, request: Request) -> Any:
-        runner = migrations.require(db)
+        runner = databases.require(db)
         direction = "down" if request.query_params.get("direction") == "down" else "up"
         to = _text(request.query_params.get("to"), "to")
         if direction == "down" and not to:
@@ -122,15 +133,15 @@ def create_migrations_router(migrations: CliMigrations) -> APIRouter:
         )
         if direction == "down" and not options.to:
             raise CliMigrationError(TO_REQUIRED, 400)
-        result = await migrations.run(db, direction, options)  # type: ignore[arg-type]
+        result = await databases.run(db, direction, options)  # type: ignore[arg-type]
         return result.to_dict()
 
-    @router.post("/{db}/up")
+    @router.post("/{db}/migrations/up")
     @_guarded
     async def up(db: str, request: Request) -> Any:
         return await run(db, request, "up")
 
-    @router.post("/{db}/down")
+    @router.post("/{db}/migrations/down")
     @_guarded
     async def down(db: str, request: Request) -> Any:
         return await run(db, request, "down")

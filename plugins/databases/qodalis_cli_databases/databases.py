@@ -1,4 +1,4 @@
-"""The registered databases and what happens around a run (event, audit entry)."""
+"""The registered databases: summaries, stats and what happens around a migration run (event, audit entry)."""
 
 from __future__ import annotations
 
@@ -9,18 +9,19 @@ from typing import Any, Literal
 from qodalis_cli_server_abstractions import AuditEntry, CliEventAudience, IAuditStore, ICliEventBus
 
 from .runner import CliMigrationError, CliMigrationRun, CliMigrationRunner, CliMigrationRunOptions
+from .stats import collect_size, collect_stats
 
 logger = logging.getLogger(__name__)
 
-#: The event published after every run (audience ``migrations:read``).
-MIGRATION_RUN_EVENT = "migrations:run"
+#: The event published after every migration run (audience ``databases:read``).
+MIGRATION_RUN_EVENT = "databases:migration-run"
 
-MIGRATIONS_READ = "migrations:read"
-MIGRATIONS_RUN = "migrations:run"
+DATABASES_READ = "databases:read"
+DATABASES_MIGRATE = "databases:migrate"
 
 
-class CliMigrations:
-    """The registered databases: overview, and runs with their event and audit entry."""
+class CliDatabases:
+    """The registered databases: overview, stats, and migration runs with their event and audit entry."""
 
     def __init__(self) -> None:
         self._runners: dict[str, CliMigrationRunner] = {}
@@ -52,7 +53,7 @@ class CliMigrations:
             runs, _ = await db.runs(1, 0)
         except Exception as exc:  # noqa: BLE001 - shown on the database
             return {**base, "applied": 0, "pending": 0, "problems": 0, "error": str(exc)}
-        summary = {
+        summary: dict[str, Any] = {
             **base,
             "applied": sum(1 for s in states if s.status == "applied"),
             "pending": sum(1 for s in states if s.status in ("pending", "failed")),
@@ -64,10 +65,22 @@ class CliMigrations:
                 k: last[k] for k in ("id", "direction", "status", "startedAt", "trigger", "finishedAt", "actor", "error")
                 if k in last
             }
+        size = await collect_size(db.options.connection)
+        if size is not None:
+            summary["sizeBytes"] = size
         return summary
 
+    async def summary(self, name: str) -> dict[str, Any]:
+        """One database's summary (``GET /api/v1/qcli/databases/{db}``)."""
+        return await self._summary(self.require(name))
+
+    async def stats(self, name: str) -> dict[str, Any]:
+        """Size, connections, load counters and largest tables of a database (``GET /{db}/stats``)."""
+        db = self.require(name)
+        return await collect_stats(db.name, db.options.connection)
+
     async def overview(self) -> list[dict[str, Any]]:
-        """Every database: applied, pending, problems and the last run (``GET /api/v1/qcli/migrations``)."""
+        """Every database: applied, pending, problems, the last run and the size (``GET /api/v1/qcli/databases``)."""
         return list(await asyncio.gather(*(self._summary(db) for db in self.databases)))
 
     async def run(self, name: str, direction: Literal["up", "down"], options: CliMigrationRunOptions) -> CliMigrationRun:
@@ -83,7 +96,7 @@ class CliMigrations:
             }
             if run.error:
                 data["error"] = run.error
-            await self.event_bus.publish(MIGRATION_RUN_EVENT, data, CliEventAudience(permission=MIGRATIONS_READ))
+            await self.event_bus.publish(MIGRATION_RUN_EVENT, data, CliEventAudience(permission=DATABASES_READ))
         if self.audit_store is not None:
             try:
                 await self.audit_store.log(AuditEntry(

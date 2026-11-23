@@ -19,7 +19,7 @@ from qodalis_cli_filesystem import (
     FileStoragePermissionError,
     IFileStorageProvider,
 )
-from qodalis_cli_migrations import (
+from qodalis_cli_databases import (
     CliMigration,
     CliMigrationDatabaseOptions,
     CliMigrationRunner,
@@ -138,11 +138,11 @@ class SqliteFileStorageProvider(IFileStorageProvider):
     Uses Python's built-in ``sqlite3`` module with no external dependencies.
     All interface methods are async but use synchronous sqlite3 calls internally.
 
-    The table is ``QcliFiles`` (PascalCase columns), versioned by the migrations
-    plugin (source ``qcli-filesystem``): the first operation after an upgrade
-    renames the previous release's ``files`` table and its columns, keeping the
-    data.  ``connection`` and ``migration_source`` show it in the migrations
-    plugin.
+    The table is ``QcliFiles`` (PascalCase columns), versioned by the databases
+    plugin's migrations (source ``qcli-filesystem``): the first operation after an
+    upgrade renames the previous release's ``files`` table and its columns,
+    keeping the data.  ``connection`` and ``migration_source`` show it in the
+    databases plugin.
     """
 
     def __init__(self, options: SqliteProviderOptions | None = None) -> None:
@@ -183,9 +183,9 @@ class SqliteFileStorageProvider(IFileStorageProvider):
             f"INSERT INTO {self._t} (path, name, type, content, size, permissions, {self._created}, "
             f"{self._modified}, {self._parent}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
-        #: The database, for the migrations plugin (``add_database("files", ...)``).
+        #: The database, for the databases plugin (``add_database("files", ...)``).
         self.connection: CliSqlConnection = sqlite_connection(self._conn)
-        #: The files table's migrations (``qcli-filesystem``), to show them in the migrations plugin.
+        #: The files table's migrations (``qcli-filesystem``), to show them in the databases plugin.
         self.migration_source: CodeSource = filesystem_sqlite_migrations(name, legacy)
         self._runner = CliMigrationRunner(
             "files", CliMigrationDatabaseOptions(self.connection, table_prefix=options.table_prefix),

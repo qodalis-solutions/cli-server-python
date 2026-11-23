@@ -6,9 +6,29 @@ PEP 440 for `1.0.0-beta.19`).
 
 ## Unreleased
 
-- **Migrations: the dashboard's Migrations page** (`@qodalis/cli-dashboard-module-migrations`), embedded in the migrations plugin, served at `/qcli/migrations` and registered as a dashboard extension when mounted (`set_dashboard_dir`).
-- **Database migrations** (`qodalis-cli-server-plugin-migrations`, new): versioned schema changes of PostgreSQL (`asyncpg`), MySQL/MariaDB (`aiomysql`), SQL Server (`pymssql`) and SQLite (`sqlite3`) databases, from a folder of SQL files (`NNNN_name.up.sql` / `.down.sql`, `-- qcli:no-transaction`) or code (`CliMigration`, SQL, SQL per dialect or a coroutine). Applied in order under a per-database lock (`pg_advisory_lock`, `GET_LOCK`, `sp_getapplock`), each migration in a transaction with its history row; history in `QcliMigrations` and every run in `QcliMigrationRuns`; statuses `applied`, `pending`, `changed`, `missing`, `failed` (runs refused while one is changed or missing unless `force`). API `/api/v1/qcli/migrations` (`GET /`, `/{db}`, `/{db}/runs`, `/{db}/sql`, `POST /{db}/up`, `/{db}/down`; `migrations:read` / `migrations:run`), terminal `migrations status|up|down`, MCP tools `migrations_status|runs|sql|up|down`, dry runs showing the SQL, `apply_on_startup()`, the `migrations:run` event and `migrations.up` / `migrations.down` audit entries.
-- **Plugin table names** (#83): tables plugins create are `Qcli` + PascalCase with PascalCase columns, the same in the three servers: filesystem-sqlite's `files` is `QcliFiles` (`CreatedAt`, `ParentPath`, index `IX_QcliFiles_ParentPath`), its schema the migrations source `qcli-filesystem`; an existing `files` table is renamed with its data on the first start. Options `table_prefix`, `tables`, `legacy_table_names` (keep the old names). Abstractions: `qcli_table_name(base, CliTableNameOptions, legacy)`, `is_sql_identifier`, `DEFAULT_TABLE_PREFIX`.
+- **Databases** (`qodalis-cli-server-plugin-databases`, `qodalis_cli_databases`, new): the server's PostgreSQL (`asyncpg`), MySQL/MariaDB (`aiomysql`), SQL Server (`pymssql`) and SQLite (`sqlite3`) databases, with their stats and migrations. `CliDatabasesBuilder().add_database(...).add_sql_folder(...).build()`, mounted with `mount_plugin`.
+  - **Stats** (`GET /api/v1/qcli/databases/{db}/stats`, terminal `databases stats`, MCP `databases_stats`):
+    - server version and uptime;
+    - size (data, indexes, log);
+    - connections (active, open, max);
+    - cumulative counters (queries, transactions, commits, rollbacks, rows read and written; `countersScope` `database` or `server`);
+    - cache hit ratio;
+    - the 10 largest tables.
+
+    Each group is read on its own, and one the user may not read is listed in `unavailable` (e.g. SQL Server without `VIEW SERVER STATE`). The list carries each database's `sizeBytes`.
+  - **Migrations** come from a folder of SQL files (`NNNN_name.up.sql` / `.down.sql`, `-- qcli:no-transaction`) or from code (`CliMigration`: SQL, SQL per dialect or a coroutine).
+    - They apply in order under a per-database lock (`pg_advisory_lock`, `GET_LOCK`, `sp_getapplock`), each in a transaction with its history row.
+    - History is in `QcliMigrations` and every run in `QcliMigrationRuns`.
+    - Statuses are `applied`, `pending`, `changed`, `missing` and `failed`. Runs are refused while one is changed or missing, unless `force`.
+    - Dry runs show the SQL; `apply_on_startup()` applies pending migrations at startup.
+    - Every run publishes the `databases:migration-run` event and writes `migrations.up` / `migrations.down` audit entries.
+  - **API** at `/api/v1/qcli/databases` (`databases:read` to read, `databases:migrate` to run migrations):
+    - `GET /`, `GET /{db}`, `/{db}/stats`, `/{db}/migrations`, `/{db}/migrations/runs`, `/{db}/migrations/sql`;
+    - `POST /{db}/migrations/up`, `/{db}/migrations/down`.
+  - **Terminal** `databases` (alias `db`): `list`, `stats`, `migrations`, `up`, `down`.
+  - **MCP tools**: `databases_list`, `databases_stats`, `migrations_status|runs|sql|up|down`.
+  - **Dashboard page** `@qodalis/cli-dashboard-module-databases`: embedded in the package, served at `/qcli/databases` and registered as a dashboard extension when mounted (`set_dashboard_dir`).
+- **Plugin table names** (#83): tables plugins create are `Qcli` + PascalCase with PascalCase columns, the same in the three servers: filesystem-sqlite's `files` is `QcliFiles` (`CreatedAt`, `ParentPath`, index `IX_QcliFiles_ParentPath`), its schema the databases plugin's migrations source `qcli-filesystem`; an existing `files` table is renamed with its data on the first start. Options `table_prefix`, `tables`, `legacy_table_names` (keep the old names). Abstractions: `qcli_table_name(base, CliTableNameOptions, legacy)`, `is_sql_identifier`, `DEFAULT_TABLE_PREFIX`.
 - **Plugins declare more when mounted**: `route_permissions` (`CliRoutePermission(path, read, write)`: `read` for GET/HEAD, `write` otherwise, the longest path wins, enforced by the users plugin on a protected server; a path outside the plugin's prefix fails with `invalid route permission: <path>`), `module` (its terminal commands), `permissions` (added to the catalog) and `mcp_providers` (its MCP tools).
 - **Dashboard extensions** (cli-server-dashboard `docs/extensions.md`): `builder.add_dashboard_extension(CliDashboardExtension(...))` (or a mapping with the JSON field names), or a mounted plugin's `dashboard_extensions`, adds a page to the admin dashboard, which loads `entry` (an ES module the plugin serves) and mounts it. The admin plugin lists them at `GET /api/v1/qcli/dashboard/extensions` (`{"extensions": [...]}`, registration order, unset optional fields left out, behind the dashboard's sign-in and `admin:access`, `Cache-Control: no-cache`). Invalid entries raise `ValueError` `invalid dashboard extension: <reason>`, a repeated id `dashboard extension already registered: <id>`.
 

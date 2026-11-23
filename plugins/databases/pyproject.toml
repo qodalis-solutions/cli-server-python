@@ -3,16 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "qodalis-cli-server-plugin-migrations"
+name = "qodalis-cli-server-plugin-databases"
 version = "1.0.0b29"
-description = "Database migrations for Qodalis CLI servers — versioned schema changes of PostgreSQL, MySQL, SQL Server and SQLite, with history, API, terminal and MCP"
+description = "Databases for Qodalis CLI servers — stats (size, connections, load, largest tables) and versioned schema migrations of PostgreSQL, MySQL, SQL Server and SQLite, with history, API, terminal and MCP"
 readme = { text = "", content-type = "text/plain" }
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
     { name = "Nicolae Lupei", email = "nicolae.lupei@qodalis.com" },
 ]
-keywords = ["cli", "qodalis", "migrations", "database", "schema", "plugin"]
+keywords = ["cli", "qodalis", "databases", "migrations", "database", "schema", "stats", "plugin"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -39,10 +39,10 @@ Repository = "https://github.com/qodalis-solutions/cli-server-python"
 Issues = "https://github.com/qodalis-solutions/cli-server-python/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["qodalis_cli_migrations"]
+packages = ["qodalis_cli_databases"]
 
 [tool.hatch.build.targets.sdist]
-include = ["qodalis_cli_migrations/**"]
+include = ["qodalis_cli_databases/**"]
 
 [tool.hatch.build]
-artifacts = ["qodalis_cli_migrations/dashboard/**"]
+artifacts = ["qodalis_cli_databases/dashboard/**"]
