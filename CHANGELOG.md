@@ -6,6 +6,7 @@ PEP 440 for `1.0.0-beta.19`).
 
 ## Unreleased
 
+- **Users and Account pages.** The users plugin serves the dashboard's Users page (users, groups, sessions; `users:read`, at `/qcli/modules/users`) and Account page (the signed-in user's profile and password change; every user, at `/qcli/modules/account`), both from `@qodalis/cli-dashboard-module-users` (embedded in `qodalis_cli_users/dashboard_users`; `set_users_dashboard_dir(path | False)`), also when the host application signs users in. New dashboard extension group `account`: listed in the dashboard's account menu (the signed-in user's menu) instead of the sidebar.
 - **Dashboard pages move into the plugins** that serve their APIs: the dashboard's Jobs, Audit, API tokens,
   Filesystem and Data explorer pages are modules (`@qodalis/cli-dashboard-module-<name>`) embedded in
   `qodalis-cli-server-plugin-jobs`, `-audit`, `-users`, `-filesystem` and `-data-explorer`

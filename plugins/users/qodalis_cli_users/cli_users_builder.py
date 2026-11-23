@@ -29,7 +29,11 @@ from typing import Any, Optional
 from fastapi import APIRouter, Request
 
 from qodalis_cli_audit import CliAuditBuilder, CliAuditPlugin
-from qodalis_cli_server_abstractions.dashboard_modules import DASHBOARD_MODULES_PREFIX, module_page_of
+from qodalis_cli_server_abstractions.dashboard_modules import (
+    DASHBOARD_MODULES_PREFIX,
+    dashboard_module_page,
+    module_page_of,
+)
 from qodalis_cli_server_abstractions.events import ICliEventBus
 
 from .controllers.groups_controller import create_groups_router
@@ -99,6 +103,36 @@ TOKENS_DASHBOARD_PAGE = {
     "icon": "🔑",
     "group": "access",
     "order": 10,
+}
+
+#: The dashboard's Users page (users, groups, sessions; ``@qodalis/cli-dashboard-module-users``), served at
+#: ``/qcli/modules/users``.
+USERS_DASHBOARD_PAGE = {
+    "id": "users",
+    "title": "Users",
+    "titles": {
+        "de": "Benutzer", "es": "Usuarios", "fr": "Utilisateurs", "it": "Utenti", "ja": "ユーザー",
+        "ko": "사용자", "pt": "Usuários", "ro": "Utilizatori", "ru": "Пользователи", "zh": "用户",
+    },
+    "icon": "👥",
+    "group": "access",
+    "order": 5,
+    "permission": "users:read",
+    "search": "/?q=",
+}
+
+#: The signed-in user's Account page (profile, password change): the Users build, which renders it for this id,
+#: served again at ``/qcli/modules/account`` and listed in the dashboard's account menu. No permission: every user.
+ACCOUNT_DASHBOARD_PAGE = {
+    "id": "account",
+    "title": "Account",
+    "titles": {
+        "de": "Konto", "es": "Cuenta", "fr": "Compte", "it": "Account", "ja": "アカウント",
+        "ko": "계정", "pt": "Conta", "ro": "Cont", "ru": "Учётная запись", "zh": "账户",
+    },
+    "icon": "👤",
+    "group": "account",
+    "order": 0,
 }
 DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000
 #: Re-check interval (seconds) of events/logs sockets opened through the
@@ -183,7 +217,8 @@ class CliUsersPlugin:
     audit_plugin: Optional[CliAuditPlugin] = None
     #: Link requests (``/link``): terminals linked through the browser.
     link_service: Optional[LinkService] = None
-    #: The dashboard's API tokens page, when the package carries its build (not in guard-only mode).
+    #: The dashboard's Users, Account and API tokens pages, when the package carries their builds (not in
+    #: guard-only mode).
     dashboard_pages: list = field(default_factory=list)
     _link_limiter: Optional[LinkRateLimiter] = field(default=None, repr=False)
     _seeded: bool = field(default=False, repr=False)
@@ -495,6 +530,7 @@ class CliUsersBuilder:
         self._link_approval_url = DEFAULT_LINK_APPROVAL_URL
         self._guard_only = False
         self._dashboard_dir: str | bool | None = None
+        self._users_dashboard_dir: str | bool | None = None
 
     def set_user_store(self, store: IUserStore) -> CliUsersBuilder:
         self._user_store = store
@@ -627,6 +663,13 @@ class CliUsersBuilder:
         self._dashboard_dir = directory
         return self
 
+    def set_users_dashboard_dir(self, directory: str | bool) -> CliUsersBuilder:
+        """Where the dashboard's Users and Account pages are (``@qodalis/cli-dashboard-module-users``'s build, served
+        at ``/qcli/modules/users`` and ``/qcli/modules/account``); by default the copy in this package
+        (``dashboard_users``, ``scripts/copy_dashboard.py``). ``False`` leaves both pages out."""
+        self._users_dashboard_dir = directory
+        return self
+
     def set_guard_only(self, on: bool = True) -> CliUsersBuilder:
         """Guard-only mode, for a service that only validates tokens (e.g. a
         public API next to the service that runs the CLI): no users routes
@@ -732,11 +775,20 @@ class CliUsersBuilder:
             guard_only=self._guard_only,
         )
         if not self._guard_only:
-            page = module_page_of(
-                os.path.dirname(os.path.abspath(__file__)), self._dashboard_dir,
-                f"{DASHBOARD_MODULES_PREFIX}/tokens", TOKENS_DASHBOARD_PAGE,
+            package_dir = os.path.dirname(os.path.abspath(__file__))
+            pages = []
+            if self._users_dashboard_dir is not False:
+                users_dir = self._users_dashboard_dir if isinstance(self._users_dashboard_dir, str) \
+                    else os.path.join(package_dir, "dashboard_users")
+                users_page = module_page_of(package_dir, users_dir, f"{DASHBOARD_MODULES_PREFIX}/users", USERS_DASHBOARD_PAGE)
+                if users_page:
+                    # The same build, at the Account page's own prefix
+                    account_page = dashboard_module_page(users_dir, f"{DASHBOARD_MODULES_PREFIX}/account", ACCOUNT_DASHBOARD_PAGE)
+                    pages += [users_page, account_page]
+            tokens_page = module_page_of(
+                package_dir, self._dashboard_dir, f"{DASHBOARD_MODULES_PREFIX}/tokens", TOKENS_DASHBOARD_PAGE,
             )
-            plugin.dashboard_pages = [page] if page else []
+            plugin.dashboard_pages = pages + ([tokens_page] if tokens_page else [])
 
         # The users plugin records its events in the audit plugin's store,
         # also after it joined the host's audit plugin (another store).

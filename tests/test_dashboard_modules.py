@@ -27,7 +27,7 @@ from qodalis_cli.dashboard_modules import (  # noqa: E402
 )
 from qodalis_cli.extensions import CliBuilder  # noqa: E402
 from qodalis_cli.filesystem import FileSystemOptions  # noqa: E402
-from qodalis_cli.models import CliDashboardExtension  # noqa: E402
+from qodalis_cli.models import DASHBOARD_EXTENSION_GROUPS, CliDashboardExtension  # noqa: E402
 from qodalis_cli.services import CliCommandRegistry  # noqa: E402
 from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder  # noqa: E402
 from qodalis_cli_audit import CliAuditBuilder  # noqa: E402
@@ -41,7 +41,11 @@ from qodalis_cli_server_abstractions import (  # noqa: E402
     IDataExplorerProvider,
 )
 from qodalis_cli_users import CliUsersBuilder  # noqa: E402
-from qodalis_cli_users.cli_users_builder import TOKENS_DASHBOARD_PAGE  # noqa: E402
+from qodalis_cli_users.cli_users_builder import (  # noqa: E402
+    ACCOUNT_DASHBOARD_PAGE,
+    TOKENS_DASHBOARD_PAGE,
+    USERS_DASHBOARD_PAGE,
+)
 from tests.test_admin_plugin import _StubEventSocketManager, _StubRegistry  # noqa: E402
 
 ROOT_PASS = "rootpass1"
@@ -132,6 +136,8 @@ CONTRACT = {
     "jobs": ("Jobs", "Joburi", "⏱", "operations", 10, "jobs:read", ("overview", "palette"), "/?q="),
     "audit": ("Audit", "Audit", "🛡", "operations", 30, "audit:read", None, "/?q="),
     "tokens": ("API tokens", "Tokenuri API", "🔑", "access", 10, None, None, None),
+    "users": ("Users", "Utilizatori", "👥", "access", 5, "users:read", None, "/?q="),
+    "account": ("Account", "Cont", "👤", "account", 0, None, None, None),
     "filesystem": ("Filesystem", "Fișiere", "📁", "data", 10, "files:read", None, None),
     "data-explorer": ("Data explorer", "Explorator de date", "⛁", "data", 15, "data:query", None, None),
 }
@@ -151,7 +157,7 @@ class TestPluginPages:
         ))
         users = (
             CliUsersBuilder().set_default_admin_password(ROOT_PASS).set_rate_limit(1000)
-            .set_dashboard_dir(builds["tokens"]).build()
+            .set_dashboard_dir(builds["tokens"]).set_users_dashboard_dir(builds["users"]).build()
         )
         result.mount_plugin(CliAuditBuilder().set_dashboard_dir(builds["audit"]).build())
         result.mount_plugin(users)
@@ -191,8 +197,13 @@ class TestPluginPages:
     def test_pages_can_be_left_out(self, tmp_path) -> None:
         assert CliJobsBuilder().set_dashboard_dir(False).build().dashboard_pages == []
         assert CliAuditBuilder().set_dashboard_dir(False).build().dashboard_pages == []
-        assert CliUsersBuilder().set_dashboard_dir(False).build().dashboard_pages == []
-        assert CliUsersBuilder().set_dashboard_dir(_build(tmp_path / "t")).set_guard_only().build().dashboard_pages == []
+        assert CliUsersBuilder().set_dashboard_dir(False).set_users_dashboard_dir(False).build().dashboard_pages == []
+        assert CliUsersBuilder().set_dashboard_dir(_build(tmp_path / "t")).set_users_dashboard_dir(_build(tmp_path / "u")) \
+            .set_guard_only().build().dashboard_pages == []
+        # A folder without a build: no Users or Account page
+        (tmp_path / "empty").mkdir()
+        unbuilt = CliUsersBuilder().set_dashboard_dir(_build(tmp_path / "t2")).set_users_dashboard_dir(str(tmp_path / "empty")).build()
+        assert [p.extension["id"] for p in unbuilt.dashboard_pages] == ["tokens"]
 
         def configure(builder: CliBuilder) -> None:
             builder.add_filesystem(FileSystemOptions(allowed_paths=[str(tmp_path)]))
@@ -200,11 +211,45 @@ class TestPluginPages:
         result = create_cli_server(CliServerOptions(configure=configure, dashboard_pages={"filesystem": False}))
         assert result.builder.dashboard_extensions == []
 
+    def test_the_users_build_serves_the_users_and_account_pages(self, tmp_path) -> None:
+        users_build = _build(tmp_path / "users")
+        (tmp_path / "users" / "extension.js").write_text("export const users = 1;")
+        plugin = CliUsersBuilder().set_dashboard_dir(False).set_users_dashboard_dir(users_build).build()
+        assert [(p.prefix, p.extension["id"]) for p in plugin.dashboard_pages] == [
+            ("/qcli/modules/users", "users"), ("/qcli/modules/account", "account"),
+        ]
+        users_page, account_page = plugin.dashboard_pages
+        assert "permission" not in account_page.extension
+        assert users_page.extension["entry"].split("?v=")[1] == account_page.extension["entry"].split("?v=")[1]
+        assert CliDashboardExtension.of(account_page.extension).validated().group == "account"
+
+        result = create_cli_server(CliServerOptions())
+        result.mount_plugin(plugin)
+        assert [e.id for e in result.builder.dashboard_extensions] == ["users", "account"]
+        with TestClient(result.app) as c:
+            for prefix in ("/qcli/modules/users", "/qcli/modules/account"):
+                assert c.get(f"{prefix}/extension.js").text == "export const users = 1;", prefix
+                assert c.get(f"{prefix}/extension.css").status_code == 200, prefix
+
+    def test_the_users_and_account_pages_stay_when_the_host_signs_users_in(self, tmp_path) -> None:
+        plugin = (
+            CliUsersBuilder().set_auth_adapter(lambda request: None)
+            .set_dashboard_dir(False).set_users_dashboard_dir(_build(tmp_path / "users")).build()
+        )
+        assert [p.extension["id"] for p in plugin.dashboard_pages] == ["users", "account"]
+
+    def test_the_account_group_is_known(self) -> None:
+        assert "account" in DASHBOARD_EXTENSION_GROUPS
+        ext = CliDashboardExtension.of({"id": "me", "title": "Me", "entry": "/me.js", "group": "account"}).validated()
+        assert ext.group == "account"
+        assert CliDashboardExtension.of({"id": "x", "title": "X", "entry": "/x.js", "group": "elsewhere"}).validated().group == "system"
+
     def test_no_pages_without_cli_routes(self, tmp_path) -> None:
         result = create_cli_server(CliServerOptions(cli_routes=False))
         result.mount_plugin(CliJobsBuilder().set_dashboard_dir(_build(tmp_path / "j")).build())
         assert result.builder.dashboard_extensions == []
 
     def test_the_registrations_match_between_the_core_and_the_plugins(self) -> None:
-        for page in (JOBS_DASHBOARD_PAGE, AUDIT_DASHBOARD_PAGE, TOKENS_DASHBOARD_PAGE, FILESYSTEM_PAGE, DATA_EXPLORER_PAGE):
+        for page in (JOBS_DASHBOARD_PAGE, AUDIT_DASHBOARD_PAGE, TOKENS_DASHBOARD_PAGE, USERS_DASHBOARD_PAGE, ACCOUNT_DASHBOARD_PAGE,
+                     FILESYSTEM_PAGE, DATA_EXPLORER_PAGE):
             CliDashboardExtension.of({**page, "entry": "/x.js"}).validated()

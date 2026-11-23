@@ -68,13 +68,18 @@ jobs:
       # The wheels embed the dashboard's pages of their APIs, from the npm packages @qodalis/cli-dashboard-module-*
       - name: Embed the dashboard pages
         run: |
-          for pair in jobs:jobs:qodalis_cli_jobs audit:audit:qodalis_cli_audit users:tokens:qodalis_cli_users \
+          for pair in jobs:jobs:qodalis_cli_jobs audit:audit:qodalis_cli_audit \
                       filesystem:filesystem:qodalis_cli_filesystem data-explorer:data-explorer:qodalis_cli_data_explorer; do
             IFS=: read -r plugin module package <<< "$pair"
             npm install --no-save --no-package-lock --ignore-scripts --prefix plugins/$plugin @qodalis/cli-dashboard-module-$module
             python plugins/$plugin/scripts/copy_dashboard.py
             test -f plugins/$plugin/$package/dashboard/extension.js
           done
+          # The users plugin: API tokens, and Users + Account (one build, @qodalis/cli-dashboard-module-users)
+          npm install --no-save --no-package-lock --ignore-scripts --prefix plugins/users @qodalis/cli-dashboard-module-tokens @qodalis/cli-dashboard-module-users
+          python plugins/users/scripts/copy_dashboard.py
+          test -f plugins/users/qodalis_cli_users/dashboard/extension.js
+          test -f plugins/users/qodalis_cli_users/dashboard_users/extension.js
 
       - name: Build filesystem plugin
         run: |
@@ -189,6 +194,7 @@ jobs:
         run: |
           python -m build plugins/users/ --outdir dist-plugin-users/
           python -m zipfile -l dist-plugin-users/*.whl | grep -q "qodalis_cli_users/dashboard/extension.js"
+          python -m zipfile -l dist-plugin-users/*.whl | grep -q "qodalis_cli_users/dashboard_users/extension.js"
 
       - name: Publish users plugin to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
