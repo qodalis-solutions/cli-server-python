@@ -365,13 +365,25 @@ async def _sqlite_tables(db: CliSqlSession) -> list[dict[str, Any]]:
             sizes[str(r["table_name"])] = int(r["bytes"] or 0)
     except Exception:  # noqa: BLE001 - no dbstat: rows only
         pass
-    ordered = sorted(names, key=lambda n: sizes.get(n, 0), reverse=True) if sizes else names
+    def quote(name: str) -> str:
+        return '"' + name.replace('"', '""') + '"'  # any table name, not only identifiers
+
+    if sizes:
+        ordered = sorted(names, key=lambda n: sizes.get(n, 0), reverse=True)
+    else:
+        # Without sizes, every table is ranked by its highest rowid (an index lookup, not a scan) before the counts
+        estimate: dict[str, int] = {}
+        for name in names:
+            try:
+                estimate[name] = _num(_first(await db.query(f"SELECT MAX(rowid) AS n FROM {quote(name)}")).get("n")) or 0
+            except Exception:  # noqa: BLE001 - a WITHOUT ROWID table
+                estimate[name] = 0
+        ordered = sorted(names, key=lambda n: estimate[n], reverse=True)
     tables: list[dict[str, Any]] = []
     for i, name in enumerate(ordered):
         rows = None
         if i < SQLITE_COUNTED_TABLES:
-            quoted = '"' + name.replace('"', '""') + '"'  # any table name, not only identifiers
-            rows = _num(_first(await db.query(f"SELECT COUNT(*) AS n FROM {quoted}")).get("n"))
+            rows = _num(_first(await db.query(f"SELECT COUNT(*) AS n FROM {quote(name)}")).get("n"))
         tables.append({"name": name, "rows": rows, "bytes": sizes.get(name) if sizes else None})
     return _top(tables)
 
