@@ -29,12 +29,37 @@ app = create_cli_server(configure=configure)
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `db_path` | `str` | `./data/files.db` | Path to the SQLite database file |
+| `table_prefix` | `str \| None` | `Qcli` | Prefix of the table (`""` gives `Files`) |
+| `tables` | `dict[str, str]` | `{}` | The table's own name: `{"Files": "MyFiles"}` |
+| `legacy_table_names` | `bool` | `False` | Keep the previous release's `files` table and columns |
 
 The database and parent directories are created automatically. Uses WAL journal mode for better concurrency. No external dependencies beyond Python's built-in `sqlite3` module.
+
+## Table and upgrades
+
+The files live in `QcliFiles` (columns `Id`, `Path`, `Name`, `Type`, `Content`, `Size`, `Permissions`,
+`CreatedAt`, `ModifiedAt`, `ParentPath`; index `IX_QcliFiles_ParentPath`), the name every server gives the
+plugin's table. The schema is versioned by the [migrations plugin](../migrations/README.md) (source
+`qcli-filesystem`, history in `QcliMigrations` / `QcliMigrationRuns` of the same database), applied before the
+first operation: a database of a previous release has its `files` table and columns renamed, the data kept.
+`legacy_table_names=True` keeps the old names instead.
+
+To see the schema in the dashboard and the terminal, register the provider's database with the migrations plugin:
+
+```python
+migrations = (
+    CliMigrationsBuilder()
+    .add_database("files", CliMigrationDatabaseOptions(provider.connection))
+    .add_source("files", provider.migration_source)
+    .build()
+)
+result.mount_plugin(migrations)
+```
 
 ## Dependencies
 
 - `qodalis-cli-server-plugin-filesystem`
+- `qodalis-cli-server-plugin-migrations`
 
 ## License
 
