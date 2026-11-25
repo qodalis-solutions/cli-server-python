@@ -53,6 +53,7 @@ from .models import ExternalAuthAdapter, TokenUsageProvider
 from .permissions import USERS_PERMISSION_ENTRIES
 from .server_protection import ServerProtectionMiddleware, _normalize_base
 from .shell_access import UsersShellAccess
+from .users_config_provider import UsersConfigFacts, create_users_config_provider
 from .services.auth_service import (
     DEFAULT_LOCKOUT_MS,
     DEFAULT_MAX_LOGIN_ATTEMPTS,
@@ -220,6 +221,8 @@ class CliUsersPlugin:
     #: The dashboard's Users, Account and API tokens pages, when the package carries their builds (not in
     #: guard-only mode).
     dashboard_pages: list = field(default_factory=list)
+    #: The ``users`` config provider (sessions, lockout, passwords), registered by ``mount_plugin``.
+    config_providers: list = field(default_factory=list)
     _link_limiter: Optional[LinkRateLimiter] = field(default=None, repr=False)
     _seeded: bool = field(default=False, repr=False)
     #: Guard-only: mounted on a server without CLI routes (the guards work).
@@ -779,6 +782,14 @@ class CliUsersBuilder:
             audit_plugin=audit_plugin,
             api_tokens=ApiTokenManager(auth_service),
             guard_only=self._guard_only,
+            config_providers=[create_users_config_provider(auth_service, UsersConfigFacts(
+                protect_server=self._protect_server and not self._guard_only,
+                sign_in="guard-only" if self._guard_only else "external" if self._auth_adapter is not None else "users",
+                allow_non_expiring_tokens=self._allow_non_expiring_tokens,
+                api_tokens_with_external_auth=self._allow_api_tokens,
+                users_read_only=self._read_only_users,
+                groups_read_only=self._read_only_groups,
+            ))],
         )
         if not self._guard_only:
             package_dir = os.path.dirname(os.path.abspath(__file__))
