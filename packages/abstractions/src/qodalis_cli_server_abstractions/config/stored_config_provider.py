@@ -72,13 +72,17 @@ _DIGITS = re.compile(r"^\d+\Z")
 
 class CliStoredConfigProvider(ICliConfigProvider, ICliConfigWriter):
     """A provider of settings described in code, whose changes are kept in an
-    :class:`ICliConfigStore`: the server attaches its store when the provider
-    is registered (``builder.set_config_store``, in memory by default) and the
-    stored values are applied then.  Built-in providers and plugins use it; a
-    host can too::
+    :class:`ICliConfigStore`: the server attaches a store when the provider is
+    registered and the stored values are applied then.  Which store: the
+    host's store for this provider's id (``config stores={...}``,
+    ``builder.set_config_store(store, id)``), else the provider's own
+    (``store`` option, :meth:`set_store`), else the server's default store
+    (``builder.set_config_store(store)``), else in memory.  Built-in providers
+    and plugins use it; a host can too::
 
         builder.add_config_provider(CliStoredConfigProvider(
             id="billing", title="Billing",
+            store=JsonFileConfigStore("config/app.json", section="qcli"),
             sections=[CliConfigSectionDefinition(id="invoices", settings=[
                 CliConfigSettingDefinition(key="dueDays", type="number", default=30,
                     validation=CliConfigValidation(min=1, max=90),
@@ -96,7 +100,11 @@ class CliStoredConfigProvider(ICliConfigProvider, ICliConfigWriter):
         description: Optional[str] = None,
         order: Optional[int] = None,
         required_permission: Optional[str] = None,
+        store: Optional[ICliConfigStore] = None,
     ) -> None:
+        """``store``: the store this provider's changes are kept in.  The
+        host's store for this id still wins; without either the server's
+        default store is used (in memory unless the host sets one)."""
         self.id = id
         self.title = title
         self.description = description
@@ -115,14 +123,29 @@ class CliStoredConfigProvider(ICliConfigProvider, ICliConfigWriter):
                     raise ValueError(f"invalid or duplicate config key: {section.id}.{setting.key}")
                 keys.add(setting.key)
         self._sections = list(sections)
-        self._store: Optional[ICliConfigStore] = None
+        self._own_store: Optional[ICliConfigStore] = store
+        self._attached: Optional[ICliConfigStore] = None
+        self._fallback: Optional[ICliConfigStore] = None
         self._cache: dict[str, CliConfigStoredSection] = {}
+
+    @property
+    def own_store(self) -> Optional[ICliConfigStore]:
+        """The provider's own store (the ``store`` option or :meth:`set_store`); the host's store for this id still wins."""
+        return self._own_store
+
+    def set_store(self, store: Optional[ICliConfigStore]) -> "CliStoredConfigProvider":
+        """Sets the provider's own store (as the ``store`` option); before the provider is registered."""
+        if self._attached is not None:
+            raise RuntimeError(f"the config store of {self.id} must be set before the provider is registered")
+        self._own_store = store
+        return self
 
     async def attach_store(self, store: ICliConfigStore) -> None:
         """Uses ``store`` and applies the values stored there.  Called by the
-        server when the provider is registered; without it the provider keeps
-        its changes in memory.  Raises when the store cannot be read."""
-        self._store = store
+        server when the provider is registered, with the store it resolved;
+        without it the provider uses its own store, else memory.  Raises when
+        the store cannot be read."""
+        self._attached = store
         self._cache.clear()
         for section in self._sections:
             stored = await store.read(self.id, section.id)
@@ -132,13 +155,18 @@ class CliStoredConfigProvider(ICliConfigProvider, ICliConfigWriter):
                     setting.apply(clone_cli_config_value(stored.values[setting.key]))
 
     def _ensure_store(self) -> ICliConfigStore:
-        if self._store is None:
-            self._store = InMemoryConfigStore()
-        return self._store
+        if self._attached is not None:
+            return self._attached
+        if self._own_store is not None:
+            return self._own_store
+        if self._fallback is None:
+            self._fallback = InMemoryConfigStore()
+        return self._fallback
 
     @property
     def store(self) -> ICliConfigStore:
-        """The store the provider's changes are kept in (in memory until the server attaches its own)."""
+        """The store the provider's changes are kept in: the one the server
+        attached, else its own, else in memory."""
         return self._ensure_store()
 
     async def _stored(self, section_id: str) -> CliConfigStoredSection:
@@ -283,15 +311,17 @@ def create_custom_config_provider(
     title: str = "Custom",
     description: str = "Free settings of the host application, kept in the config store",
     order: int = 1000,
+    store: Optional[ICliConfigStore] = None,
 ) -> CliStoredConfigProvider:
-    """The ``custom`` provider: one free key/value section (``custom``) on the
-    server's config store, for the host's own settings.  Values are strings,
-    numbers, booleans, string lists or JSON."""
+    """The ``custom`` provider: one free key/value section (``custom``) for
+    the host's own settings, in its own ``store`` or the server's default
+    one.  Values are strings, numbers, booleans, string lists or JSON."""
     return CliStoredConfigProvider(
         id=id,
         title=title,
         description=description,
         order=order,
+        store=store,
         sections=[CliConfigSectionDefinition(id="custom", title="Custom settings", allow_custom_keys=True)],
     )
 

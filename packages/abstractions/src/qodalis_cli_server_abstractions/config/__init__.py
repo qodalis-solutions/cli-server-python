@@ -48,9 +48,11 @@ from .config_store import (
     JsonFileConfigStore,
     CLI_CONFIG_STORE_STORAGE,
     apply_cli_config_changes,
+    cli_config_store_ready,
     cli_config_store_storage,
     describe_cli_config_store,
     describe_cli_config_store_line,
+    describe_cli_config_store_name,
 )
 from .stored_config_provider import (
     CliConfigSectionDefinition,
@@ -103,9 +105,11 @@ __all__ = [
     "JsonFileConfigStore",
     "apply_cli_config_changes",
     "CLI_CONFIG_STORE_STORAGE",
+    "cli_config_store_ready",
     "cli_config_store_storage",
     "describe_cli_config_store",
     "describe_cli_config_store_line",
+    "describe_cli_config_store_name",
     "CliConfigSectionDefinition",
     "CliConfigSettingDefinition",
     "CliStoredConfigProvider",
