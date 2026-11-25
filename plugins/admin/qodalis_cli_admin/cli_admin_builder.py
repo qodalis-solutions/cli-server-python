@@ -130,6 +130,15 @@ class CliAdminBuilder:
         self._theme: dict[str, Any] = validate_admin_theme(None)
         self._branding: dict[str, Any] | None = None
         self._sign_in_url: str | None = None
+        self._config_store: Any = None
+
+    def set_config_store(self, store: Any) -> CliAdminBuilder:
+        """Keeps the ``logs`` config provider's (log buffer size and level) changes in ``store`` (its own
+        store) instead of the server's default one; the host's store for the
+        provider's id (``config stores={...}``,
+        ``builder.set_config_store(store, id)``) still wins."""
+        self._config_store = store
+        return self
 
     def set_credentials(self, username: str, password: str) -> CliAdminBuilder:
         """Set admin login credentials (overrides env vars)."""
@@ -285,7 +294,7 @@ class CliAdminBuilder:
 
         config_providers: list[Any] = [
             AdminAuthConfigProvider(config, auth_mode),
-            create_logs_config_provider(log_buffer),
+            create_logs_config_provider(log_buffer).set_store(self._config_store),
         ]
         add_config_provider = getattr(deps.builder, "add_config_provider", None)
         registry = getattr(deps.builder, "config_registry", None)
