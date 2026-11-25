@@ -60,8 +60,8 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli`). Exce
 | GET | `/auth/mode` | Public. Which sign-in the dashboard shows: `{ "mode": "password" \| "external", "signInUrl": string \| null }` |
 | POST | `/auth/login` | Authenticate and receive a JWT token (501 in external mode) |
 | GET | `/auth/me` | Get current authenticated user info |
-| GET | `/status` | Server status, uptime, connected clients, enabled features |
-| GET | `/status/history?minutes=` | Status samples (every 15 s, kept 24 h in memory), oldest first: `memoryMb`, `cpuPercent`, `activeWsConnections`, `activeShellSessions`; `minutes` defaults to 60, clamped to 1..1440 |
+| GET | `/status` | Server status, uptime, process memory (`memoryUsageMb`), the machine's memory (`systemMemoryTotalMb`, `systemMemoryUsedMb`, `memoryLimited`), connected clients, enabled features |
+| GET | `/status/history?minutes=` | Status samples (every 15 s, kept 24 h in memory), oldest first: `memoryMb`, `systemMemoryUsedMb`, `systemMemoryTotalMb`, `cpuPercent`, `activeWsConnections`, `activeShellSessions`; `minutes` defaults to 60, clamped to 1..1440 |
 | GET | `/plugins` | List registered plugin modules |
 | GET | `/plugins/installed` | List the installed server plugin packages (`id`, `name`, `version`, `description`) |
 | GET | `/plugins/{id}` | One plugin module by name (ignoring case); 404 `PLUGIN_NOT_FOUND` |
@@ -72,6 +72,8 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli`). Exce
 | GET | `/logs` | Retrieve buffered log entries: `?level=` (one or comma-separated `DEBUG`, `INFO`, `WARN`, `ERROR`), `search=` (message or source), `service=`, `from=`/`to=` (ISO 8601, no offset = UTC), `limit=`, `offset=`; answers `entries`, `total`, `limit`, `offset`, `hasMore`, `store` (`memory`), `persistent` (`false`), `services` (`[]`) |
 | GET | `/logs/histogram` | Buffered log entries per level in equal time columns: `?from=&to=&buckets=` (default the last 24 h in 24 columns, `buckets` clamped to 1..200) with the filters of `/logs` |
 | GET | `/ws/clients` | List connected WebSocket clients |
+
+`systemMemoryTotalMb` is the RAM the server can use: the container (cgroup) limit when one is set below the installed RAM (`memory.max`, v1 `memory.limit_in_bytes`), then `memoryLimited` is true, otherwise the installed RAM (`psutil.virtual_memory().total`). `systemMemoryUsedMb` is the memory in use: the container's usage when limited (`memory.current`, v1 `memory.usage_in_bytes`), otherwise total minus available (`psutil.virtual_memory().available`, MemAvailable of `/proc/meminfo` on Linux). Each is null when it cannot be read.
 
 The status sampler runs with the app's lifespan once the plugin is mounted (`result.mount_plugin(admin)`), first
 sample at start, and is cancelled on shutdown. `cpuPercent` is the process CPU time over the last interval as a
@@ -318,7 +320,7 @@ $ admin status
 Server      qodalis-cli-server 1.0.0b31
 Platform    python 3.13.1 (Linux 6.8.0)
 Uptime      2 h 5 min (since 2026-11-25 08:00:00)
-Memory      84.2 MB
+Memory      84.2 MB (process) · machine 9.8 GB of 16 GB used (61%)
 CPU         1.3%
 Connections 2 WebSocket, 0 shell
 Commands    41
