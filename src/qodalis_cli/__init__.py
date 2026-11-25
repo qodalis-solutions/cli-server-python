@@ -87,7 +87,8 @@ from .processors import (
     CliHashCommandProcessor,
     CliBase64CommandProcessor,
 )
-from .create_cli_server import create_cli_server, CliServerOptions, CliServerResult
+from .create_cli_server import create_cli_server, CliServerConfigOptions, CliServerOptions, CliServerResult
+from .config import CliConfigService, CliHostEnvironmentOptions
 from .mcp import CliMcpOptions, IMcpToolProvider, McpTool, McpToolRegistry, McpToolResult
 from .shell_security import CliShellOptions, ShellAccessProvider, ShellPrincipal
 from .security import RedactingLogFilter, install_log_redaction, redact
@@ -164,6 +165,9 @@ __all__ = [
     "CliBase64CommandProcessor",
     "create_cli_server",
     "CliServerOptions",
+    "CliServerConfigOptions",
+    "CliConfigService",
+    "CliHostEnvironmentOptions",
     "CliServerResult",
     "FileEntry",
     "FileStat",
