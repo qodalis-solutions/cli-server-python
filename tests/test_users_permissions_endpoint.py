@@ -18,7 +18,7 @@ ROOT_PASS = "rootpass1"
 
 CORE_NAMES = [
     "commands:execute", "shell:execute", "files:read", "files:write", "data:query",
-    "jobs:read", "jobs:manage", "logs:read", "admin:access", "audit:read", "audit:clear",
+    "jobs:read", "jobs:manage", "logs:read", "admin:access", "config:read", "config:write", "audit:read", "audit:clear",
 ]
 USERS_NAMES = [
     "users:read", "users:create", "users:update", "users:delete",
