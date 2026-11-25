@@ -24,7 +24,16 @@ from typing import Any, Awaitable, Callable, Mapping, Optional
 from urllib.parse import quote, urlencode
 
 from qodalis_cli_server_abstractions.audit import AuditEntry
+from qodalis_cli_server_abstractions.config import validate_cli_config_value
 from qodalis_cli_server_abstractions.dashboard_modules import DASHBOARD_MODULES_PREFIX, dashboard_module_page
+
+from .dashboard_plugin_config import (
+    DASHBOARD_PLUGINS_CONFIG_PROVIDER_ID,
+    DashboardPluginConfig,
+    DashboardPluginsConfigProvider,
+    parse_dashboard_plugin_config,
+    validate_dashboard_plugin_config_values,
+)
 
 logger = logging.getLogger("qcli-admin")
 
@@ -93,12 +102,14 @@ async def default_marketplace_fetch(url: str, headers: Mapping[str, str], timeou
 
 
 class DashboardMarketplaceError(Exception):
-    """A refused or failed marketplace operation: the HTTP status and the ``{ error }`` text."""
+    """A refused or failed marketplace operation: the HTTP status and the ``{ error }`` text (``errors``: per-key
+    messages of settings)."""
 
-    def __init__(self, status: int, message: str) -> None:
+    def __init__(self, status: int, message: str, errors: Optional[dict[str, str]] = None) -> None:
         super().__init__(message)
         self.status = status
         self.message = message
+        self.errors = errors
 
 
 @dataclass
@@ -144,6 +155,11 @@ class DashboardMarketplaceDeps:
     audit: Callable[[], Any] = lambda: None
     #: Publishes an event to holders of ``admin:access``.
     publish: Optional[Callable[[str, dict[str, Any]], Awaitable[None]]] = None
+    #: Publishes ``config:changed`` (audience ``config:read``) when an install, update or removal changes stored settings.
+    publish_config_changed: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None
+    #: Resolves once the config providers have their stores (``builder.config.ready``): awaited before the settings
+    #: are read or written, so they go to the store the server resolved for ``dashboard-plugins``.
+    config_ready: Optional[Callable[[], Awaitable[None]]] = None
 
 
 def is_valid_dashboard_plugin_name(name: Any) -> bool:
@@ -304,8 +320,40 @@ def _now_iso() -> str:
 def _installed_view(r: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "name": r["name"], "version": r["version"], "title": r["title"], "icon": r.get("icon"), "id": r["id"],
-        "installedAt": r["installedAt"], "installedBy": r["installedBy"],
+        "installedAt": r["installedAt"], "installedBy": r["installedBy"], "hasConfig": bool(r.get("config")),
     }
+
+
+def _config_values_of(config: Any) -> dict[str, Any]:
+    """The ``config`` of an install or update: ``{ key: value }``; absent or ``None`` is none.  400 for anything else."""
+    if config is None:
+        return {}
+    if not isinstance(config, dict):
+        raise DashboardMarketplaceError(400, "config must be an object")
+    return dict(config)
+
+
+def _check_config_values(config: Optional[DashboardPluginConfig], values: Mapping[str, Any]) -> None:
+    """400 ``validation failed`` with per-key errors when values do not fit the settings."""
+    errors = validate_dashboard_plugin_config_values(config, values)
+    if errors:
+        raise DashboardMarketplaceError(400, "validation failed", errors)
+
+
+def _settings_of(name: str, target: Mapping[str, Any]) -> tuple[Optional[DashboardPluginConfig], Optional[str]]:
+    """A version's settings; a bad record (a secret, invalid rules or defaults) installs without them, with a warning."""
+    try:
+        return parse_dashboard_plugin_config(target.get("config")), None
+    except ValueError as exc:
+        return None, f"the settings of {name}@{target['version']} are invalid and were ignored: {exc}"
+
+
+def _record_config(record: Mapping[str, Any]) -> Optional[DashboardPluginConfig]:
+    """The settings kept with an installed plugin (already checked when installed or loaded)."""
+    try:
+        return parse_dashboard_plugin_config(record.get("config"))
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -332,6 +380,9 @@ class DashboardMarketplace:
         self._timeout = options.timeout
         self._deps = deps
         self._plugins: dict[str, _ServedPlugin] = {}
+        #: The ``dashboard-plugins`` config provider: a section per installed plugin with settings (registered by
+        #: the admin plugin).
+        self.config = DashboardPluginsConfigProvider()
         # One lock per event loop (a test client may run each request on its own loop)
         self._locks: dict[int, asyncio.Lock] = {}
 
@@ -495,17 +546,25 @@ class DashboardMarketplace:
             lock = self._locks[loop] = asyncio.Lock()
         return lock
 
-    async def install_plugin(self, name: Any, version: Any, actor: DashboardMarketplaceActor) -> dict[str, Any]:
-        """``POST /installed``: installs ``name`` (the newest fitting version when ``version`` is absent)."""
+    async def install_plugin(
+        self, name: Any, version: Any, actor: DashboardMarketplaceActor, config: Any = None,
+    ) -> dict[str, Any]:
+        """``POST /installed``: installs ``name`` (the newest fitting version when ``version`` is absent) with the
+        values of its settings in ``config`` (``{ key: value }``, checked against the version's settings before
+        anything is downloaded: 400 ``validation failed`` with per-key ``errors``).  The installed plugin; ``warnings``
+        when the marketplace's settings of the version are invalid (it is installed without settings)."""
         async with self._lock():
             if not is_valid_dashboard_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid package name")
             if version is not None and not is_valid_dashboard_plugin_version(version):
                 raise DashboardMarketplaceError(400, "invalid version")
+            values = _config_values_of(config)
             existing = self._record_of(name)
             if existing:
                 raise DashboardMarketplaceError(409, f"already installed: {name}@{existing['version']}")
             plugin, target = await self._resolve(name, version)
+            settings, warning = _settings_of(name, target)
+            _check_config_values(settings, values)
             ext = target.get("extension") if isinstance(target.get("extension"), dict) else None
             ext = ext or (plugin.get("extension") if isinstance(plugin.get("extension"), dict) else None) or {}
             extension_id = dashboard_plugin_id(name, ext.get("id"))
@@ -513,32 +572,60 @@ class DashboardMarketplace:
                 raise DashboardMarketplaceError(400, f"no dashboard extension id for {name}")
             if extension_id in self._deps.extension_ids():
                 raise DashboardMarketplaceError(409, f"dashboard extension already registered: {extension_id}")
+            await self._config_ready()
             record = await self._store(name, target, extension_id, plugin, actor)
+            if settings is not None:
+                record["config"] = settings.to_dict()
             try:
                 self._register(record)
             except ValueError as exc:
                 shutil.rmtree(self._version_dir(name, target["version"]), ignore_errors=True)
                 raise DashboardMarketplaceError(409, str(exc)) from None
             self._save()
-            await self._changed("install", record, actor)
-            return _installed_view(record)
+            # A section left from an earlier install of the page (removed while its store was unreachable) starts clean
+            leftover = list((await self.config.stored_values(extension_id)).keys())
+            given = [k for k, v in values.items() if v is not None]
+            changes: dict[str, Any] = {k: None for k in leftover if k not in given}
+            changes.update({k: values[k] for k in given})
+            await self._write_config(record, changes, actor)
+            await self._changed("install", record, actor, extra={"config": given} if given else None)
+            out = _installed_view(record)
+            if warning:
+                out["warnings"] = [warning]
+            return out
 
-    async def update_plugin(self, name: Any, version: Any, actor: DashboardMarketplaceActor) -> tuple[dict[str, Any], bool, str]:
-        """``PUT /installed/{name}``: updates to ``version`` (default: the newest fitting one).  Returns the plugin,
-        whether it changed (not when it already is that version) and the previous version."""
+    async def update_plugin(
+        self, name: Any, version: Any, actor: DashboardMarketplaceActor, config: Any = None,
+    ) -> dict[str, Any]:
+        """``PUT /installed/{name}``: updates to ``version`` (default: the newest fitting one), with values of its
+        settings in ``config`` (checked against the new version's settings before anything is downloaded).  Stored
+        values whose key the new version still has and whose value it still accepts are kept, the others deleted
+        (``configDropped``).  Returns ``{ plugin, changed, previousVersion, configDropped, warnings? }``; ``changed``
+        is false when it already is that version (the given values are applied all the same)."""
         async with self._lock():
             if not is_valid_dashboard_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid package name")
             if version is not None and not is_valid_dashboard_plugin_version(version):
                 raise DashboardMarketplaceError(400, "invalid version")
+            values = _config_values_of(config)
             current = self._record_of(name)
             if not current:
                 raise DashboardMarketplaceError(404, f"not installed: {name}")
             plugin, target = await self._resolve(name, version)
+            await self._config_ready()
             if target["version"] == current["version"]:
-                return _installed_view(current), False, current["version"]
+                _check_config_values(_record_config(current), values)
+                await self._write_config(current, values, actor)
+                return {
+                    "plugin": _installed_view(current), "changed": False, "previousVersion": current["version"],
+                    "configDropped": [],
+                }
+            settings, warning = _settings_of(name, target)
+            _check_config_values(settings, values)
             # The page keeps its id, so open dashboards and links keep working
             record = await self._store(name, target, current["id"], plugin, actor)
+            if settings is not None:
+                record["config"] = settings.to_dict()
             self._unregister(current["id"])
             try:
                 self._register(record)
@@ -548,11 +635,34 @@ class DashboardMarketplace:
                 raise DashboardMarketplaceError(409, str(exc)) from None
             self._save()
             shutil.rmtree(self._version_dir(name, current["version"]), ignore_errors=True)
-            await self._changed("update", record, actor, current["version"])
-            return _installed_view(record), True, current["version"]
+            # Stored values the new version still accepts are kept, the others dropped
+            stored = await self.config.stored_values(record["id"])
+            given = [k for k, v in values.items() if v is not None]
+            dropped = [
+                key for key, value in stored.items()
+                if (entry := settings.entry(key) if settings is not None else None) is None
+                or validate_cli_config_value(entry, value) is not None
+            ]
+            changes: dict[str, Any] = {k: None for k in dropped}
+            changes.update(values)
+            await self._write_config(record, changes, actor)
+            config_dropped = [k for k in dropped if k not in given]
+            extra: dict[str, Any] = {}
+            if given:
+                extra["config"] = given
+            if config_dropped:
+                extra["configDropped"] = config_dropped
+            await self._changed("update", record, actor, current["version"], extra or None)
+            out: dict[str, Any] = {
+                "plugin": _installed_view(record), "changed": True, "previousVersion": current["version"],
+                "configDropped": config_dropped,
+            }
+            if warning:
+                out["warnings"] = [warning]
+            return out
 
     async def remove_plugin(self, name: Any, actor: DashboardMarketplaceActor) -> dict[str, Any]:
-        """``DELETE /installed/{name}``: unregisters the page and deletes its files."""
+        """``DELETE /installed/{name}``: unregisters the page, deletes its files and its settings."""
         async with self._lock():
             if not is_valid_dashboard_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid package name")
@@ -562,8 +672,71 @@ class DashboardMarketplace:
             self._unregister(current["id"])
             self._save()
             shutil.rmtree(os.path.join(self.dir, dashboard_plugin_dir_name(name)), ignore_errors=True)
+            # Its settings go with it
+            await self._config_ready()
+            keys, config_version = await self.config.clear(current["id"])
+            if config_version is not None:
+                await self._config_changed(current["id"], keys, config_version, actor)
             await self._changed("remove", current, actor)
             return _installed_view(current)
+
+    async def plugin_config(self, name: Any) -> dict[str, Any]:
+        """``GET /installed/{name}/config``: the values of a plugin's settings (stored over defaults) and the
+        section's version; ``{ values: {}, version: None }`` for a plugin without settings.  404 when it is not
+        installed."""
+        if not is_valid_dashboard_plugin_name(name):
+            raise DashboardMarketplaceError(400, "invalid package name")
+        record = self._record_of(name)
+        if not record:
+            raise DashboardMarketplaceError(404, f"not installed: {name}")
+        await self._config_ready()
+        return (await self.config.values(record["id"])) or {"values": {}, "version": None}
+
+    async def plugin_info(self, name: Any) -> dict[str, Any]:
+        """An installed plugin with its files and its settings' values (``admin dashboard info``): ``{ plugin, files,
+        configVersion, settings }``.  404 when it is not installed."""
+        if not is_valid_dashboard_plugin_name(name):
+            raise DashboardMarketplaceError(400, "invalid package name")
+        record = self._record_of(name)
+        if not record:
+            raise DashboardMarketplaceError(404, f"not installed: {name}")
+        await self._config_ready()
+        current = await self.config.values(record["id"])
+        stored = await self.config.stored_values(record["id"]) if current else {}
+        settings = _record_config(record)
+        return {
+            "plugin": _installed_view(record),
+            "files": [dict(f) for f in record.get("files") or []],
+            "configVersion": current["version"] if current else None,
+            "settings": [
+                {**e.to_dict(), "value": current["values"].get(e.key) if current else e.default, "isDefault": e.key not in stored}
+                for e in (settings.entries if settings is not None else [])
+            ],
+        }
+
+    async def _config_ready(self) -> None:
+        if self._deps.config_ready is not None:
+            await self._deps.config_ready()
+
+    async def _write_config(self, record: Mapping[str, Any], changes: Mapping[str, Any], actor: DashboardMarketplaceActor) -> list[str]:
+        """Writes a plugin's setting changes (none: nothing written) and publishes ``config:changed``; the keys written."""
+        keys = list(changes.keys())
+        if not keys:
+            return keys
+        config_version = await self.config.write(record["id"], changes)
+        await self._config_changed(record["id"], keys, config_version, actor)
+        return keys
+
+    async def _config_changed(self, section: str, keys: list[str], version: str, actor: DashboardMarketplaceActor) -> None:
+        if self._deps.publish_config_changed is None:
+            return
+        try:
+            await self._deps.publish_config_changed({
+                "provider": DASHBOARD_PLUGINS_CONFIG_PROVIDER_ID, "section": section, "keys": keys, "version": version,
+                "requiresRestart": False, "store": self.config.store_kind, "user": actor.user_name,
+            })
+        except Exception as exc:  # noqa: BLE001 - the change is made; the event failing is logged
+            logger.error("publishing config:changed failed: %s", exc)
 
     async def _resolve(self, name: str, version: Optional[str]) -> tuple[dict[str, Any], dict[str, Any]]:
         """The plugin and the version to install, after the kind, trust policy and API checks."""
@@ -592,12 +765,17 @@ class DashboardMarketplace:
                 if newest:
                     raise DashboardMarketplaceError(400, f"needs dashboard API {_api_of(newest.get('dashboardApi'))}")
                 raise DashboardMarketplaceError(404, f"no installable version: {name}")
-        if not isinstance(target.get("files"), list):
-            # An older details view without files: the version record has them
+        if not isinstance(target.get("files"), list) or "config" not in target:
+            # A details view without files (an older marketplace) or settings: the version record has them
             record = await self._get_json(f"/plugins/{quote(name, safe='')}/versions/{quote(target['version'], safe='')}")
-            if not isinstance(record, dict):
+            if not isinstance(record, dict) and not isinstance(target.get("files"), list):
                 raise DashboardMarketplaceError(404, f"version not found: {name}@{target['version']}")
-            target = {**target, "files": record.get("files")}
+            record = record if isinstance(record, dict) else {}
+            target = {
+                **target,
+                "files": target["files"] if isinstance(target.get("files"), list) else record.get("files"),
+                "config": target["config"] if target.get("config") is not None else record.get("config"),
+            }
         return plugin, target
 
     async def _store(
@@ -683,10 +861,16 @@ class DashboardMarketplace:
             # An icon the dashboard cannot show is left out
             self._deps.add_extension({k: v for k, v in page.extension.items() if k != "icon"})
         self._plugins[record["id"]] = _ServedPlugin(record=record, app=page.app)
+        settings = _record_config(record)
+        if settings is not None:
+            self.config.set_section(record["id"], record["title"], settings, f"{record['name']}@{record['version']}")
+        else:
+            self.config.remove_section(record["id"])
 
     def _unregister(self, extension_id: str) -> None:
         self._deps.remove_extension(extension_id)
         self._plugins.pop(extension_id, None)
+        self.config.remove_section(extension_id)
 
     def _save(self) -> None:
         """Writes ``installed.json`` atomically (a temporary file renamed over it)."""
@@ -706,10 +890,14 @@ class DashboardMarketplace:
                 pass
             raise
 
-    async def _changed(self, action: str, record: Mapping[str, Any], actor: DashboardMarketplaceActor, previous: Optional[str] = None) -> None:
-        properties: dict[str, Any] = {"name": record["name"], "version": record["version"], "id": record["id"]}
+    async def _changed(
+        self, action: str, record: Mapping[str, Any], actor: DashboardMarketplaceActor, previous: Optional[str] = None,
+        extra: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        event: dict[str, Any] = {"name": record["name"], "version": record["version"], "id": record["id"]}
         if previous:
-            properties["previousVersion"] = previous
+            event["previousVersion"] = previous
+        properties = {**event, **(extra or {})}
         sink = self._deps.audit()
         if sink is not None:
             try:
@@ -729,7 +917,7 @@ class DashboardMarketplace:
             except Exception as exc:  # noqa: BLE001 - the change is made; the audit failing is logged
                 logger.error("audit of a dashboard plugin change failed: %s", exc)
         if self._deps.publish is not None:
-            data = {"action": action, **properties}
+            data = {"action": action, **event}
             try:
                 await self._deps.publish(DASHBOARD_EXTENSIONS_CHANGED_EVENT, data)
             except Exception as exc:  # noqa: BLE001
@@ -791,6 +979,12 @@ class DashboardMarketplace:
                 ]
                 record["installedAt"] = raw["installedAt"] if isinstance(raw.get("installedAt"), str) else ""
                 record["installedBy"] = raw["installedBy"] if isinstance(raw.get("installedBy"), str) else ""
+                try:
+                    settings = parse_dashboard_plugin_config(raw.get("config"))
+                    if settings is not None:
+                        record["config"] = settings.to_dict()
+                except ValueError as exc:
+                    logger.warning("the settings of dashboard plugin %s are invalid, loaded without them: %s", label, exc)
                 self._register(record)
             except (ValueError, DashboardMarketplaceError, OSError) as exc:
                 logger.warning("dashboard plugin %s not loaded: %s", label, exc)
