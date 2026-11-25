@@ -22,6 +22,7 @@ from qodalis_cli_server_abstractions import (
 )
 
 from ..controllers.status_controller import DEFAULT_HISTORY_MINUTES, MAX_HISTORY_MINUTES
+from .admin_restart_command import AdminRestartProcessor
 from ..services.dashboard_marketplace import (
     DASHBOARD_INSTALL_PERMISSION,
     DashboardMarketplace,
@@ -56,6 +57,8 @@ class AdminCommandDeps:
     installed_plugins: Callable[[], list[Any]]
     #: Dashboard plugins from the marketplace (``admin dashboard``); ``None`` when the marketplace is off.
     marketplace: Optional[DashboardMarketplace] = None
+    #: The server's restart service (``admin restart``); ``None`` on a server without one.
+    restart: Any = None
 
 
 def _json(value: Any) -> str:
@@ -715,7 +718,7 @@ class AdminDashboardProcessor(CliCommandProcessor):
 
 class CliAdminCommandProcessor(CliCommandProcessor):
     """``admin``: ``status [--history]``, ``plugins [list|enable|disable <id>]``, ``clients``, ``logs [...]``,
-    ``dashboard [list|search|info|install|update|remove]``.  Needs ``admin:access`` on a protected server; ``logs`` also
+    ``restart [status]``, ``dashboard [list|search|info|install|update|remove]``.  Needs ``admin:access`` on a protected server; ``logs`` also
     ``logs:read``, ``dashboard install|update|remove`` also ``dashboard:install``.  Server settings are the core
     ``config`` command."""
 
@@ -735,6 +738,8 @@ class CliAdminCommandProcessor(CliCommandProcessor):
         ]
         if deps.marketplace is not None:
             self._processors.append(AdminDashboardProcessor(deps.marketplace))
+        if deps.restart is not None:
+            self._processors.append(AdminRestartProcessor(deps.restart))
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:

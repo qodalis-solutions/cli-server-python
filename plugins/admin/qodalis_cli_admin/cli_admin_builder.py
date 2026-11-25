@@ -411,6 +411,7 @@ class CliAdminBuilder:
             event_socket_manager=deps.event_socket_manager,
             installed_plugins=lambda: list(getattr(deps.builder, "installed_plugins", None) or []),
             marketplace=marketplace,
+            restart=getattr(deps.builder, "restart", None),
         ))
 
         return CliAdminPlugin(
