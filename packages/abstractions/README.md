@@ -70,6 +70,10 @@ Register it on the server with `builder.add_module(GreetingsModule())`; see the 
 | Paging | `CliPaging` (`parameters()`, `from_command()`), `CliPageRequest` (`skip`, `take`), `DEFAULT_TAKE`, `MAX_TAKE` |
 | Modules and metadata | `ICliModule`, `CliModule`, `ICliCommandAuthor`, `CliCommandAuthor`, `DEFAULT_LIBRARY_AUTHOR` |
 | Jobs | `ICliJob`, `ICliJobExecutionContext`, `ICliJobLogger`, `CliJobOptions`, `ICliJobStorageProvider`, `JobExecution`, `JobState`, `JobLogEntry` |
+| Config providers | `ICliConfigProvider`, `ICliConfigWriter`, `CliConfigSection`, `CliConfigEntry`, `CliConfigValidation`, `CliConfigContext`, `CliConfigCaller`, `cli_config_context`, `has_cli_permission`, `ICliConfigService`, `CliConfigError`, `CliConfigConflictError`, `CliConfigValidationError`, `CliConfigPermissions`, `CLI_CONFIG_CHANGED_EVENT`, `CLI_CONFIG_AUDIT_EVENT` |
+| Config settings in code | `CliStoredConfigProvider`, `CliConfigSectionDefinition`, `CliConfigSettingDefinition`, `create_custom_config_provider`, `ICliModule.config_providers` |
+| Config stores | `ICliConfigStore`, `CliConfigStoredSection`, `InMemoryConfigStore` (source `runtime`), `JsonFileConfigStore` (source `file`, mode 0600) |
+| Config values | `validate_cli_config_value`, `parse_cli_config_input`, `parse_cli_config_duration`, `format_cli_config_duration`, `infer_cli_config_entry_type` |
 | Data explorer | `IDataExplorerProvider`, `DataExplorerProviderOptions`, `DataExplorerExecutionContext`, `DataExplorerResult`, `DataExplorerLanguage`, `DataExplorerOutputFormat`, `DataExplorerTemplate`, `DataExplorerParameterDescriptor`, schema types |
 
 ### Processor properties
@@ -87,6 +91,41 @@ Register it on the server with `builder.add_module(GreetingsModule())`; see the 
 | `required_permissions` | `list[str] \| None` | `None` | Enforced when the users plugin protects the server |
 | `version` | `str` | `"1.0.0"` | Processor version |
 | `author` | `ICliCommandAuthor` | `DEFAULT_LIBRARY_AUTHOR` | Author metadata |
+
+## Config providers
+
+The server's configuration is read and changed through providers (the admin dashboard's Config page, the server's
+`config` command and the `config_*` MCP tools). A plugin brings its settings like this:
+
+```python
+from qodalis_cli_server_abstractions import CliModule
+from qodalis_cli_server_abstractions.config import (
+    CliConfigSectionDefinition, CliConfigSettingDefinition, CliConfigValidation, CliStoredConfigProvider,
+)
+
+settings = CliStoredConfigProvider(id="weather", title="Weather", sections=[
+    CliConfigSectionDefinition(id="api", settings=[
+        CliConfigSettingDefinition(key="units", type="enum", default="metric",
+                                   validation=CliConfigValidation(options=["metric", "imperial"]),
+                                   apply=lambda v: setattr(client, "units", v)),
+        CliConfigSettingDefinition(key="apiKey", type="secret", apply=client.set_key),
+        CliConfigSettingDefinition(key="cacheFor", type="duration", default="10m",
+                                   validation=CliConfigValidation(min=60_000)),
+    ]),
+])
+
+
+class WeatherModule(CliModule):
+    ...
+
+    @property
+    def config_providers(self):
+        return [settings]
+```
+
+Secrets are never returned by the server (only `isSet`); `None` resets a setting to its default. The JSON, the
+validation rules, permissions, audit and events are described in the
+[server README](https://github.com/qodalis-solutions/cli-server-python#config-providers).
 
 ## License
 

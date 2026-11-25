@@ -167,6 +167,13 @@ plugin = (
   "keepAll": false }` (unset limits are `null`; a `keep_all` job has every limit `null` with `overridden` and `keepAll`
   `true`), or `null` when nothing applies.
 
+### At runtime: the `jobs` config provider
+
+The plugin brings the `jobs` config provider (`config_providers`, registered by `mount_plugin`): section `history`
+with `maxAge`, `maxRunsPerJob`, `failedMaxAge` and `failedMaxRunsPerJob`, changeable from the dashboard's Config page,
+`config set jobs.history.maxAge 30d` or MCP `config_set`; the next `jobs:prune-history` run applies them
+(`scheduler.set_history_defaults(retention)`). `pruneInterval` is read-only (set in code).
+
 ## REST API
 
 All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli/jobs`).
