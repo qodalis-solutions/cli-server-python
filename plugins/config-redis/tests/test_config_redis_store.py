@@ -10,8 +10,10 @@ Ported from cli-server-node ``src/__tests__/config-redis.test.ts``."""
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import os
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -91,6 +93,18 @@ class FakeRedis:
         self.closed = True
 
 
+@pytest.fixture
+def real_redis(monkeypatch):
+    """The real redis package, also when another test module replaced it in
+    ``sys.modules`` with a mock (the data explorer providers' tests do);
+    their modules are put back afterwards."""
+    for name in [m for m in sys.modules if m == "redis" or m.startswith("redis.")]:
+        if not hasattr(sys.modules[name], "__file__"):
+            monkeypatch.delitem(sys.modules, name)
+    for name in ("redis", "redis.asyncio"):
+        monkeypatch.setitem(sys.modules, name, importlib.import_module(name))
+
+
 # ---------------------------------------------------------------------------
 # The store contract
 # ---------------------------------------------------------------------------
@@ -150,7 +164,7 @@ class TestCliRedisConfigStore:
         assert socket.describe().detail == "/run/redis.sock/0"
         assert CliRedisConfigStore(client=FakeRedis({})).describe().detail == "localhost:6379/0, prefix qcli:config"
 
-    async def test_describe_never_shows_the_password_or_user_of_a_url(self):
+    async def test_describe_never_shows_the_password_or_user_of_a_url(self, real_redis):
         store = CliRedisConfigStore(url="redis://admin:s3cr3t-pass@cache.internal:6390/4", key_prefix="qcli:cfg:")
         only = CliRedisConfigStore(url="redis://:another-secret@localhost:6379")
         try:
@@ -246,7 +260,7 @@ class TestCliRedisConfigStore:
         with pytest.raises(RuntimeError, match="unexpected reply from Redis: 'nope'"):
             await CliRedisConfigStore(client=redis).write("p", "s", {"a": 1})
 
-    async def test_close_ends_only_a_client_it_created(self):
+    async def test_close_ends_only_a_client_it_created(self, real_redis):
         shared = FakeRedis()
         await CliRedisConfigStore(client=shared).close()
         assert shared.closed is False
@@ -325,7 +339,7 @@ async def _remove_test_keys() -> None:
 @pytest.mark.skipif(not REDIS_URL, reason="QCLI_TEST_REDIS not set")
 class TestStoreContractOnARealRedis(ConfigStoreContract):
     @pytest.fixture
-    async def store(self):
+    async def store(self, real_redis):
         store = CliRedisConfigStore(url=REDIS_URL, key_prefix=f"{RUN_PREFIX}{uuid.uuid4().hex}:")
         try:
             yield store
@@ -335,7 +349,7 @@ class TestStoreContractOnARealRedis(ConfigStoreContract):
 
 
 @pytest.mark.skipif(not REDIS_URL, reason="QCLI_TEST_REDIS not set")
-async def test_real_redis_two_stores_racing_on_one_section_no_change_lost_stale_versions_refused():
+async def test_real_redis_two_stores_racing_on_one_section_no_change_lost_stale_versions_refused(real_redis):
     a = CliRedisConfigStore(url=REDIS_URL, key_prefix=f"{RUN_PREFIX}race:")
     b = CliRedisConfigStore(url=REDIS_URL, key_prefix=f"{RUN_PREFIX}race:")
     try:
