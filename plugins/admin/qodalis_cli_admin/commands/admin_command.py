@@ -429,11 +429,44 @@ def _terminal_actor() -> DashboardMarketplaceActor:
 
 
 async def _marketplace_call(fn: Callable[[], Any]) -> str:
-    """Runs a marketplace call, turning its refusals into ``Error: <reason>``."""
+    """Runs a marketplace call, turning its refusals into ``Error: <reason>`` (and a line per setting refused)."""
     try:
         return await fn()
     except DashboardMarketplaceError as exc:
-        return f"Error: {exc.message}"
+        return "\n".join([f"Error: {exc.message}", *(f"  {k}: {m}" for k, m in (exc.errors or {}).items())])
+
+
+_CONFIG = CliCommandParameterDescriptor(
+    "config", "The values of the plugin's settings, a JSON object: --config '{\"refreshSeconds\":60}'", False, "string",
+)
+
+
+def _config_arg(command: CliProcessCommand) -> Any:
+    """``--config``: a JSON object (text, or already parsed by the client); ``None`` when absent.  400 when it is not one."""
+    raw = (command.args or {}).get("config")
+    if raw is None:
+        return None
+    value: Any = raw
+    if isinstance(raw, str):
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            value = None
+    if not isinstance(value, dict):
+        raise DashboardMarketplaceError(400, 'invalid --config: use a JSON object, e.g. --config \'{"key":"value"}\'')
+    return value
+
+
+def _setting_text(value: Any) -> str:
+    """A setting's value as printed: strings as they are, anything else as JSON."""
+    if value is None:
+        return "(none)"
+    return value if isinstance(value, str) else json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+def _after_change(name: str, has_config: bool, warnings: Optional[list[str]]) -> list[str]:
+    """The warnings, and where to see the settings, after an install or update."""
+    return [*(f"Warning: {w}" for w in warnings or []), *([f"Its settings: admin dashboard info {name}"] if has_config else [])]
 
 
 class AdminDashboardListProcessor(CliCommandProcessor):
@@ -516,7 +549,11 @@ class AdminDashboardInstallProcessor(CliCommandProcessor):
     examples = [
         CliCommandExample("admin dashboard install @qodalis/cli-dashboard-module-jobs", "The newest version"),
         CliCommandExample("admin dashboard install @acme/cli-dashboard-tickets@1.2.0", "A given version"),
+        CliCommandExample(
+            "admin dashboard install @acme/cli-dashboard-tickets --config '{\"refreshSeconds\":60}'", "With values for its settings",
+        ),
     ]
+    parameters = [_CONFIG]
 
     def __init__(self, marketplace: DashboardMarketplace) -> None:
         self._marketplace = marketplace
@@ -529,17 +566,24 @@ class AdminDashboardInstallProcessor(CliCommandProcessor):
             spec = words[0]
             at = spec.rfind("@")
             name, version = (spec[:at], spec[at + 1:]) if at > 0 else (spec, None)
-            plugin = await self._marketplace.install_plugin(name, version, _terminal_actor())
-            return f'Installed {plugin["name"]}@{plugin["version"]}: the dashboard page "{plugin["title"]}" (/x/{plugin["id"]}).'
+            plugin = await self._marketplace.install_plugin(name, version, _terminal_actor(), _config_arg(command))
+            return "\n".join([
+                f'Installed {plugin["name"]}@{plugin["version"]}: the dashboard page "{plugin["title"]}" (/x/{plugin["id"]}).',
+                *_after_change(plugin["name"], plugin["hasConfig"], plugin.get("warnings")),
+            ])
 
         return await _marketplace_call(run)
 
 
 class AdminDashboardUpdateProcessor(CliCommandProcessor):
     command = "update"
-    description = "Updates an installed dashboard plugin to the newest version this dashboard runs"
+    description = (
+        "Updates an installed dashboard plugin to the newest version this dashboard runs (settings the new version "
+        "still accepts are kept)"
+    )
     value_required = True
     required_permissions = [DASHBOARD_INSTALL_PERMISSION]
+    parameters = [_CONFIG]
 
     def __init__(self, marketplace: DashboardMarketplace) -> None:
         self._marketplace = marketplace
@@ -549,10 +593,18 @@ class AdminDashboardUpdateProcessor(CliCommandProcessor):
             words = get_positionals(command)
             if len(words) != 1:
                 return "Error: name one package: admin dashboard update <name>"
-            plugin, changed, previous = await self._marketplace.update_plugin(words[0], None, _terminal_actor())
-            if not changed:
-                return f"{plugin['name']} is already at {plugin['version']}, the newest version."
-            return f"Updated {plugin['name']} from {previous} to {plugin['version']}."
+            config = _config_arg(command)
+            result = await self._marketplace.update_plugin(words[0], None, _terminal_actor(), config)
+            plugin = result["plugin"]
+            if not result["changed"]:
+                applied = " Its settings were changed." if config else ""
+                return f"{plugin['name']} is already at {plugin['version']}, the newest version.{applied}"
+            dropped = result["configDropped"]
+            return "\n".join([
+                f"Updated {plugin['name']} from {result['previousVersion']} to {plugin['version']}.",
+                *([f"Settings dropped (the new version no longer accepts them): {', '.join(dropped)}"] if dropped else []),
+                *_after_change(plugin["name"], plugin["hasConfig"], result.get("warnings")),
+            ])
 
         return await _marketplace_call(run)
 
@@ -578,9 +630,68 @@ class AdminDashboardRemoveProcessor(CliCommandProcessor):
         return await _marketplace_call(run)
 
 
+class AdminDashboardInfoProcessor(CliCommandProcessor):
+    command = "info"
+    description = "Shows an installed dashboard plugin: version, page, files, and its settings with their values"
+    value_required = True
+    parameters = [_JSON]
+    examples = [CliCommandExample("admin dashboard info @acme/cli-dashboard-tickets", "The plugin and its settings")]
+
+    def __init__(self, marketplace: DashboardMarketplace) -> None:
+        self._marketplace = marketplace
+
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
+        async def run() -> str:
+            words = get_positionals(command)
+            if len(words) != 1:
+                return "Error: name one package: admin dashboard info <name>"
+            info = await self._marketplace.plugin_info(words[0])
+            if _flag(command, "json"):
+                return _json(info)
+            p = info["plugin"]
+            files = ", ".join(f"{f.get('file')} ({f.get('size')} bytes)" for f in info["files"])
+            lines = [
+                f"{p['name']}@{p['version']}",
+                f"  Page        {p['title']} (/x/{p['id']})",
+                f"  Installed   {short_time(p['installedAt'])}{' by ' + p['installedBy'] if p['installedBy'] else ''}",
+                f"  Files       {files}",
+            ]
+            settings = info["settings"]
+            if not settings:
+                return "\n".join([*lines, "  Settings    none"])
+            lines.append(f"Settings (config set dashboard-plugins.{p['id']}.<key> <value>; version {info['configVersion']}):")
+
+            def rule(s: dict[str, Any]) -> str:
+                v = s.get("validation") or {}
+                parts = [
+                    "required" if v.get("required") else "",
+                    f"min {_num(v['min'])}" if v.get("min") is not None else "",
+                    f"max {_num(v['max'])}" if v.get("max") is not None else "",
+                    f"pattern {v['pattern']}" if v.get("pattern") is not None else "",
+                    f"one of {', '.join(v['options'])}" if v.get("options") else "",
+                ]
+                return "; ".join(x for x in parts if x)
+
+            lines.append(format_table(
+                ["Key", "Value", "Type", "Default", "Rule"],
+                [
+                    [
+                        s["key"], f"{_setting_text(s['value'])}{'' if s['isDefault'] else ' *'}", s["type"],
+                        _setting_text(s["default"]), rule(s) or "-",
+                    ]
+                    for s in settings
+                ],
+            ))
+            if any(not s["isDefault"] for s in settings):
+                lines.append("* changed from the default")
+            return "\n".join(lines)
+
+        return await _marketplace_call(run)
+
+
 class AdminDashboardProcessor(CliCommandProcessor):
     command = "dashboard"
-    description = "Dashboard plugins from the marketplace: list the installed ones, search, install, update, remove"
+    description = "Dashboard plugins from the marketplace: list the installed ones, search, info, install, update, remove"
     parameters = [_JSON]
 
     def __init__(self, marketplace: DashboardMarketplace) -> None:
@@ -588,6 +699,7 @@ class AdminDashboardProcessor(CliCommandProcessor):
         self._processors: list[ICliCommandProcessor] = [
             self._list,
             AdminDashboardSearchProcessor(marketplace),
+            AdminDashboardInfoProcessor(marketplace),
             AdminDashboardInstallProcessor(marketplace),
             AdminDashboardUpdateProcessor(marketplace),
             AdminDashboardRemoveProcessor(marketplace),
@@ -603,7 +715,7 @@ class AdminDashboardProcessor(CliCommandProcessor):
 
 class CliAdminCommandProcessor(CliCommandProcessor):
     """``admin``: ``status [--history]``, ``plugins [list|enable|disable <id>]``, ``clients``, ``logs [...]``,
-    ``dashboard [list|search|install|update|remove]``.  Needs ``admin:access`` on a protected server; ``logs`` also
+    ``dashboard [list|search|info|install|update|remove]``.  Needs ``admin:access`` on a protected server; ``logs`` also
     ``logs:read``, ``dashboard install|update|remove`` also ``dashboard:install``.  Server settings are the core
     ``config`` command."""
 
