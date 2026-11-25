@@ -32,6 +32,7 @@ from qodalis_cli import (
     CliPermission,
     CliServerConfigOptions,
     CliServerOptions,
+    CliServerRestartOptions,
     CliShellOptions,
     create_cli_server,
     CliHttpCommandProcessor,
@@ -317,6 +318,11 @@ def create_demo_server():  # noqa: ANN201
             configure=configure,
             allowed_origins=allowed_origins,
             config=CliServerConfigOptions(store=config_store, stores=config_stores),
+            # Restart from the dashboard or `admin restart --yes`: the demo runs bare (python demo/main.py, nohup),
+            # with no supervisor, so it runs itself again ("self": the same command, environment, working directory
+            # and output).  Under Docker, systemd or PM2 leave the mode out ("auto" exits with 75 for the supervisor
+            # to start it again).
+            restart=CliServerRestartOptions(mode="self"),
             # Opt-in remote shell.  The users plugin is mounted below, so the
             # shell runs in "users" mode: a WebSocket ticket of a session with
             # the shell:execute permission (root has '*').  Without the users
@@ -396,6 +402,12 @@ def create_demo_server():  # noqa: ANN201
                 await redis_config_store.close()
 
     result.app.router.lifespan_context = lifespan_with_plugins
+
+    # A restart's graceful shutdown stops the jobs and disposes the mounted plugins itself, then runs the server
+    # again before the lifespan above unwinds: the users plugin and the Redis config store are closed as its steps
+    result.restart.on_shutdown("users plugin", users_plugin.shutdown)
+    if redis_config_store is not None:
+        result.restart.on_shutdown("redis config store", redis_config_store.close)
 
     # -----------------------------------------------------------------------
     # Public API, guides and the portal
