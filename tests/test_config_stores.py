@@ -28,7 +28,9 @@ from qodalis_cli_server_abstractions.config import (
     apply_cli_config_changes,
     describe_cli_config_store,
     describe_cli_config_store_line,
+    describe_cli_config_store_name,
 )
+from tests.config_store_contract import ConfigStoreContract
 from qodalis_cli_databases import (
     CliDatabaseConfigStore,
     CliMigrationDatabaseOptions,
@@ -52,71 +54,30 @@ def memory_db() -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(params=["InMemoryConfigStore", "JsonFileConfigStore", "CliDatabaseConfigStore (SQLite)"])
-async def store(request, tmp_path) -> AsyncIterator[ICliConfigStore]:
-    if request.param == "InMemoryConfigStore":
-        yield InMemoryConfigStore()
-    elif request.param == "JsonFileConfigStore":
-        yield JsonFileConfigStore(tmp_path / "config.json")
-    else:
-        db = memory_db()
-        s = CliDatabaseConfigStore(sqlite_connection(db))
-        await s.ready()
-        try:
-            yield s
-        finally:
-            db.close()
-
-
-class TestStoreContract:
-    async def test_unknown_section_is_empty_at_version_0(self, store):
-        assert await store.read("p", "s") == section({}, 0)
-
-    async def test_writes_bump_version_by_one_and_keep_values(self, store):
-        first = await store.write("p", "s", {"a": 1, "b": ["x"]})
-        assert first == section({"a": 1, "b": ["x"]}, 1)
-        second = await store.write("p", "s", {"c": {"deep": True}})
-        assert second == section({"a": 1, "b": ["x"], "c": {"deep": True}}, 2)
-        assert await store.read("p", "s") == second
-
-    async def test_none_removes_a_key(self, store):
-        await store.write("p", "s", {"a": 1, "b": 2})
-        after = await store.write("p", "s", {"a": None})
-        assert after.values == {"b": 2}
-        assert after.version == 2
-
-    async def test_sections_and_providers_are_independent(self, store):
-        await store.write("p", "s1", {"a": 1})
-        await store.write("p", "s2", {"a": 2})
-        await store.write("q", "s1", {"a": 3})
-        assert (await store.read("p", "s1")).values == {"a": 1}
-        assert (await store.read("p", "s2")).values == {"a": 2}
-        assert (await store.read("q", "s1")).values == {"a": 3}
-        assert (await store.read("q", "s1")).version == 1
-
-    async def test_stale_expected_version_is_conflict_with_current_version(self, store):
-        await store.write("p", "s", {"a": 1}, 0)
-        await store.write("p", "s", {"a": 2}, 1)
-        with pytest.raises(CliConfigConflictError) as info:
-            await store.write("p", "s", {"a": 3}, 1)
-        assert info.value.current_version == "2"
-        assert (await store.read("p", "s")).values == {"a": 2}
-
-    async def test_first_write_with_expected_version_other_than_0_is_conflict(self, store):
-        with pytest.raises(CliConfigConflictError):
-            await store.write("p", "new", {"a": 1}, 3)
-        assert await store.read("p", "new") == section({}, 0)
-
-    async def test_returned_values_are_copies(self, store):
-        written = await store.write("p", "s", {"list": ["a"]})
-        written.values["list"].append("mutated")
-        read = await store.read("p", "s")
-        read.values["list"].append("again")
-        assert (await store.read("p", "s")).values["list"] == ["a"]
-
-    async def test_secrets_are_stored_as_given(self, store):
-        await store.write("p", "s", {"apiKey": "sk_live_1"})
-        assert (await store.read("p", "s")).values["apiKey"] == "sk_live_1"
+class TestStoreContract(ConfigStoreContract):
+    @pytest.fixture(params=[
+        "InMemoryConfigStore",
+        "JsonFileConfigStore",
+        "JsonFileConfigStore (a section of a settings file)",
+        "CliDatabaseConfigStore (SQLite)",
+    ])
+    async def store(self, request, tmp_path) -> AsyncIterator[ICliConfigStore]:
+        if request.param == "InMemoryConfigStore":
+            yield InMemoryConfigStore()
+        elif request.param == "JsonFileConfigStore":
+            yield JsonFileConfigStore(tmp_path / "config.json")
+        elif request.param.startswith("JsonFileConfigStore"):
+            file = tmp_path / "app.json"
+            file.write_text(json.dumps({"logging": {"level": "info"}, "app": {"name": "demo"}}, indent=4))
+            yield JsonFileConfigStore(file, section="app.qcli")
+        else:
+            db = memory_db()
+            s = CliDatabaseConfigStore(sqlite_connection(db))
+            await s.ready()
+            try:
+                yield s
+            finally:
+                db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +236,124 @@ class TestJsonFileConfigStore:
         finally:
             os.chmod(sub, 0o700)
         assert json.loads(file.read_text("utf-8")) == {"p": {"s": {"values": {"a": 1}, "version": 1}}}
+
+
+class TestJsonFileConfigStoreSection:
+    """A section of an app settings file."""
+
+    ORIGINAL = {
+        "ConnectionStrings": {"main": "Server=db;Password=keep-me"},
+        "logging": {"level": "info", "targets": ["console", "file"]},
+        "port": 8080,
+        "flags": [True, False],
+    }
+
+    @pytest.fixture
+    def file(self, tmp_path):
+        file = tmp_path / "app.json"
+        file.write_text(json.dumps(self.ORIGINAL, indent=4) + "\n")
+        return file
+
+    def test_describes_itself_by_the_file_and_the_section(self, file):
+        assert JsonFileConfigStore(file, section="qcli").describe() == CliConfigStoreDescription(
+            "file", "JSON file", "app.json, section qcli", True,
+        )
+        nested = JsonFileConfigStore(os.path.join(os.getcwd(), "config", "app.json"), section="qcli")
+        assert nested.describe().detail == "config/app.json, section qcli"
+        assert JsonFileConfigStore(file, section="app:qcli").describe().detail == "app.json, section app.qcli"
+        assert describe_cli_config_store_line(JsonFileConfigStore(file, section="qcli").describe()) == (
+            "JSON file (app.json, section qcli), kept across restarts"
+        )
+        assert describe_cli_config_store_name(JsonFileConfigStore(file, section="qcli").describe()) == (
+            "JSON file (app.json, section qcli)"
+        )
+
+    async def test_keeps_the_settings_under_the_section_and_the_rest_of_the_file_as_it_was(self, file):
+        await JsonFileConfigStore(file, section="qcli").write("jobs", "history", {"maxAge": "30d"})
+        text = file.read_text("utf-8")
+        parsed = json.loads(text)
+        assert parsed == {**self.ORIGINAL, "qcli": {"jobs": {"history": {"values": {"maxAge": "30d"}, "version": 1}}}}
+        assert list(parsed) == ["ConnectionStrings", "logging", "port", "flags", "qcli"]
+        assert '\n    "logging": {\n        "level": "info"' in text
+        assert text.endswith("}\n")
+
+    async def test_keeps_tabs_and_a_missing_trailing_newline(self, file):
+        file.write_text(json.dumps({"a": {"b": 1}}, indent="\t"))
+        await JsonFileConfigStore(file, section="qcli").write("p", "s", {"x": 1})
+        text = file.read_text("utf-8")
+        assert '\n\t"a": {\n\t\t"b": 1' in text
+        assert text.endswith("}")
+
+    async def test_a_nested_section_is_created_inside_the_existing_object(self, file):
+        file.write_text(json.dumps({"app": {"name": "demo"}, "other": 1}, indent=2))
+        await JsonFileConfigStore(file, section="app:qcli").write("p", "s", {"a": 1})
+        assert json.loads(file.read_text("utf-8")) == {
+            "app": {"name": "demo", "qcli": {"p": {"s": {"values": {"a": 1}, "version": 1}}}}, "other": 1,
+        }
+        assert await JsonFileConfigStore(file, section="app.qcli").read("p", "s") == section({"a": 1}, 1)
+
+    async def test_re_reads_the_rest_of_the_file_on_every_write_edits_made_meanwhile_are_kept(self, file):
+        store = JsonFileConfigStore(file, section="qcli")
+        await store.write("p", "s", {"a": 1})
+        edited = json.loads(file.read_text("utf-8"))
+        edited["port"] = 9090
+        edited["added"] = "by hand"
+        file.write_text(json.dumps(edited, indent=4))
+        await store.write("p", "s", {"b": 2})
+        after = json.loads(file.read_text("utf-8"))
+        assert after["port"] == 9090
+        assert after["added"] == "by hand"
+        assert after["qcli"]["p"]["s"] == {"values": {"a": 1, "b": 2}, "version": 2}
+
+    async def test_versions_persist_across_instances_and_a_stale_version_is_refused(self, file):
+        await JsonFileConfigStore(file, section="qcli").write("p", "s", {"a": 1})
+        restarted = JsonFileConfigStore(file, section="qcli")
+        assert await restarted.read("p", "s") == section({"a": 1}, 1)
+        with pytest.raises(CliConfigConflictError) as info:
+            await restarted.write("p", "s", {"a": 2}, 0)
+        assert info.value.current_version == "1"
+        assert (await restarted.write("p", "s", {"a": 2}, 1)).version == 2
+        assert json.loads(file.read_text("utf-8"))["qcli"]["p"]["s"]["version"] == 2
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes and inodes")
+    async def test_writes_atomically_and_the_file_keeps_its_mode(self, file, tmp_path):
+        os.chmod(file, 0o644)
+        before = os.stat(file).st_ino
+        # A reader holding the old file sees it whole: it is replaced, never rewritten in place
+        with open(file, encoding="utf-8") as held:
+            await JsonFileConfigStore(file, section="qcli").write("p", "s", {"a": 1})
+            assert json.loads(held.read()) == self.ORIGINAL
+        assert os.stat(file).st_ino != before
+        assert os.listdir(tmp_path) == ["app.json"]
+        assert stat.S_IMODE(os.stat(file).st_mode) == 0o644
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes")
+    async def test_a_new_settings_file_is_created_with_the_section_readable_by_the_owner_only(self, tmp_path):
+        fresh = tmp_path / "new" / "settings.json"
+        await JsonFileConfigStore(fresh, section="qcli").write("p", "s", {"a": 1})
+        assert json.loads(fresh.read_text("utf-8")) == {"qcli": {"p": {"s": {"values": {"a": 1}, "version": 1}}}}
+        assert stat.S_IMODE(os.stat(fresh).st_mode) == 0o600
+
+    async def test_a_section_that_is_not_an_object_or_a_file_that_is_not_json_is_refused(self, file):
+        file.write_text(json.dumps({"qcli": "oops", "app": [1]}))
+        with pytest.raises(ValueError, match="qcli is not an object"):
+            await JsonFileConfigStore(file, section="qcli").read("p", "s")
+        with pytest.raises(ValueError, match="app is not an object"):
+            await JsonFileConfigStore(file, section="app.qcli").read("p", "s")
+        store = JsonFileConfigStore(file, section="fresh")
+        assert await store.read("p", "s") == section({}, 0)
+        file.write_text("{broken")
+        with pytest.raises(ValueError, match="is not valid JSON"):
+            await store.write("p", "s", {"a": 1})
+        assert file.read_text("utf-8") == "{broken"
+        # The failed change is not kept
+        file.write_text("{}")
+        assert await store.read("p", "s") == section({}, 0)
+
+    def test_an_empty_part_of_the_section_path_is_refused(self, file):
+        with pytest.raises(ValueError, match="invalid config file section: app..qcli"):
+            JsonFileConfigStore(file, section="app..qcli")
+        assert JsonFileConfigStore(file, section="  ").section_path == ()
 
 
 # ---------------------------------------------------------------------------
