@@ -520,7 +520,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
             mcp_tools,
             mcp_options,
             server_version=package_version,
-            allowed_origins=lambda: opts.allowed_origins,
+            allowed_origins=lambda: allowed_origins,
             trust_proxy=lambda: opts.shell.trust_proxy,
         ))
 
