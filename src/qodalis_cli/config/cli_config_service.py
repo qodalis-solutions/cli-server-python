@@ -72,6 +72,8 @@ def to_cli_config_entry_view(entry: Any, writable: bool) -> dict[str, Any]:
         view["validation"] = validation.to_dict()
     if e.editor:
         view["editor"] = e.editor
+    if e.required:
+        view["required"] = True
     return view
 
 

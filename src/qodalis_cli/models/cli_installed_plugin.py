@@ -31,15 +31,20 @@ class CliInstalledPlugin:
     description: str | None = None
     #: One emoji or an image URL; ``None`` when the package has none.
     icon: str | None = None
+    #: ``marketplace`` for a server plugin installed at runtime; ``None`` for the host's own.
+    source: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "id": self.id,
             "name": self.name,
             "version": self.version,
             "description": self.description,
             "icon": self.icon,
         }
+        if self.source:
+            out["source"] = self.source
+        return out
 
     @classmethod
     def from_distribution(

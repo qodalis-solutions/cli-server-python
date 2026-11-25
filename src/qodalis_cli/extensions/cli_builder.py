@@ -24,6 +24,7 @@ from ..permissions import (
 from ..config.cli_config_registry import CliConfigRegistry
 from ..config.cli_config_service import CliConfigService
 from ..restart.cli_server_restart import CliServerRestart
+from ..server_plugins.cli_server_plugins import DEFAULT_DATA_DIR, CliServerPlugins
 from ..services.cli_command_registry import CliCommandRegistry
 
 if TYPE_CHECKING:
@@ -74,6 +75,7 @@ class CliBuilder:
         #: it: plugins mark theirs with ``restart.mark_required(id, source, description)``; the config service
         #: marks the settings with ``requires_restart``.
         self.restart = CliServerRestart()
+        self._server_plugins: Any = CliServerPlugins(DEFAULT_DATA_DIR, False)
         self.config = CliConfigService(
             self.config_registry, audit=self._config_audit_sink, restart=lambda: self.restart,
         )
@@ -119,6 +121,10 @@ class CliBuilder:
         listed.  The icon defaults to the ``__plugin_icon__`` of the package's
         top-level ``__init__.py``.
         """
+        if isinstance(plugin, CliInstalledPlugin):
+            if not any(p.id == plugin.id for p in self._installed_plugins):
+                self._installed_plugins.append(plugin)
+            return self
         distribution = plugin if isinstance(plugin, str) else distribution_of(plugin)
         if not distribution or any(p.id == distribution for p in self._installed_plugins):
             return self
@@ -127,6 +133,37 @@ class CliBuilder:
                 distribution, name=name, description=description, icon=icon
             )
         )
+        return self
+
+    def remove_installed_plugin(self, plugin_id: str) -> bool:
+        """Remove a package from the installed plugins (a runtime plugin that failed to load); ``False`` when it is
+        not listed."""
+        for i, p in enumerate(self._installed_plugins):
+            if p.id == plugin_id:
+                del self._installed_plugins[i]
+                return True
+        return False
+
+    @property
+    def server_plugins(self) -> Any:
+        """The plugins installed at runtime from the marketplace (``<data dir>/server-plugins``): their installed list,
+        where they are kept, and what this process loaded (``CliServerOptions(data_dir=..., server_plugins=...)``)."""
+        return self._server_plugins
+
+    def add_plugin(self, entry: Any, options: dict[str, Any] | None = None, name: str | None = None) -> CliBuilder:
+        """Adds a server plugin in code through its marketplace entry (``create_plugin(context)``): it loads at the
+        app's startup in its declared order, its settings in the dashboard as when installed from there, ``options``
+        as their defaults (source ``code``; saved settings override them)::
+
+            from qodalis_cli_weather.plugin import create_plugin as weather
+            builder.add_plugin(weather, {"defaultLocation": "Paris"})
+        """
+        self._server_plugins.add(entry, options, name)
+        return self
+
+    def use_server_plugins(self, server_plugins: Any) -> CliBuilder:
+        """Set by ``create_cli_server`` from its ``data_dir`` and ``server_plugins`` options."""
+        self._server_plugins = server_plugins
         return self
 
     def add_dashboard_extension(self, extension: CliDashboardExtension | Mapping[str, Any]) -> CliBuilder:
