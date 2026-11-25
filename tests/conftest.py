@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import faulthandler
+import sys
+import threading
+import traceback
 
 import pytest
 
@@ -196,3 +200,40 @@ def populated_registry(registry: CliCommandRegistry) -> CliCommandRegistry:
 @pytest.fixture()
 def executor(populated_registry: CliCommandRegistry) -> CliCommandExecutorService:
     return CliCommandExecutorService(populated_registry)
+
+
+# ---------------------------------------------------------------------------
+# Exit diagnostics: the suite once hung after its summary (CI would wait for
+# the job's timeout).  After the session, list the non-daemon threads still
+# running (they keep the interpreter alive) with their stacks, and if the
+# process has not exited a minute later, dump every thread's stack (repeated)
+# so the log shows what holds it.  Diagnostics only: nothing is killed.
+# ---------------------------------------------------------------------------
+
+
+def _idle_executor_worker(frame) -> bool:
+    """A ``ThreadPoolExecutor`` worker waiting for work: it exits at interpreter shutdown."""
+    stack = traceback.extract_stack(frame)
+    return any(f.name == "_worker" and f.filename.endswith("concurrent/futures/thread.py") for f in stack[-3:])
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    frames = sys._current_frames()
+    busy = []
+    for thread in threading.enumerate():
+        if thread is threading.main_thread() or thread.daemon or not thread.is_alive():
+            continue
+        frame = frames.get(thread.ident)
+        if frame is not None and _idle_executor_worker(frame):
+            continue
+        busy.append((thread, frame))
+    if busy:
+        out = sys.__stderr__
+        out.write(f"\n[qcli tests] {len(busy)} non-daemon thread(s) still running after the session:\n")
+        for thread, frame in busy:
+            out.write(f"--- {thread.name} (ident {thread.ident})\n")
+            if frame is not None:
+                out.write("".join(traceback.format_stack(frame)))
+        out.flush()
+    # Still alive a minute from now: every thread's stack, every minute, until the process exits
+    faulthandler.dump_traceback_later(60, repeat=True, file=sys.__stderr__)
