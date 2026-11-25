@@ -133,7 +133,7 @@ Overview (`widgets`: `overview`).
 
 ## Config store
 
-`CliDatabaseConfigStore(connection, table_prefix=None, schema=None, tables=None)` keeps the server's writable
+`CliDatabaseConfigStore(connection, table_prefix=None, schema=None, tables=None, database=None)` keeps the server's writable
 settings (config providers) in the table `QcliConfig`: one row per provider section (`Provider`, `Section`,
 `Version`, `Data` as JSON, `UpdatedAt`), a change in a transaction with the row locked (`FOR UPDATE` on PostgreSQL and
 MySQL, `UPDLOCK, HOLDLOCK` on SQL Server, `BEGIN IMMEDIATE` on SQLite), so servers sharing the database never lose a
@@ -144,6 +144,13 @@ add `store.migration_source` to a database of this plugin to see it there.
 store = CliDatabaseConfigStore(postgres_connection(pool))
 result = create_cli_server(CliServerOptions(config=CliServerConfigOptions(store=store)))
 ```
+
+`describe()` (the `store` of `GET /api/v1/qcli/config`, the dashboard's Config page and `config list`) names the
+dialect, the database and the table: `{"kind": "database", "title": "Database", "detail": "PostgreSQL database qcli,
+table QcliConfig", "persistent": true}`. The name comes from the driver (asyncpg's `database` or the last segment of
+its DSN, aiomysql's `db`, a SQLite file's name; `connection.database`) or the adapters' `database` argument
+(`mssql_connection(connect, database="qcli")`, whose connect function does not tell it), and `database=` of the store;
+never the user, password, host or a connection string: a name that looks like one is left out (`cli_database_name`).
 
 ## Helpers for store authors
 
