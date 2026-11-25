@@ -7,9 +7,12 @@ from __future__ import annotations
 __plugin_icon__ = "📚"
 
 from .cli_docs_builder import DEFAULT_BASE_PATH, CliDocsBuilder, CliDocsPlugin
+from .docs_command import CliDocsCommandProcessor, DocsModule
 from .pages import DocsPage, parse_page
 
 __all__ = [
+    "CliDocsCommandProcessor",
+    "DocsModule",
     "CliDocsBuilder",
     "CliDocsPlugin",
     "DEFAULT_BASE_PATH",
