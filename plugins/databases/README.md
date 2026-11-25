@@ -131,6 +131,20 @@ The page is `@qodalis/cli-dashboard-module-databases`. It is copied into the pac
 Overview (`widgets`: `overview`).
 `set_dashboard_dir(path)` serves another build, and `set_dashboard_dir(False)` leaves the page out.
 
+## Config store
+
+`CliDatabaseConfigStore(connection, table_prefix=None, schema=None, tables=None)` keeps the server's writable
+settings (config providers) in the table `QcliConfig`: one row per provider section (`Provider`, `Section`,
+`Version`, `Data` as JSON, `UpdatedAt`), a change in a transaction with the row locked (`FOR UPDATE` on PostgreSQL and
+MySQL, `UPDLOCK, HOLDLOCK` on SQL Server, `BEGIN IMMEDIATE` on SQLite), so servers sharing the database never lose a
+change and a stale version gets 409. The table is created by the migration source `qcli-config` before the first read;
+add `store.migration_source` to a database of this plugin to see it there.
+
+```python
+store = CliDatabaseConfigStore(postgres_connection(pool))
+result = create_cli_server(CliServerOptions(config=CliServerConfigOptions(store=store)))
+```
+
 ## Helpers for store authors
 
 `table_exists`, `column_exists`, `rename_table`, `rename_column` and `adopt_legacy_table(db, legacy, table, columns)`

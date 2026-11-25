@@ -90,6 +90,15 @@ The guards carry `qcli_permission` and `qcli_host_token_only`, read by the
 
 These two guards are the only places that accept [host tokens](#host-tokens): API tokens a host application issues for its own routes. `users_plugin.require_cli_auth` is `require_auth` that refuses them (`403 forbidden: host tokens cannot use CLI routes`); use it for routes of a CLI plugin of your own that you include by hand. The admin plugin's API uses it.
 
+## Config provider
+
+The plugin brings the `users` config provider (`config_providers`, registered by `mount_plugin`): `sessions`
+(`sessionTimeout`, `maxSessionLifetime`) and `security` (`maxLoginAttempts`, `lockout`, `minPasswordLength`) change
+at runtime (read on every sign-in, request and password change); `access` (protectServer, signIn,
+allowNonExpiringTokens, apiTokensWithExternalAuth, usersReadOnly, groupsReadOnly) is read-only. The server's live
+allowed origins (`result.allowed_origins`, changed by the `cors` provider) are used for the CSRF check unless
+`set_allowed_origins` set the plugin's own.
+
 ## Permissions
 
 Groups carry `permissions` (`resource:action` strings, `*` wildcards such as `users:*` or `*`, case-insensitive). A user's effective permissions are the union of its groups' permissions. Built-in permissions: `users:read|create|update|delete`, `groups:read|create|update|delete`, `sessions:read|revoke`, `audit:read|clear`, `tokens:read|revoke`, plus the server permissions below.
