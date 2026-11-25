@@ -21,6 +21,8 @@ from qodalis_cli_server_abstractions.config import (
     CliConfigSettingDefinition,
     CliConfigValidation,
     CliStoredConfigProvider,
+    InMemoryConfigStore,
+    JsonFileConfigStore,
     cli_config_context,
 )
 from qodalis_cli_server_abstractions.shell_words import split_shell_words
@@ -123,7 +125,9 @@ class TestConfigCommandOpenServer:
 
     def test_config_and_config_list_providers_and_sections(self, cli: Runner):
         text = cli.text("config list")
-        assert "server  Server" in text
+        assert text.split("\n")[0] == "Store: In memory, changes are lost on restart"
+        assert "server  Server  (read-only)" in text
+        assert "host  Host  (read-only; from Server options, Environment variables)" in text
         assert re.search(
             r"app {2}App\n {2}main +7 setting\(s\) {2}version 0\n {2}main\.extra +1 setting\(s\) {2}version 0", text,
         ), text
@@ -226,6 +230,27 @@ class TestConfigCommandOpenServer:
     def test_can_be_left_out_with_config_command_false(self):
         result = create_cli_server(CliServerOptions(config=CliServerConfigOptions(command=False)))
         assert result.registry.find_processor("config") is None
+
+
+class TestConfigListStore:
+    def test_a_json_file_outside_the_app_its_name_only_kept_across_restarts(self, tmp_path):
+        store = JsonFileConfigStore(tmp_path / "qcli-demo-config.json")
+        result = create_cli_server(CliServerOptions(config=CliServerConfigOptions(store=store)))
+        with TestClient(result.app) as client:
+            text = Runner(client, result).text("config list")
+        assert text.split("\n")[0] == "Store: JSON file (qcli-demo-config.json), kept across restarts"
+        assert str(tmp_path) not in text
+
+    def test_a_store_that_does_not_describe_itself_a_custom_store_named_after_its_class(self):
+        class VaultStore(InMemoryConfigStore):
+            source = "database"
+
+        store = VaultStore()
+        store.describe = None  # type: ignore[assignment,method-assign]
+        result = create_cli_server(CliServerOptions(config=CliServerConfigOptions(store=store)))
+        with TestClient(result.app) as client:
+            text = Runner(client, result).text("config list")
+        assert text.split("\n")[0] == "Store: Custom store (VaultStore), kept across restarts"
 
 
 # ---------------------------------------------------------------------------

@@ -88,9 +88,12 @@ class TestConfigMcpOpenServer:
             "config_list", "config_get", "config_set",
         ]
 
-    def test_config_list_providers_and_section_summaries(self, cli: Rpc):
+    def test_config_list_the_store_providers_with_their_storage_and_section_summaries(self, cli: Rpc):
         res = cli.call("config_list")
         assert res["result"]["isError"] is False
+        assert res["result"]["structuredContent"]["store"] == {
+            "kind": "memory", "title": "In memory", "detail": "", "persistent": False,
+        }
         providers = res["result"]["structuredContent"]["providers"]
         assert [p["id"] for p in providers] == ["server", "host", "cors", "mcp", "app", "custom"]
         assert next(p for p in providers if p["id"] == "app") == {
@@ -98,6 +101,7 @@ class TestConfigMcpOpenServer:
             "title": "App",
             "description": "",
             "writable": True,
+            "storage": {"kind": "store", "description": "Changes are saved to the config store", "sources": []},
             "sections": [{"id": "main", "title": "main", "mutable": True, "version": "0", "keys": 2}],
         }
 

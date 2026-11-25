@@ -22,14 +22,19 @@ from qodalis_cli_server_abstractions.config import (
     CliConfigConflictError,
     CliConfigStoredSection,
     ICliConfigStore,
+    CliConfigStoreDescription,
     InMemoryConfigStore,
     JsonFileConfigStore,
     apply_cli_config_changes,
+    describe_cli_config_store,
+    describe_cli_config_store_line,
 )
 from qodalis_cli_databases import (
     CliDatabaseConfigStore,
     CliMigrationDatabaseOptions,
     CliMigrationRunner,
+    cli_database_name,
+    postgres_connection,
     sqlite_connection,
 )
 
@@ -134,12 +139,62 @@ def test_in_memory_store_is_runtime_source():
     assert InMemoryConfigStore().source == "runtime"
 
 
+def test_in_memory_store_describes_itself_lost_on_restart():
+    assert InMemoryConfigStore().describe() == CliConfigStoreDescription("memory", "In memory", "", False)
+    assert InMemoryConfigStore().describe().to_dict() == {
+        "kind": "memory", "title": "In memory", "detail": "", "persistent": False,
+    }
+    line = describe_cli_config_store_line(describe_cli_config_store(InMemoryConfigStore()))
+    assert line == "In memory, changes are lost on restart"
+
+
+class TestDescribeCliConfigStore:
+    def test_without_describe_a_custom_store_named_after_its_class_persistent_unless_runtime(self):
+        class RedisConfigStore(InMemoryConfigStore):
+            source = "database"
+
+        redis = RedisConfigStore()
+        redis.describe = None  # type: ignore[assignment,method-assign]
+        assert describe_cli_config_store(redis) == CliConfigStoreDescription(
+            "custom", "Custom store", "RedisConfigStore", True,
+        )
+
+        class PlainStore(ICliConfigStore):
+            source = "runtime"
+
+            async def read(self, provider, section):
+                return CliConfigStoredSection()
+
+            async def write(self, provider, section, changes, expected_version=None):
+                return CliConfigStoredSection({}, 1)
+
+        assert describe_cli_config_store(PlainStore()) == CliConfigStoreDescription(
+            "custom", "Custom store", "PlainStore", False,
+        )
+
+    def test_a_custom_description_is_used_as_given(self):
+        class Redis(InMemoryConfigStore):
+            source = "database"
+
+            def describe(self):
+                return CliConfigStoreDescription(kind="database", title="Redis", detail="db 3", persistent=True)
+
+        assert describe_cli_config_store_line(describe_cli_config_store(Redis())) == "Redis (db 3), kept across restarts"
+
+
 # ---------------------------------------------------------------------------
 # JsonFileConfigStore
 # ---------------------------------------------------------------------------
 
 
 class TestJsonFileConfigStore:
+    def test_describes_itself_by_path_relative_to_the_app_or_file_name_outside_it(self, tmp_path):
+        assert JsonFileConfigStore(tmp_path / "qcli-demo-config.json").describe() == CliConfigStoreDescription(
+            "file", "JSON file", "qcli-demo-config.json", True,
+        )
+        assert JsonFileConfigStore(os.path.join(os.getcwd(), "data", "config.json")).describe().detail == "data/config.json"
+        assert JsonFileConfigStore("qcli-demo-config.json").describe().detail == "qcli-demo-config.json"
+
     async def test_file_source_persists_across_instances_in_documented_shape(self, tmp_path):
         file = tmp_path / "nested" / "config.json"
         store = JsonFileConfigStore(file)
@@ -231,7 +286,59 @@ def _tables(db: sqlite3.Connection) -> list[str]:
     return [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")]
 
 
+class _OfflinePool:
+    """An asyncpg pool's shape: the DSN it was created with; the database is offline here."""
+
+    def __init__(self, dsn: str) -> None:
+        self._connect_args = ()
+        self._connect_kwargs = {"dsn": dsn}
+
+    def acquire(self) -> Any:
+        raise RuntimeError("offline")
+
+
+class _OfflineConnection:
+    dialect = "mssql"
+
+    def session(self) -> Any:
+        raise RuntimeError("offline")
+
+
 class TestDatabaseConfigStore:
+    async def test_describes_itself_by_dialect_database_name_and_table_never_credentials(self):
+        db = memory_db()
+        memory = CliDatabaseConfigStore(sqlite_connection(db))
+        await memory.ready()
+        assert memory.describe() == CliConfigStoreDescription("database", "Database", "SQLite, table QcliConfig", True)
+        named = CliDatabaseConfigStore(sqlite_connection(db), database="/var/lib/app/qcli.db", table_prefix="App")
+        await named.ready()
+        assert named.describe().detail == "SQLite database qcli.db, table AppConfig"
+        db.close()
+
+        # PostgreSQL from a pool's connection string: the name only
+        connection = postgres_connection(_OfflinePool("postgresql://admin:s3cr3t@db.internal:5432/qcli?sslmode=require"))
+        assert connection.database == "qcli"
+        pg = CliDatabaseConfigStore(connection, schema="qcli")
+        described = pg.describe()
+        assert described.detail == "PostgreSQL database qcli, table qcli.QcliConfig"
+        for secret in ("s3cr3t", "admin", "db.internal", "5432"):
+            assert secret not in json.dumps(described.to_dict())
+        assert cli_database_name("Server=db;Database=qcli;User Id=sa;Password=s3cr3t") is None
+        assert cli_database_name("mysql://root:s3cr3t@localhost/shop") == "shop"
+        assert cli_database_name("orders") == "orders"
+        # A connection string given as the name is never shown
+        sql_server = CliDatabaseConfigStore(
+            _OfflineConnection(),  # type: ignore[arg-type]
+            database="Server=db;Database=qcli;User Id=sa;Password=s3cr3t",
+        )
+        assert sql_server.describe().detail == "SQL Server, table QcliConfig"
+
+    async def test_a_sqlite_file_is_described_by_its_name(self, tmp_path):
+        db = sqlite3.connect(tmp_path / "app.db", check_same_thread=False)
+        store = CliDatabaseConfigStore(sqlite_connection(db))
+        assert store.describe().detail == "SQLite database app.db, table QcliConfig"
+        db.close()
+
     async def test_database_source_creates_table_through_migration(self):
         db = memory_db()
         store = CliDatabaseConfigStore(sqlite_connection(db))
