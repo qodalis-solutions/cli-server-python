@@ -2,19 +2,18 @@
 off), the dashboard API, downloads from jsDelivr then unpkg checked against the marketplace's sha384 (a mismatch
 stores nothing), an unreachable marketplace, install / update / remove, live registration and serving at
 /qcli/modules/<id>/, persistence across a restart, id clashes, path-traversal-safe names, permissions on a protected
-server, audit and events, and the ``admin dashboard`` command.  A fake marketplace and CDN: no network."""
+server, audit and events, and the ``admin dashboard`` command.  A fake marketplace and CDN
+(dashboard_marketplace_helpers): no network."""
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import functools
-import hashlib
 import json
 import os
 import re
-from typing import Any, Optional
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from typing import Any
+from urllib.parse import parse_qs, quote, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,7 +23,6 @@ from qodalis_cli import create_cli_server
 from qodalis_cli_admin import (
     AdminBuildDeps,
     CliAdminBuilder,
-    DashboardMarketplaceOptions,
     MarketplaceResponse,
     compare_dashboard_plugin_versions,
     dashboard_plugin_dir_name,
@@ -34,224 +32,21 @@ from qodalis_cli_admin import (
     sha384_integrity,
 )
 
-from .command_helpers import ROOT_PASS, V1, add_users, protect, run_command
-
-MARKET = "https://market.test"
-API = f"{MARKET}/api/v1/qcli/marketplace"
-JSDELIVR = "https://cdn.jsdelivr.net/npm"
-UNPKG = "https://unpkg.com"
-BASE = f"{V1}/dashboard/marketplace"
-TICKETS = "@acme/cli-dashboard-tickets"
-JOBS = "@qodalis/cli-dashboard-module-jobs"
-_UNSET: Any = object()
-
-
-def integrity_of(text: str) -> str:
-    return "sha384-" + base64.b64encode(hashlib.sha384(text.encode()).digest()).decode()
-
-
-def response(status: int, body: Any) -> MarketplaceResponse:
-    data = body.encode() if isinstance(body, str) else json.dumps(body).encode()
-    return MarketplaceResponse(status, data, {"content-length": str(len(data))})
-
-
-class FakeNet:
-    """The marketplace's public API and the two CDNs, in memory."""
-
-    def __init__(self) -> None:
-        self.plugins: dict[str, dict[str, Any]] = {}
-        self.files: dict[str, str] = {}
-        self.calls: list[str] = []
-        self.marketplace_down = False
-        #: Answer details without ``files`` (an older marketplace): the version record has them.
-        self.files_only_in_version_record = False
-        #: Ignore the ``kind`` filter (the marketplace before dashboard plugins): every plugin listed and counted.
-        self.ignores_kind = False
-
-    async def fetch(self, url: str, headers: Any, timeout: float) -> MarketplaceResponse:
-        self.calls.append(url)
-        if url.startswith(MARKET):
-            if self.marketplace_down:
-                raise ConnectionError("fetch failed")
-            return self._marketplace(url)
-        body = self.files.get(url)
-        return response(404, {"error": "not found"}) if body is None else response(200, body)
-
-    def publish(
-        self, name: str, versions: list[dict[str, Any]], *, verified: bool = True, kind: str = "dashboard",
-        title: Optional[str] = None, icon: Optional[str] = None, server_packages: Any = None,
-        extension_id: Optional[str] = None,
-    ) -> None:
-        records = []
-        for v in versions:
-            js = v.get("js") or f"export default {{ id: '{name}', version: '{v['version']}' }};"
-            css = v.get("css", _UNSET)
-            if css is _UNSET:
-                css = f".x-{re.sub(r'[^A-Za-z0-9_]', '', v['version'])} {{ color: red; }}"
-            files = [{"path": "dist/extension.js", "integrity": integrity_of(js), "size": len(js.encode())}]
-            if css is not None:
-                files.append({"path": "dist/extension.css", "integrity": integrity_of(css), "size": len(css.encode())})
-
-            def put(cdn: str, path: str, published: str, served: Any) -> None:
-                if served is None:
-                    return
-                self.files[f"{cdn}/{name}@{v['version']}/{path}"] = published if served is _UNSET else served
-
-            put(JSDELIVR, "dist/extension.js", js, v.get("jsdelivr", _UNSET))
-            put(UNPKG, "dist/extension.js", js, v.get("unpkg", _UNSET))
-            if css is not None:
-                put(JSDELIVR, "dist/extension.css", css, None if v.get("jsdelivr", _UNSET) is None else _UNSET)
-                put(UNPKG, "dist/extension.css", css, _UNSET)
-            record = {
-                "version": v["version"], "status": v.get("status", "listed"), "kind": kind, "files": files,
-                "dashboardApi": v.get("dashboardApi", 1), "publishedAt": "2026-11-20T10:00:00.000Z",
-            }
-            if server_packages:
-                record["serverPackages"] = server_packages
-            records.append(record)
-        listed = sorted(
-            (r["version"] for r in records if r["status"] == "listed"),
-            key=functools.cmp_to_key(compare_dashboard_plugin_versions),
-        )
-        latest = listed[-1] if listed else None
-        scope = name[: name.index("/")] if name.startswith("@") else name
-        plugin: dict[str, Any] = {
-            "name": name, "shortName": name.split("/")[-1], "description": f"The {name} page", "kind": kind,
-        }
-        if title:
-            plugin["title"] = title
-        if icon:
-            plugin["icon"] = icon
-        plugin["publisher"] = {"id": scope.lstrip("@"), "name": scope, "verified": verified}
-        plugin["latest"] = latest
-        plugin["version"] = latest
-        plugin["dashboardApi"] = next((r["dashboardApi"] for r in records if r["version"] == latest), 1)
-        if server_packages:
-            plugin["serverPackages"] = server_packages
-        if extension_id:
-            plugin["extension"] = {"id": extension_id}
-        plugin["versions"] = records
-        self.plugins[name] = plugin
-
-    def _marketplace(self, url: str) -> MarketplaceResponse:
-        parts = urlsplit(url)
-        path = parts.path[len("/api/v1/qcli/marketplace"):]
-        query = {k: v[0] for k, v in parse_qs(parts.query).items()}
-        if path == "/plugins":
-            text = query.get("query", "").lower()
-            kind = query.get("kind")
-            items = [
-                {k: v for k, v in p.items() if k not in ("versions", "extension")}
-                for p in self.plugins.values()
-                if (not kind or self.ignores_kind or p["kind"] == kind) and text in p["name"]
-            ]
-            return response(200, {
-                "items": items, "total": len(items), "page": int(query.get("page", 1)), "pageSize": int(query.get("pageSize", 24)),
-            })
-        m = re.fullmatch(r"/plugins/(.+?)(?:/versions/([^/]+))?", path)
-        if m:
-            plugin = self.plugins.get(unquote(m.group(1)))
-            if not plugin:
-                return response(404, {"error": "plugin not found"})
-            if m.group(2):
-                v = next((x for x in plugin["versions"] if x["version"] == unquote(m.group(2))), None)
-                return response(200, v) if v else response(404, {"error": "version not found"})
-            if self.files_only_in_version_record:
-                return response(200, {
-                    **plugin, "versions": [{k: x for k, x in v.items() if k != "files"} for v in plugin["versions"]],
-                })
-            return response(200, plugin)
-        return response(404, {"error": "not found"})
-
-
-class Host:
-    """A server with the admin plugin (password sign-in, or the users plugin) and the fake marketplace."""
-
-    def __init__(
-        self, tmp_path: Any, *, net: Optional[FakeNet] = None, dir: Optional[str] = None, install: Optional[str] = None,
-        configure: Any = None, users: Optional[dict[str, list[str]]] = None,
-    ) -> None:
-        self.net = net or FakeNet()
-        self.dir = dir or str(tmp_path / f"plugins-{id(self)}")
-        os.makedirs(self.dir, exist_ok=True)
-        self.result = create_cli_server()
-        self.audit: list[Any] = []
-        self.events: list[Any] = []
-        if users is None:
-            audit = self.audit
-
-            class _Store:
-                async def log(self, entry: Any) -> None:
-                    audit.append(entry)
-
-            self.result.builder.set_config_audit_store(_Store())
-        self.result.event_bus.subscribe("dashboard:*", self.events.append)
-        if configure:
-            configure(self.result)
-        self.users = protect(self.result) if users is not None else None
-        builder = CliAdminBuilder().set_marketplace(
-            DashboardMarketplaceOptions(url=MARKET, dir=self.dir, fetch=self.net.fetch, install=install),
-        )
-        if self.users is not None:
-            builder.set_users_plugin(self.users).set_jwt_secret("marketplace-test-secret-0123456789abcdef")
-        else:
-            builder.set_credentials("admin", "pass").set_jwt_secret("marketplace-test-secret-0123456789abcdef")
-        self.admin = builder.build(AdminBuildDeps(
-            registry=self.result.registry, event_socket_manager=self.result.event_socket_manager, builder=self.result.builder,
-        ))
-        self.admin.log_buffer.uninstall_handler()
-        self.result.mount_plugin(self.admin)
-        self.client = TestClient(self.result.app)
-        if users is not None:
-            self.tokens = add_users(self.client, users)
-            self.token = self.tokens["root"]
-        else:
-            self.tokens = {}
-            res = self.client.post(f"{V1}/auth/login", json={"username": "admin", "password": "pass"})
-            self.token = res.json()["token"]
-
-    def auth(self, user: Optional[str] = None) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.tokens[user] if user else self.token}"}
-
-    def get(self, path: str, user: Optional[str] = None) -> Any:
-        return self.client.get(path, headers=self.auth(user))
-
-    def post(self, body: dict[str, Any], user: Optional[str] = None) -> Any:
-        return self.client.post(f"{BASE}/installed", headers=self.auth(user), json=body)
-
-    def put(self, name: str, body: dict[str, Any], user: Optional[str] = None) -> Any:
-        return self.client.put(f"{BASE}/installed/{name}", headers=self.auth(user), json=body)
-
-    def delete(self, name: str, user: Optional[str] = None) -> Any:
-        return self.client.delete(f"{BASE}/installed/{name}", headers=self.auth(user))
-
-    def extensions(self) -> list[dict[str, Any]]:
-        return self.get(f"{V1}/dashboard/extensions").json()["extensions"]
-
-    def run(self, line: str, user: Optional[str] = None) -> Any:
-        return run_command(self.client, self.result, line, self.tokens[user] if user else None)
-
-    def close(self) -> None:
-        self.admin.log_buffer.uninstall_handler()
-
-
-@pytest.fixture
-def start(tmp_path: Any):
-    hosts: list[Host] = []
-
-    def make(**kwargs: Any) -> Host:
-        host = Host(tmp_path, **kwargs)
-        hosts.append(host)
-        return host
-
-    yield make
-    for h in hosts:
-        h.close()
-
-
-def non_market(calls: list[str]) -> list[str]:
-    return [c for c in calls if not c.startswith(MARKET)]
-
+from .command_helpers import V1
+from .dashboard_marketplace_helpers import (  # noqa: F401 - start is a fixture
+    API,
+    BASE,
+    JOBS,
+    JSDELIVR,
+    MARKET,
+    TICKETS,
+    UNPKG,
+    FakeNet,
+    integrity_of,
+    non_market,
+    response,
+    start,
+)
 
 # --------------------------------------------------------------------------- helpers
 
@@ -431,7 +226,7 @@ def test_installs_the_newest_fitting_version_stored_registered_live_and_served(s
     assert res.status_code == 201
     body = res.json()
     assert body == {"name": JOBS, "version": "1.1.0", "title": "Jobs", "icon": "⏱️", "id": "jobs",
-                    "installedAt": body["installedAt"], "installedBy": "admin"}
+                    "installedAt": body["installedAt"], "installedBy": "admin", "hasConfig": False}
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", body["installedAt"])
 
     # stored: <dir>/<safe-name>/<version>/{extension.js,extension.css} and installed.json, no staging leftovers
@@ -714,7 +509,7 @@ def test_reloads_installed_plugins_on_start_offline_and_serves_them_again(start)
     # installed still listed; updateAvailable left out while the marketplace is unreachable
     installed = second.get(f"{BASE}/installed").json()
     assert installed == [{"name": TICKETS, "version": "1.0.0", "title": "Tickets", "icon": "🎫", "id": "tickets",
-                          "installedAt": installed[0]["installedAt"], "installedBy": "admin"}]
+                          "installedAt": installed[0]["installedAt"], "installedBy": "admin", "hasConfig": False}]
     # and removable without the marketplace
     assert second.delete(TICKETS).status_code == 200
     assert non_market(offline.calls) == []
@@ -841,7 +636,7 @@ def test_the_command_install_update_remove_need_dashboard_install_list_and_searc
     h.net.publish(TICKETS, [{"version": "1.0.0"}])
     dashboard = next(p for p in h.result.registry.find_processor("admin").processors if p.command == "dashboard")
     assert {p.command: p.required_permissions for p in dashboard.processors} == {
-        "list": None, "search": None, "install": ["dashboard:install"], "update": ["dashboard:install"], "remove": ["dashboard:install"],
+        "list": None, "search": None, "info": None, "install": ["dashboard:install"], "update": ["dashboard:install"], "remove": ["dashboard:install"],
     }
     assert h.run("admin dashboard search", "viewer").status == 200
     assert h.run(f"admin dashboard install {TICKETS}", "viewer").status == 403
