@@ -11,7 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from qodalis_cli import CliEchoCommandProcessor, CliServerOptions, create_cli_server
+from qodalis_cli import CliServerOptions, create_cli_server
+from .demo_processors import CliEchoCommandProcessor
 from qodalis_cli.abstractions import CliCommandProcessor
 from qodalis_cli_users import CliUsersBuilder, InMemoryApiTokenStore
 from qodalis_cli_users.models import ApiToken, now_ms

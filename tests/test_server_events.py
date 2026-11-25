@@ -13,7 +13,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from qodalis_cli import (
-    CliEchoCommandProcessor,
     CliEvent,
     CliEventAudience,
     CliEventBus,
@@ -23,6 +22,7 @@ from qodalis_cli import (
     cli_event_pattern_matches,
     create_cli_server,
 )
+from .demo_processors import CliEchoCommandProcessor
 from qodalis_cli.filesystem.event_publishing_provider import EventPublishingFileStorageProvider
 from qodalis_cli_audit import AuditEntry, CliAuditBuilder
 from qodalis_cli_jobs import CliJobScheduler, CliJobsBuilder, InMemoryJobStorageProvider

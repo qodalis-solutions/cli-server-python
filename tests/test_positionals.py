@@ -18,9 +18,7 @@ from qodalis_cli.abstractions import (
 )
 from qodalis_cli.controllers.cli_controller import ExecuteRequest
 from qodalis_cli.mcp.commands import _raw_command, quote_shell_word
-from qodalis_cli.processors.cli_base64_command_processor import CliBase64CommandProcessor
-from qodalis_cli.processors.cli_echo_command_processor import CliEchoCommandProcessor
-from qodalis_cli.processors.cli_hash_command_processor import CliHashCommandProcessor
+from .demo_processors import CliBase64CommandProcessor, CliEchoCommandProcessor, CliHashCommandProcessor
 from qodalis_cli.processors.cli_http_command_processor import _url
 from qodalis_cli_weather.weather_module import _get_location
 

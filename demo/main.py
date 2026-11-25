@@ -34,10 +34,7 @@ from qodalis_cli import (
     CliServerOptions,
     CliShellOptions,
     create_cli_server,
-    CliSystemCommandProcessor,
     CliHttpCommandProcessor,
-    CliHashCommandProcessor,
-    CliBase64CommandProcessor,
     FileSystemOptions,
     InMemoryFileStorageProvider,
     OsFileStorageProvider,
@@ -61,13 +58,7 @@ from qodalis_cli_public_api import CliPublicApiBuilder, PublicApiQuota
 from qodalis_cli_docs import CliDocsBuilder
 from qodalis_cli_portal import CliPortalBuilder
 
-from processors import (
-    CliEchoCommandProcessor,
-    CliHelloCommandProcessor,
-    CliMathCommandProcessor,
-    CliStatusCommandProcessor,
-    CliTimeCommandProcessor,
-)
+from demo_module import DemoModule
 
 from plugins.weather import WeatherModule
 from plugins.aws.qodalis_cli_aws import AwsModule
@@ -171,15 +162,8 @@ def create_demo_server():  # noqa: ANN201
         ])
         builder.add_config_provider(demo_config)
         builder \
-            .add_processor(CliEchoCommandProcessor()) \
-            .add_processor(CliStatusCommandProcessor()) \
-            .add_processor(CliTimeCommandProcessor()) \
-            .add_processor(CliHelloCommandProcessor()) \
-            .add_processor(CliMathCommandProcessor()) \
-            .add_processor(CliSystemCommandProcessor()) \
+            .add_module(DemoModule()) \
             .add_processor(CliHttpCommandProcessor()) \
-            .add_processor(CliHashCommandProcessor()) \
-            .add_processor(CliBase64CommandProcessor()) \
             .add_module(WeatherModule()) \
             .add_module(AwsModule()) \
             .add_data_explorer_provider(

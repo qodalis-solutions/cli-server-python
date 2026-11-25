@@ -2,7 +2,7 @@ import asyncio
 import platform
 import sys
 
-from qodalis_cli import CliCommandProcessor, CliProcessCommand
+from qodalis_cli import CliCommandExample, CliCommandProcessor, CliProcessCommand
 
 
 class CliStatusCommandProcessor(CliCommandProcessor):
@@ -13,6 +13,16 @@ class CliStatusCommandProcessor(CliCommandProcessor):
     @property
     def description(self) -> str:
         return "Shows server status information"
+
+    @property
+    def examples(self) -> list[CliCommandExample]:
+        return [
+            CliCommandExample("status", "Uptime, version and state of the server"),
+        ]
+
+    @property
+    def documentation(self) -> str:
+        return "Shows how long the server has been running, its version and its current state."
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         return (

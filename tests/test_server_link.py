@@ -10,7 +10,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from qodalis_cli import CliEchoCommandProcessor, CliServerOptions, create_cli_server
+from qodalis_cli import CliServerOptions, create_cli_server
+from .demo_processors import CliEchoCommandProcessor
 from qodalis_cli_users import CliUsersBuilder
 from qodalis_cli_users.errors import UsersApiError
 from qodalis_cli_users.services.link_service import (

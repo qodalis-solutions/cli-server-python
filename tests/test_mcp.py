@@ -913,7 +913,7 @@ class TestWithUsersPlugin:
 
 class TestBuiltInProcessors:
     def test_builtin_value_and_parameters(self):
-        from qodalis_cli import CliBase64CommandProcessor, CliEchoCommandProcessor, CliHashCommandProcessor
+        from .demo_processors import CliBase64CommandProcessor, CliEchoCommandProcessor, CliHashCommandProcessor
 
         result = create_cli_server(CliServerOptions(mcp=True, configure=lambda b: (
             b.add_processor(CliEchoCommandProcessor()),
