@@ -25,10 +25,13 @@ from .commands.admin_command import (
     CliAdminCommandProcessor,
     format_duration,
     format_log_line,
+    format_memory_line,
+    format_memory_size,
     format_table,
 )
 from .controllers.status_controller import status_snapshot
 from .services.status_history import summarize_status_history
+from .services.system_memory import SystemMemoryReaders, read_system_memory
 from .services.time_range import parse_since
 from .services.log_ring_buffer import LogRingBuffer
 from .services.module_registry import ModuleRegistry
@@ -41,7 +44,11 @@ __all__ = [
     "CliAdminCommandProcessor",
     "format_duration",
     "format_log_line",
+    "format_memory_line",
+    "format_memory_size",
     "format_table",
+    "read_system_memory",
+    "SystemMemoryReaders",
     "status_snapshot",
     "summarize_status_history",
     "parse_since",

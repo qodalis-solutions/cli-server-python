@@ -114,6 +114,39 @@ def _mb(n: Any) -> str:
     return f"{_num(n)} MB"
 
 
+def _round_half_up(n: float) -> int:
+    """Rounds as JavaScript's ``Math.round`` (0.5 up), so the servers print the same."""
+    return int(math.floor(n + 0.5))
+
+
+def format_memory_size(megabytes: float) -> str:
+    """512 -> ``512 MB``; from 1024 MB in GB with one decimal: 16384 -> ``16 GB``, 10035 -> ``9.8 GB``."""
+    if megabytes < 1024:
+        return f"{_round_half_up(megabytes)} MB"
+    return f"{_num(_round_half_up(megabytes / 1024 * 10) / 10)} GB"
+
+
+def format_memory_line(status: dict[str, Any]) -> str:
+    """The Memory line of ``admin status``: the process, then the machine's (or
+    the container's) use of the RAM the server can use:
+    ``146 MB (process) · machine 9.8 GB of 16 GB used (61%)``,
+    ``... · container 300 MB of 512 MB used (59%)``. Only the process memory
+    when the total is unknown; the total alone when the use is."""
+    process = _mb(status["memoryUsageMb"])
+    total = status.get("systemMemoryTotalMb")
+    if not isinstance(total, (int, float)) or total <= 0:
+        return process
+    limited = bool(status.get("memoryLimited"))
+    scope = "container" if limited else "machine"
+    used = status.get("systemMemoryUsedMb")
+    if not isinstance(used, (int, float)):
+        system = f"{scope}{' limit' if limited else ''} {format_memory_size(total)}"
+    else:
+        percent = _round_half_up(used / total * 100)
+        system = f"{scope} {format_memory_size(used)} of {format_memory_size(total)} used ({percent}%)"
+    return f"{process} (process) · {system}"
+
+
 class AdminStatusProcessor(CliCommandProcessor):
     command = "status"
     description = (
@@ -157,7 +190,7 @@ class AdminStatusProcessor(CliCommandProcessor):
             ("Server", f"{server.id}{' ' + server.version if server.version else ''}" if server is not None else "unknown"),
             ("Platform", f"{status['platform']} {status['platformVersion']} ({status['os']})"),
             ("Uptime", f"{format_duration(status['uptimeSeconds'])} (since {short_time(status['startedAt'])})"),
-            ("Memory", _mb(status["memoryUsageMb"])),
+            ("Memory", format_memory_line(status)),
             ("CPU", "n/a" if cpu is None else _pct(cpu)),
             ("Connections", f"{status['activeWsConnections']} WebSocket, {status['activeShellSessions']} shell"),
             ("Commands", str(status["registeredCommands"])),

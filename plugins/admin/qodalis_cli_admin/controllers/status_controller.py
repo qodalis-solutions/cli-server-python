@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 
 from ..services.status_history import StatusHistory, memory_usage_mb
+from ..services.system_memory import read_system_memory
 
 #: ``GET /status/history``: default and longest window in minutes.
 DEFAULT_HISTORY_MINUTES = 60
@@ -26,11 +27,13 @@ def status_snapshot(
     status_history: StatusHistory | None = None,
 ) -> dict[str, Any]:
     """The server status now (``GET /status`` and ``admin status``): process
-    metrics, the latest CPU sample and the counts."""
+    metrics, the machine's (or container's) memory, the latest CPU sample and
+    the counts."""
     latest = status_history.samples[-1] if status_history is not None and status_history.samples else None
     return {
         "uptimeSeconds": time.time() - start_time,
         "memoryUsageMb": memory_usage_mb(),
+        **read_system_memory(),
         "cpuUsagePercent": latest.get("cpuPercent") if latest is not None else None,
         "startedAt": datetime.fromtimestamp(start_time, tz=timezone.utc).isoformat(),
         "platform": "python",
