@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from qodalis_cli_server_abstractions.config import (
     CliConfigEntry,
+    CliConfigProviderStorage,
     CliConfigSection,
     CliConfigSectionDefinition,
     CliConfigSettingDefinition,
@@ -32,6 +33,7 @@ class AdminAuthConfigProvider(ICliConfigProvider):
     title = "Authentication"
     description = "How the admin dashboard signs users in (read-only)"
     order = 10
+    storage = CliConfigProviderStorage(kind="options", description="Read from the admin plugin's options", sources=[])
 
     def __init__(self, config: AdminConfig, mode: Callable[[], str]) -> None:
         self._config = config

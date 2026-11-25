@@ -8,7 +8,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from qodalis_cli_server_abstractions.config import CliConfigEntry, CliConfigSection, ICliConfigProvider
+from qodalis_cli_server_abstractions.config import (
+    CliConfigEntry,
+    CliConfigProviderStorage,
+    CliConfigSection,
+    ICliConfigProvider,
+)
 
 
 #: The environment variables the ``host`` provider shows by default: the
@@ -92,6 +97,11 @@ class CliHostConfigProvider(ICliConfigProvider):
     title = "Host"
     description = "Server options and environment variables (read-only, secrets masked)"
     order = 20
+    storage = CliConfigProviderStorage(
+        kind="options",
+        description="Server options and environment variables",
+        sources=["Server options", "Environment variables"],
+    )
 
     def __init__(
         self,

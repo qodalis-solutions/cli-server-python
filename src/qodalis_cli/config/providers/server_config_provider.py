@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from qodalis_cli_server_abstractions.config import (
     CliConfigEntry,
+    CliConfigProviderStorage,
     CliConfigSection,
     ICliConfigProvider,
     format_cli_config_duration,
@@ -26,6 +27,7 @@ class CliServerConfigProvider(ICliConfigProvider):
     title = "Server"
     description = "The server process (read-only)"
     order = 0
+    storage = CliConfigProviderStorage(kind="runtime", description="Read from the running server process", sources=[])
 
     def __init__(self, version: str) -> None:
         self.version = version

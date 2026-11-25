@@ -78,7 +78,8 @@ def create_config_router(get_service: Callable[[], Any], auth_dependency: Any) -
         if service is None:
             return unavailable()
         try:
-            return JSONResponse({"providers": await service.list(config_context_of(request, user))}, headers=_NO_STORE)
+            providers = await service.list(config_context_of(request, user))
+            return JSONResponse({"store": service.describe_store().to_dict(), "providers": providers}, headers=_NO_STORE)
         except Exception as exc:  # noqa: BLE001
             return _error(exc)
 
