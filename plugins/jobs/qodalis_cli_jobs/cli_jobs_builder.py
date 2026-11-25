@@ -75,6 +75,15 @@ class CliJobsBuilder:
         self._storage_provider: ICliJobStorageProvider | None = None
         self._history_retention: JobHistoryRetention | None = None
         self._dashboard_dir: str | bool | None = None
+        self._config_store: Any = None
+
+    def set_config_store(self, store: Any) -> CliJobsBuilder:
+        """Keeps the ``jobs`` config provider's changes in ``store`` (its own
+        store) instead of the server's default one; the host's store for the
+        provider's id (``config stores={...}``,
+        ``builder.set_config_store(store, id)``) still wins."""
+        self._config_store = store
+        return self
 
     def set_dashboard_dir(self, directory: str | bool) -> CliJobsBuilder:
         """Where the dashboard's Jobs page is (``@qodalis/cli-dashboard-module-jobs``'s build); by default the
@@ -135,5 +144,5 @@ class CliJobsBuilder:
         return CliJobsPlugin(
             prefix="/api/v1/qcli/jobs", router=router, scheduler=scheduler,
             dashboard_pages=[page] if page else [],
-            config_providers=[create_jobs_config_provider(scheduler)],
+            config_providers=[create_jobs_config_provider(scheduler).set_store(self._config_store)],
         )

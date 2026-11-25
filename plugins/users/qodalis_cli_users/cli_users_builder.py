@@ -540,6 +540,15 @@ class CliUsersBuilder:
         self._guard_only = False
         self._dashboard_dir: str | bool | None = None
         self._users_dashboard_dir: str | bool | None = None
+        self._config_store: Any = None
+
+    def set_config_store(self, store: Any) -> CliUsersBuilder:
+        """Keeps the ``users`` config provider's changes in ``store`` (its own
+        store) instead of the server's default one; the host's store for the
+        provider's id (``config stores={...}``,
+        ``builder.set_config_store(store, id)``) still wins."""
+        self._config_store = store
+        return self
 
     def set_user_store(self, store: IUserStore) -> CliUsersBuilder:
         self._user_store = store
@@ -789,7 +798,7 @@ class CliUsersBuilder:
                 api_tokens_with_external_auth=self._allow_api_tokens,
                 users_read_only=self._read_only_users,
                 groups_read_only=self._read_only_groups,
-            ))],
+            )).set_store(self._config_store)],
         )
         if not self._guard_only:
             package_dir = os.path.dirname(os.path.abspath(__file__))

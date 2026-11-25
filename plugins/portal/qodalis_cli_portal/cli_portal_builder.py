@@ -165,6 +165,15 @@ class CliPortalBuilder:
         self._links: list[tuple[Any, Any]] = []
         self._sections: list[Any] = []
         self._site_dir: str | None = None
+        self._config_store: Any = None
+
+    def set_config_store(self, store: Any) -> CliPortalBuilder:
+        """Keeps the ``portal`` config provider's changes in ``store`` (its own
+        store) instead of the server's default one; the host's store for the
+        provider's id (``config stores={...}``,
+        ``builder.set_config_store(store, id)``) still wins."""
+        self._config_store = store
+        return self
 
     def set_path(self, path: str) -> CliPortalBuilder:
         """The mount (default ``/qcli/portal``; ``/`` allowed)."""
@@ -255,7 +264,7 @@ class CliPortalBuilder:
                     path=path, site_found=site_dir is not None,
                     sections=[s.get("kind") for s, _ in self._sections],
                 ),
-            ),
+            ).set_store(self._config_store),
         ]
         plugin.module = PortalModule(CliPortalCommandProcessor(plugin.status), _package_version())
         if site_dir is None:
