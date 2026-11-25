@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..permissions import AWS_WRITE
+
 import asyncio
 
 from typing import Any
@@ -162,6 +164,8 @@ class _Ec2StartProcessor(CliCommandProcessor):
         super().__init__()
         self._credential_manager = credential_manager
 
+    required_permissions = [AWS_WRITE]
+
     @property
     def command(self) -> str:
         return "start"
@@ -205,6 +209,8 @@ class _Ec2StopProcessor(CliCommandProcessor):
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
+
+    required_permissions = [AWS_WRITE]
 
     @property
     def command(self) -> str:
@@ -253,6 +259,8 @@ class _Ec2RebootProcessor(CliCommandProcessor):
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
+
+    required_permissions = [AWS_WRITE]
 
     @property
     def command(self) -> str:

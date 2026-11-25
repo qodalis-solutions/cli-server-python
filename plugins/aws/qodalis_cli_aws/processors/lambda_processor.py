@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..permissions import AWS_WRITE
+
 import asyncio
 
 import json
@@ -84,6 +86,8 @@ class _LambdaInvokeProcessor(CliCommandProcessor):
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
+
+    required_permissions = [AWS_WRITE]
 
     @property
     def command(self) -> str:

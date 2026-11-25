@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..permissions import AWS_WRITE
+
 import asyncio
 
 import re
@@ -152,6 +154,8 @@ class _S3CpProcessor(CliCommandProcessor):
         super().__init__()
         self._credential_manager = credential_manager
 
+    required_permissions = [AWS_WRITE]
+
     @property
     def command(self) -> str:
         return "cp"
@@ -214,6 +218,8 @@ class _S3RmProcessor(CliCommandProcessor):
         super().__init__()
         self._credential_manager = credential_manager
 
+    required_permissions = [AWS_WRITE]
+
     @property
     def command(self) -> str:
         return "rm"
@@ -266,6 +272,8 @@ class _S3MbProcessor(CliCommandProcessor):
         super().__init__()
         self._credential_manager = credential_manager
 
+    required_permissions = [AWS_WRITE]
+
     @property
     def command(self) -> str:
         return "mb"
@@ -309,6 +317,8 @@ class _S3RbProcessor(CliCommandProcessor):
     def __init__(self, credential_manager: AwsCredentialManager) -> None:
         super().__init__()
         self._credential_manager = credential_manager
+
+    required_permissions = [AWS_WRITE]
 
     @property
     def command(self) -> str:

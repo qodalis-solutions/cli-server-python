@@ -3,6 +3,7 @@ terminal sends it, and protect a server with users holding chosen permissions.""
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -67,7 +68,10 @@ def run_command(client: TestClient, result: Any, line: str, token: str | None = 
     except ValueError:
         data = None
     outputs = data.get("outputs") if isinstance(data, dict) else None
-    text = "\n".join(o["value"] if isinstance(o.get("value"), str) else str(o.get("value")) for o in outputs or [])
+    text = "\n".join(
+        o["value"] if isinstance(o.get("value"), str) else json.dumps(o["value"] if "value" in o else o)
+        for o in outputs or []
+    )
     return CommandResult(res.status_code, text, data.get("exitCode") if isinstance(data, dict) else None, data)
 
 
