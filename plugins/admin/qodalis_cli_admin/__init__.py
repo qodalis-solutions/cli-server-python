@@ -62,6 +62,21 @@ from .services.dashboard_marketplace import (
     sha384_integrity,
 )
 from .controllers.dashboard_marketplace_controller import create_dashboard_marketplace_router
+from .controllers.server_marketplace_controller import create_server_marketplace_router
+from .services.server_plugin_marketplace import (
+    DEFAULT_PYPI_URL,
+    PLUGINS_INSTALL_PERMISSION,
+    SERVER_PLUGINS_CHANGED_EVENT,
+    SERVER_PLUGIN_PLATFORM,
+    PipRunResult,
+    ServerPluginMarketplace,
+    ServerPluginMarketplaceDeps,
+    ServerPluginMarketplaceOptions,
+    default_pip_runner,
+    read_wheel,
+    satisfies_server_range,
+    sha256_integrity,
+)
 from .services.dashboard_plugin_config import (
     DASHBOARD_PLUGINS_CONFIG_PROVIDER_ID,
     DASHBOARD_PLUGIN_CONFIG_KEY,
@@ -111,6 +126,19 @@ __all__ = [
     "python_server_package",
     "sha384_integrity",
     "create_dashboard_marketplace_router",
+    "create_server_marketplace_router",
+    "DEFAULT_PYPI_URL",
+    "PLUGINS_INSTALL_PERMISSION",
+    "SERVER_PLUGINS_CHANGED_EVENT",
+    "SERVER_PLUGIN_PLATFORM",
+    "PipRunResult",
+    "ServerPluginMarketplace",
+    "ServerPluginMarketplaceDeps",
+    "ServerPluginMarketplaceOptions",
+    "default_pip_runner",
+    "read_wheel",
+    "satisfies_server_range",
+    "sha256_integrity",
     "ADMIN_MODULE_NAME",
     "LOGS_READ_PERMISSION",
     "AdminCommandDeps",
