@@ -11,14 +11,24 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 from qodalis_cli_server_abstractions.config import CliConfigEntry, CliConfigSection, ICliConfigProvider
 
 
+#: The environment variables the ``host`` provider shows by default: the
+#: server's own (``QCLI_*``) and a few harmless ones.  Everything else (PATH,
+#: session ids, socket paths, cloud credentials, ...) stays out unless allowed.
+DEFAULT_ENVIRONMENT_ALLOW: tuple[str, ...] = ("QCLI_*", "PYTHON_ENV", "ENVIRONMENT", "PORT", "HOST", "TZ", "LANG")
+
+
 @dataclass
 class CliHostEnvironmentOptions:
     """Which environment variables the ``host`` provider shows
     (``CliServerOptions.config.environment``)."""
 
-    #: Names to show; ``*`` matches any run of characters (default every variable).
-    include: list[str] = field(default_factory=lambda: ["*"])
-    #: Names to leave out, applied after ``include`` (default none).
+    #: Further names to show, besides :data:`DEFAULT_ENVIRONMENT_ALLOW`; ``*`` matches any run of characters.
+    allow: list[str] = field(default_factory=list)
+    #: Names to show instead of the default list (and ``allow``): replaces it
+    #: entirely, so ``["*"]`` shows every variable.  Values that look secret
+    #: are masked either way.
+    include: Optional[list[str]] = None
+    #: Names to leave out, applied after the names shown (default none).
     exclude: list[str] = field(default_factory=list)
     #: Further names whose values are secrets (masked), besides the built-in rule.
     secrets: list[str] = field(default_factory=list)
@@ -34,12 +44,13 @@ class CliHostOption:
     description: Optional[str] = None
 
 
-#: Names treated as secrets: anything with SECRET, PASSWORD/PASSWD/PWD_,
-#: TOKEN, KEY (API_KEY, _KEY, KEY_), PRIVATE, CREDENTIAL, AUTH, DSN,
-#: CONNECTION STRING, COOKIE, SALT, SIGNATURE or CERT in it.
+#: Names treated as secrets: anything with SECRET, PASS (PASSWORD, PASSWD,
+#: PASSPHRASE), PWD_, TOKEN, KEY, SESSION, CREDENTIAL, AUTH, PRIVATE, CONN
+#: (CONNECTION, CONNSTR), DSN, COOKIE, SALT, SIGNATURE or CERT in it, anywhere
+#: and in any case.  Broad on purpose: a harmless variable masked costs less
+#: than a secret shown.
 _SECRET_NAME = re.compile(
-    r"(SECRET|PASSWORD|PASSWD|PWD_|TOKEN|APIKEY|API_KEY|(^|_)KEY($|_)|PRIVATE|CREDENTIAL|AUTH|DSN"
-    r"|CONN(ECTION)?_?STR(ING)?|COOKIE|SALT|SIGNATURE|CERT)",
+    r"(SECRET|PASS|PWD_|TOKEN|KEY|SESSION|CREDENTIAL|AUTH|PRIVATE|CONN|DSN|COOKIE|SALT|SIGNATURE|CERT)",
     re.IGNORECASE,
 )
 
@@ -73,7 +84,8 @@ def _type_of(value: Any) -> str:
 class CliHostConfigProvider(ICliConfigProvider):
     """``host`` (read-only): the host's configuration.  Section ``options``:
     the options the server was created with; section ``environment``: the
-    process environment variables, secrets masked (``value: null``,
+    allowed environment variables (:data:`DEFAULT_ENVIRONMENT_ALLOW` plus
+    ``allow``, or ``include``), secrets masked (``value: null``,
     ``isSet: true``; see :func:`is_secret_environment_variable`)."""
 
     id = "host"
@@ -89,7 +101,10 @@ class CliHostConfigProvider(ICliConfigProvider):
     ) -> None:
         self._options = options
         environment = environment or CliHostEnvironmentOptions()
-        self._include = list(environment.include)
+        self._include = (
+            list(environment.include) if environment.include is not None
+            else [*DEFAULT_ENVIRONMENT_ALLOW, *environment.allow]
+        )
         self._exclude = list(environment.exclude)
         self._secrets = list(environment.secrets)
         self._env = env
