@@ -24,6 +24,52 @@ CLI_CONFIG_ENTRY_TYPES: tuple[str, ...] = (
 #: ``runtime`` (kept in memory).
 CliConfigSource = Literal["default", "file", "environment", "database", "runtime"]
 
+#: What kind of store keeps the writable settings: in ``memory`` (lost on
+#: restart), a JSON ``file``, a ``database``, or a ``custom`` store.
+CliConfigStoreKind = Literal["memory", "file", "database", "custom"]
+
+#: Where a provider's settings come from: ``store`` (changes are saved to the
+#: config store), ``runtime`` (the running process), ``options`` (the options
+#: the server was created with), ``environment`` (environment variables),
+#: ``configuration`` (the host's configuration) or ``custom``.
+CliConfigStorageKind = Literal["store", "runtime", "options", "environment", "configuration", "custom"]
+
+
+@dataclass
+class CliConfigStoreDescription:
+    """Where changes are saved (``store`` of ``GET /api/v1/qcli/config``):
+    what a store says about itself (``ICliConfigStore.describe``).
+    ``detail`` names the file (relative to the app) or the database and
+    table, never credentials or a connection string."""
+
+    kind: str
+    #: ``In memory``, ``JSON file``, ``Database``, ...
+    title: str
+    #: ``qcli-demo-config.json``, ``PostgreSQL database qcli, table QcliConfig``; ``''`` when nothing to add.
+    detail: str = ""
+    #: Changes are kept across restarts.
+    persistent: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """The JSON shape."""
+        return {"kind": self.kind, "title": self.title, "detail": self.detail, "persistent": self.persistent}
+
+
+@dataclass
+class CliConfigProviderStorage:
+    """Where a provider reads its settings from and saves changes to (``storage`` of a provider view)."""
+
+    kind: str
+    description: str = ""
+    #: The origins in the order they apply (later ones override earlier
+    #: ones): ``Server options``, ``Environment variables``, ...; ``[]`` when none.
+    sources: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """The JSON shape (``sources`` always present)."""
+        return {"kind": self.kind, "description": self.description, "sources": list(self.sources)}
+
+
 #: A setting's value: JSON (a ``secret`` is a string, a ``duration`` a string such as ``30m``).
 CliConfigValue = Any
 
@@ -219,6 +265,10 @@ class ICliConfigProvider(abc.ABC):
     order: Optional[int] = None
     #: A permission needed, besides ``config:read`` / ``config:write``, to see or change this provider.
     required_permission: Optional[str] = None
+    #: Where its settings come from.  Without it a writer is described as
+    #: ``custom`` "Saved by the provider", a read-only provider as ``custom``
+    #: "Read by the provider".
+    storage: Optional[CliConfigProviderStorage] = None
 
     @abc.abstractmethod
     def get_sections(
@@ -358,6 +408,10 @@ class ICliConfigService(abc.ABC):
     @abc.abstractmethod
     async def list(self, context: CliConfigContext) -> list[dict[str, Any]]:
         """The providers the caller may see, sorted.  Raises 403 without ``config:read``."""
+
+    def describe_store(self) -> CliConfigStoreDescription:
+        """Where writable settings are saved (the config store's own description)."""
+        return CliConfigStoreDescription(kind="custom", title="Custom store", detail="", persistent=False)
 
     @abc.abstractmethod
     async def get(self, provider_id: str, context: CliConfigContext) -> dict[str, Any]:

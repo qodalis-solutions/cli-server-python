@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable, Mapping, Optional, Sequence
 
-from .config_store import CliConfigStoredSection, ICliConfigStore, InMemoryConfigStore
+from .config_store import CliConfigStoredSection, ICliConfigStore, InMemoryConfigStore, cli_config_store_storage
 from .config_types import (
     CLI_CONFIG_KEY,
     CliConfigConflictError,
@@ -102,6 +102,8 @@ class CliStoredConfigProvider(ICliConfigProvider, ICliConfigWriter):
         self.description = description
         self.order = order
         self.required_permission = required_permission
+        #: Changes are saved to the config store.
+        self.storage = cli_config_store_storage()
         ids: set[str] = set()
         for section in sections:
             if not CLI_CONFIG_KEY.match(section.id) or section.id in ids:
