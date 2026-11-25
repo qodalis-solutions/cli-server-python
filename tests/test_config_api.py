@@ -114,7 +114,7 @@ class TestConfigApiOpenServer:
         assert body["defaultStore"] == {"kind": "memory", "title": "In memory", "detail": "", "persistent": False}
         providers = body["providers"]
         assert [p["id"] for p in providers] == [
-            "server", "auth", "host", "cors", "mcp", "jobs", "logs", "billing", "custom",
+            "server", "auth", "host", "cors", "mcp", "jobs", "logs", "dashboard-plugins", "billing", "custom",
         ]
         view = _provider(providers, "billing")
         assert list(view) == ["id", "title", "description", "order", "writable", "storage", "store", "sections"]
@@ -129,7 +129,7 @@ class TestConfigApiOpenServer:
         }
         assert storage["auth"]["kind"] == "options"
         assert storage["auth"]["sources"] == []
-        for provider_id in ("cors", "mcp", "jobs", "logs", "custom"):
+        for provider_id in ("cors", "mcp", "jobs", "logs", "dashboard-plugins", "custom"):
             assert storage[provider_id]["kind"] == "store", provider_id
         assert view["title"] == "Billing"
         assert view["description"] == ""

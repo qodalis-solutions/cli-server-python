@@ -498,6 +498,8 @@ class TestAServerWithProvidersInSeveralStores:
             "cors": FILE_SECTION,
             "mcp": FILE_SECTION,
             "logs": {"kind": "custom", "title": "logs-store", "detail": "logs-store-detail", "persistent": True},
+            # the dashboard plugins' settings: no store of their own, the default one
+            "dashboard-plugins": FILE_SECTION,
             "jobs": {
                 "kind": "database", "title": "Database",
                 "detail": "SQLite database qcli-demo.sqlite, table QcliConfig", "persistent": True,
@@ -566,6 +568,7 @@ class TestAServerWithProvidersInSeveralStores:
             "mcp  MCP  · JSON file (app.json, section qcli)",
             "jobs  Jobs  · Database (SQLite database qcli-demo.sqlite, table QcliConfig)",
             "logs  Logs  · logs-store (logs-store-detail)",
+            "dashboard-plugins  Dashboard plugins  · JSON file (app.json, section qcli)",
             "billing  Billing  · Redis (Redis-detail)",
             "custom  Custom  · Redis (Redis-detail)",
         ]
