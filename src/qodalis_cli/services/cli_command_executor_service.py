@@ -174,12 +174,14 @@ class CliCommandExecutorService(ICliCommandExecutorService):
         await bus.publish("command:executed", data, CliEventAudience(permission=AUDIT_READ))
 
     def add_filter(self, filter_: ICliProcessorFilter) -> None:
-        """Register an additional processor filter at runtime.
+        """Register an additional processor filter at runtime (once: adding
+        the same filter again does nothing).
 
         Args:
             filter_: The filter to add.
         """
-        self._filters.append(filter_)
+        if filter_ not in self._filters:
+            self._filters.append(filter_)
 
     def is_blocked(self, processor: ICliCommandProcessor) -> bool:
         """Return True if any filter blocks this processor."""

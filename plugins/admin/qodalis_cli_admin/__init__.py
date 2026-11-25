@@ -17,10 +17,34 @@ from .services.admin_theme import (
     is_theme_color,
     validate_admin_theme,
 )
+from .commands.admin_command import (
+    ADMIN_MODULE_NAME,
+    LOGS_READ_PERMISSION,
+    AdminCommandDeps,
+    AdminModule,
+    CliAdminCommandProcessor,
+    format_duration,
+    format_log_line,
+    format_table,
+)
+from .controllers.status_controller import status_snapshot
+from .services.status_history import summarize_status_history
+from .services.time_range import parse_since
 from .services.log_ring_buffer import LogRingBuffer
 from .services.module_registry import ModuleRegistry
 
 __all__ = [
+    "ADMIN_MODULE_NAME",
+    "LOGS_READ_PERMISSION",
+    "AdminCommandDeps",
+    "AdminModule",
+    "CliAdminCommandProcessor",
+    "format_duration",
+    "format_log_line",
+    "format_table",
+    "status_snapshot",
+    "summarize_status_history",
+    "parse_since",
     "ADMIN_THEME_MODES",
     "ADMIN_THEME_TOKENS",
     "AdminBuildDeps",

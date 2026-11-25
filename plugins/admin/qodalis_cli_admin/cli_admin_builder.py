@@ -17,7 +17,8 @@ from .spa_static_files import SPAStaticFiles
 from .auth.jwt_service import JwtService
 from .auth.auth_middleware import create_auth_dependency, create_users_auth_dependency
 from .auth.auth_controller import create_auth_router
-from .controllers.status_controller import create_status_router
+from .commands.admin_command import AdminCommandDeps, AdminModule, CliAdminCommandProcessor
+from .controllers.status_controller import create_status_router, status_snapshot
 from .controllers.plugins_controller import create_plugins_router
 from .controllers.config_controller import create_config_router
 from .controllers.logs_controller import create_logs_router
@@ -30,6 +31,15 @@ from .services.log_ring_buffer import LogRingBuffer
 from .services.module_registry import ModuleRegistry
 from .services.status_history import StatusHistory
 from .dashboard_resolver import resolve_dashboard_dir
+
+
+def _package_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("qodalis-cli-server-plugin-admin")
+    except Exception:  # pragma: no cover - not installed as a package
+        return "1.0.0"
 
 
 BroadcastFn = Callable[[str], Awaitable[None]]
@@ -75,6 +85,10 @@ class CliAdminPlugin:
     #: ``config:read`` for ``GET /config``, ``config:write`` for ``PATCH``
     #: (enforced on a server protected by the users plugin).
     route_permissions: list[Any] = field(default_factory=list)
+    #: The ``admin`` terminal command (``status``, ``plugins``, ``clients``,
+    #: ``logs``), registered by ``mount_plugin``; needs ``admin:access`` on a
+    #: protected server (``admin logs`` also ``logs:read``).
+    module: Any = None
     #: The ``auth`` (read-only) and ``logs`` config providers, registered with
     #: the server's (also by ``build`` when the builder takes them).
     config_providers: list[Any] = field(default_factory=list)
@@ -91,6 +105,10 @@ class CliAdminPlugin:
         # unless the plugin was built with a bus or a broadcast function
         if self.log_buffer.event_bus is None and self.log_buffer.broadcast_fn is None:
             self.log_buffer.event_bus = getattr(server, "event_bus", None)
+        # A module disabled from the dashboard or ``admin plugins disable`` is refused by the executor
+        executor = getattr(server, "executor", None)
+        if self.module_registry is not None and executor is not None and hasattr(executor, "add_filter"):
+            executor.add_filter(self.module_registry)
         app = getattr(server, "app", None)
         router = getattr(app, "router", None)
         if self.status_history is not None and router is not None and not self._server.get("sampling"):
@@ -292,7 +310,20 @@ class CliAdminBuilder:
                 directory=dashboard_dir, html=True, theme_json=self._theme_json(),
             )
 
+        admin_command = CliAdminCommandProcessor(AdminCommandDeps(
+            status=lambda: status_snapshot(
+                start_time, deps.event_socket_manager, enabled_features,
+                deps.registry, deps.builder, status_history,
+            ),
+            status_history=status_history,
+            module_registry=module_registry,
+            log_buffer=log_buffer,
+            event_socket_manager=deps.event_socket_manager,
+            installed_plugins=lambda: list(getattr(deps.builder, "installed_plugins", None) or []),
+        ))
+
         return CliAdminPlugin(
+            module=AdminModule(admin_command, _package_version()),
             prefix="/api/v1/qcli",
             dashboard_prefix="/qcli/admin",
             router=router,
