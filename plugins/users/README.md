@@ -95,7 +95,9 @@ These two guards are the only places that accept [host tokens](#host-tokens): AP
 The plugin brings the `users` config provider (`config_providers`, registered by `mount_plugin`): `sessions`
 (`sessionTimeout`, `maxSessionLifetime`) and `security` (`maxLoginAttempts`, `lockout`, `minPasswordLength`) change
 at runtime (read on every sign-in, request and password change); `access` (protectServer, signIn,
-allowNonExpiringTokens, apiTokensWithExternalAuth, usersReadOnly, groupsReadOnly) is read-only. The server's live
+allowNonExpiringTokens, apiTokensWithExternalAuth, usersReadOnly, groupsReadOnly) is read-only. Changes are kept in
+the server's default config store, or in the provider's own with `CliUsersBuilder().set_config_store(store)` (the
+host's `CliServerConfigOptions(stores={"users": ...})` still wins). The server's live
 allowed origins (`result.allowed_origins`, changed by the `cors` provider) are used for the CSRF check unless
 `set_allowed_origins` set the plugin's own.
 

@@ -172,7 +172,10 @@ plugin = (
 The plugin brings the `jobs` config provider (`config_providers`, registered by `mount_plugin`): section `history`
 with `maxAge`, `maxRunsPerJob`, `failedMaxAge` and `failedMaxRunsPerJob`, changeable from the dashboard's Config page,
 `config set jobs.history.maxAge 30d` or MCP `config_set`; the next `jobs:prune-history` run applies them
-(`scheduler.set_history_defaults(retention)`). `pruneInterval` is read-only (set in code).
+(`scheduler.set_history_defaults(retention)`). `pruneInterval` is read-only (set in code). Changes are kept in the
+server's config store, so they survive a restart with a file, database or Redis store;
+`CliJobsBuilder().set_config_store(store)` gives the provider a store of its own instead of the server's default one
+(the host's `CliServerConfigOptions(stores={"jobs": ...})` still wins).
 
 ## REST API
 

@@ -155,7 +155,8 @@ Where the site came from: `set_site_dir`, `@qodalis/cli-server-portal`, `cli-ser
 The plugin brings the `portal` config provider (the server's [config providers](../../README.md)): the branding
 changes at runtime, through `config set`, the dashboard's Settings page or `PATCH /api/v1/qcli/config/portal/branding`
 (`config:write`). The builder's values are the defaults, stored values override them, and every change is in the next
-`/portal.json`, no restart. `null` (`config reset`) brings the builder's value back.
+`/portal.json`, no restart. `null` (`config reset`) brings the builder's value back. Changes are kept in the server's
+default config store, or in the provider's own with `set_config_store(store)` on the builder.
 
 | Setting | Type | Rules |
 |---|---|---|
