@@ -33,6 +33,7 @@ import anyio
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
+from .api_command import CliApiCommandProcessor, PublicApiModule
 from qodalis_cli_users import QcliCaller, QcliGuardError
 from qodalis_cli_users.errors import install_guard_error_handler
 from qodalis_cli_users.middleware.auth_middleware import authenticate_host_token, tag_guard
@@ -63,6 +64,15 @@ PRUNE_INTERVAL = timedelta(hours=1)
 
 INTERNAL_ERROR = "internal server error"
 NO_API_ACCESS = "forbidden: no API access"
+def _package_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("qodalis-cli-server-plugin-public-api")
+    except Exception:  # pragma: no cover - not installed as a package
+        return "1.0.0"
+
+
 USERS_REQUIRED = "public-api: set_users(users_plugin) is required"
 #: ``request.state`` flag: the request was admitted (counted) by a guard.
 COUNTED_KEY = "qcli_public_api_counted"
@@ -167,6 +177,8 @@ class CliPublicApiPlugin:
     quota_resolver: Optional[QuotaResolver] = None
     retention_days: int = DEFAULT_RETENTION_DAYS
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(timezone.utc))
+    #: The ``api usage`` terminal command, registered by ``mount_plugin``.
+    module: Any = None
     _last_prune: Optional[datetime] = field(default=None, repr=False)
     _account_locks: Any = field(default_factory=weakref.WeakValueDictionary, repr=False)
 
@@ -471,6 +483,7 @@ class CliPublicApiBuilder:
         )
         holder["plugin"] = plugin
         plugin.router = self._router(plugin)
+        plugin.module = PublicApiModule(CliApiCommandProcessor(usage, self._users), _package_version())
         plugin.public_paths = [
             f"{base_path}/openapi.json", f"{base_path}/swagger", f"{base_path}/swagger/", f"{base_path}/swagger/*",
         ]
