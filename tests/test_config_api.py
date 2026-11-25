@@ -109,12 +109,27 @@ class TestConfigApiOpenServer:
         res = open_srv.c.get(f"{V1}/config", headers=open_srv.h)
         assert res.status_code == 200
         assert res.headers["cache-control"] == "no-store"
-        providers = res.json()["providers"]
+        body = res.json()
+        assert sorted(body) == ["providers", "store"]
+        assert body["store"] == {"kind": "memory", "title": "In memory", "detail": "", "persistent": False}
+        providers = body["providers"]
         assert [p["id"] for p in providers] == [
             "server", "auth", "host", "cors", "mcp", "jobs", "logs", "billing", "custom",
         ]
         view = _provider(providers, "billing")
-        assert sorted(view) == ["description", "id", "order", "sections", "title", "writable"]
+        assert sorted(view) == ["description", "id", "order", "sections", "storage", "title", "writable"]
+        assert view["storage"] == {"kind": "store", "description": "Changes are saved to the config store", "sources": []}
+        storage = {p["id"]: p["storage"] for p in providers}
+        assert storage["server"] == {"kind": "runtime", "description": "Read from the running server process", "sources": []}
+        assert storage["host"] == {
+            "kind": "options",
+            "description": "Server options and environment variables",
+            "sources": ["Server options", "Environment variables"],
+        }
+        assert storage["auth"]["kind"] == "options"
+        assert storage["auth"]["sources"] == []
+        for provider_id in ("cors", "mcp", "jobs", "logs", "custom"):
+            assert storage[provider_id]["kind"] == "store", provider_id
         assert view["title"] == "Billing"
         assert view["description"] == ""
         assert view["order"] == 100
