@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from fastapi import FastAPI, WebSocket
+from starlette.routing import Match, Mount
 
 from qodalis_cli_server_abstractions.config import create_custom_config_provider
 from qodalis_cli_filesystem.providers.os_provider import OsFileStorageProvider, OsProviderOptions
@@ -294,6 +295,9 @@ class CliServerResult:
         if not routes_off:
             for page in getattr(plugin, "dashboard_pages", None) or []:
                 self.add_dashboard_page(page)
+            # Files the plugin serves outside the API (no sign-in); a route declines what it does not serve
+            for asset in getattr(plugin, "asset_routes", None) or []:
+                self.app.router.routes.append(_AssetRoute(asset))
 
         # Plugins may hook into the server (e.g. the users plugin protects
         # every route and scopes events to authenticated sockets).
@@ -309,6 +313,26 @@ class CliServerResult:
             )
         elif dashboard_prefix and dashboard_app:
             self.app.mount(dashboard_prefix, dashboard_app)
+
+
+class _AssetRoute(Mount):
+    """A mounted plugin's asset route (``asset_routes``: ``prefix``, ``app`` and an optional ``handles(path)``):
+    the app at the prefix, matching only the paths ``handles`` accepts (the path below the prefix), so other
+    routes under the same prefix (``/qcli/modules/<id>`` of other plugins) still answer the rest."""
+
+    def __init__(self, asset: Any) -> None:
+        prefix = "/" + str(getattr(asset, "prefix")).strip("/")
+        super().__init__(prefix, app=getattr(asset, "app"))
+        self._handles = getattr(asset, "handles", None)
+
+    def matches(self, scope: Any) -> Any:
+        match, child = super().matches(scope)
+        if match is Match.FULL and callable(self._handles):
+            path = scope.get("path", "")
+            below = path[len(self.path):] if path.startswith(self.path) else path
+            if not self._handles(below or "/"):
+                return Match.NONE, {}
+        return match, child
 
 
 def _permission_name(entry: Any) -> Any:
