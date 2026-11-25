@@ -10,6 +10,8 @@ from collections.abc import Mapping
 from typing import Any, Callable, Awaitable
 
 from fastapi import APIRouter
+from qodalis_cli_server_abstractions import CliRoutePermission
+from qodalis_cli_server_abstractions.config import CliConfigPermissions
 from .spa_static_files import SPAStaticFiles
 
 from .auth.jwt_service import JwtService
@@ -21,6 +23,7 @@ from .controllers.config_controller import create_config_router
 from .controllers.logs_controller import create_logs_router
 from .controllers.ws_clients_controller import create_ws_clients_router
 from .services.admin_config import AdminConfig
+from .services.admin_config_providers import AdminAuthConfigProvider, create_logs_config_provider
 from .services.admin_branding import validate_admin_branding
 from .services.admin_theme import validate_admin_theme
 from .services.log_ring_buffer import LogRingBuffer
@@ -69,6 +72,12 @@ class CliAdminPlugin:
     #: Status samples of ``GET /status/history``; sampling runs with the
     #: app's lifespan once the plugin is mounted.
     status_history: StatusHistory | None = None
+    #: ``config:read`` for ``GET /config``, ``config:write`` for ``PATCH``
+    #: (enforced on a server protected by the users plugin).
+    route_permissions: list[Any] = field(default_factory=list)
+    #: The ``auth`` (read-only) and ``logs`` config providers, registered with
+    #: the server's (also by ``build`` when the builder takes them).
+    config_providers: list[Any] = field(default_factory=list)
     #: Holds the server options read by ``GET /auth/mode`` (see on_mount).
     _server: dict = field(default_factory=dict, repr=False)
 
@@ -250,7 +259,23 @@ class CliAdminBuilder:
         plugins_router = create_plugins_router(module_registry, auth_dep, deps.builder)
         router.include_router(plugins_router)
 
-        config_router = create_config_router(config, auth_dep)
+        # Config: the server's config providers (builder.config), with the plugin's own
+        def auth_mode() -> str:
+            if is_external():
+                return "external"
+            return "users" if users_plugin is not None else "password"
+
+        config_providers: list[Any] = [
+            AdminAuthConfigProvider(config, auth_mode),
+            create_logs_config_provider(log_buffer),
+        ]
+        add_config_provider = getattr(deps.builder, "add_config_provider", None)
+        registry = getattr(deps.builder, "config_registry", None)
+        if callable(add_config_provider):
+            for provider in config_providers:
+                if registry is None or not registry.has(provider.id):
+                    add_config_provider(provider)
+        config_router = create_config_router(lambda: getattr(deps.builder, "config", None), auth_dep)
         router.include_router(config_router)
 
         logs_router = create_logs_router(log_buffer, auth_dep)
@@ -276,5 +301,9 @@ class CliAdminBuilder:
             dashboard_app=dashboard_app,
             module_registry=module_registry,
             status_history=status_history,
+            route_permissions=[CliRoutePermission(
+                path="/api/v1/qcli/config", read=CliConfigPermissions.READ, write=CliConfigPermissions.WRITE,
+            )],
+            config_providers=config_providers,
             _server=server,
         )

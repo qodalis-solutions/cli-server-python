@@ -1,4 +1,7 @@
-"""Admin configuration — reads credentials from environment variables."""
+"""Admin configuration: the credentials, JWT secret and sign-in URL, read
+from environment variables.  The dashboard's settings are served by the
+config providers (``auth`` here, the server's built-in ones, and the
+plugins')."""
 
 from __future__ import annotations
 
@@ -6,8 +9,7 @@ import hmac
 import logging
 import os
 import unicodedata
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 logger = logging.getLogger("qcli-admin")
@@ -34,13 +36,6 @@ class AdminConfig:
     #: terminal link's approval page); after signing in, the host opens that
     #: URL with ``#token=<bearer token>``.
     sign_in_url: str | None = None
-
-    # Mutable runtime settings
-    _mutable_settings: dict[str, Any] = field(default_factory=dict)
-
-    FORBIDDEN_KEYS: frozenset[str] = frozenset(
-        {"username", "password", "jwt_secret", "jwtSecret"}
-    )
 
     def __post_init__(self) -> None:
         if not self.username:
@@ -76,58 +71,9 @@ class AdminConfig:
         )
         return username_ok and password_ok
 
-    def get_config_sections(self) -> list[dict[str, Any]]:
-        """Return structured configuration sections for the admin API."""
-        import platform as _platform
-        import sys as _sys
-
-        custom_entries = [
-            {
-                "key": k,
-                "value": v,
-                "type": _infer_type(v),
-                "description": "",
-                "mutable": True,
-            }
-            for k, v in self._mutable_settings.items()
-        ]
-
-        return [
-            {
-                "name": "server",
-                "mutable": False,
-                "settings": [
-                    {"key": "platform", "value": "python", "type": "string", "description": "Server platform", "mutable": False},
-                    {"key": "platformVersion", "value": _sys.version.split()[0], "type": "string", "description": "Python version", "mutable": False},
-                    {"key": "os", "value": _platform.platform(), "type": "string", "description": "Operating system", "mutable": False},
-                ],
-            },
-            {
-                "name": "auth",
-                "mutable": False,
-                "settings": [
-                    {"key": "username", "value": self.username, "type": "string", "description": "Admin username", "mutable": False},
-                    {"key": "jwtSecretConfigured", "value": bool(self.jwt_secret), "type": "boolean", "description": "Whether JWT secret is explicitly set", "mutable": False},
-                ],
-            },
-            {
-                "name": "custom",
-                "mutable": True,
-                "settings": custom_entries,
-            },
-        ]
-
-    def update_settings(self, settings: dict[str, Any]) -> None:
-        """Update mutable runtime settings.
-
-        Keys that overlap with sensitive configuration are silently rejected.
-        """
-        sanitized = {k: v for k, v in settings.items() if k not in self.FORBIDDEN_KEYS}
-        self._mutable_settings.update(sanitized)
-
-    def get_settings(self) -> dict[str, Any]:
-        """Return a copy of the current mutable runtime settings."""
-        return dict(self._mutable_settings)
+    def uses_default_credentials(self) -> bool:
+        """True while the well-known ``admin`` / ``admin`` credentials are in effect."""
+        return self.username == "admin" and self.password == "admin"
 
 
 def is_valid_sign_in_url(value: str | None) -> bool:
@@ -147,14 +93,3 @@ def is_valid_sign_in_url(value: str | None) -> bool:
     except ValueError:
         return False
     return parts.scheme in ("http", "https") and bool(parts.hostname)
-
-
-def _infer_type(val: Any) -> str:
-    """Infer a JSON-schema-style type string from a Python value."""
-    if isinstance(val, bool):
-        return "boolean"
-    if isinstance(val, (int, float)):
-        return "number"
-    if isinstance(val, list):
-        return "string[]"
-    return "string"

@@ -42,7 +42,10 @@ def create_users_auth_dependency(users_plugin: Any):
             raise HTTPException(status_code=403, detail="missing permission: admin:access")
         return {
             "username": ctx.user.name,
+            "userId": ctx.user.id,
             "authenticatedAt": (ctx.session.created_at // 1000) if ctx.session else None,
+            # The config API checks config:read / config:write against them
+            "permissions": list(ctx.permissions),
         }
 
     return require_auth

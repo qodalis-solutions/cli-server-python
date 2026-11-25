@@ -66,6 +66,11 @@ _HISTOGRAM_LEVEL_MAP = {
 }
 
 
+def _level_rank(level: str) -> int | None:
+    column = _HISTOGRAM_LEVEL_MAP.get(level.strip().upper())
+    return LOG_LEVELS.index(column) if column is not None else None
+
+
 def histogram_level(level: str | None) -> str | None:
     """The histogram column of a level (``WARNING`` -> ``WARN``, ``CRITICAL``
     -> ``ERROR``), ``None`` for an unknown level."""
@@ -103,6 +108,14 @@ def _wire_entry(entry: LogEntry) -> dict[str, Any]:
     }
 
 
+#: The levels of the ``logs`` config provider's lowest level, lowest first.
+LOG_LEVELS = ("DEBUG", "INFO", "WARN", "ERROR")
+
+#: The smallest and largest buffer sizes :meth:`LogRingBuffer.resize` accepts.
+LOG_BUFFER_MIN_CAPACITY = 100
+LOG_BUFFER_MAX_CAPACITY = 100_000
+
+
 class LogRingBuffer:
     """Fixed-size ring buffer that stores log entries.
 
@@ -128,6 +141,32 @@ class LogRingBuffer:
         self._loop: asyncio.AbstractEventLoop | None = None
         #: Set while an entry is delivered: a line logged meanwhile is kept but not published (no loop).
         self._publishing = False
+        self._min_level = "DEBUG"
+
+    @property
+    def capacity(self) -> int:
+        """How many entries the buffer keeps."""
+        return self._buffer.maxlen or 0
+
+    def resize(self, capacity: int) -> None:
+        """Keep up to ``capacity`` entries from now on (the newest ones stay).
+        Changed at runtime by the ``logs`` config provider."""
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
+            raise ValueError(f"invalid log buffer capacity: {capacity}")
+        if capacity != self._buffer.maxlen:
+            self._buffer = deque(self._buffer, maxlen=capacity)
+
+    @property
+    def min_level(self) -> str:
+        """The lowest level kept (default ``DEBUG``: everything); lower entries are neither kept nor published."""
+        return self._min_level
+
+    @min_level.setter
+    def min_level(self, level: str) -> None:
+        upper = _LEVEL_MAP.get(str(level).upper(), str(level).upper())
+        if upper not in LOG_LEVELS:
+            raise ValueError(f"invalid log level: {level}")
+        self._min_level = upper
 
     @property
     def broadcast_fn(self) -> BroadcastFn | None:
@@ -137,6 +176,9 @@ class LogRingBuffer:
     def add(self, entry: LogEntry) -> None:
         """Append a log entry to the buffer and publish it (see the class)."""
         entry.level = (entry.level or "INFO").upper()
+        rank = _level_rank(entry.level)
+        if rank is not None and rank < LOG_LEVELS.index(self._min_level):
+            return
         self._buffer.append(entry)
         self._publish(entry)
 

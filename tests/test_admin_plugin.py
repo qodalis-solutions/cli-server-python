@@ -233,7 +233,8 @@ class TestProtectedEndpointsRejectWithoutToken:
             ("GET", f"{PREFIX}/plugins"),
             ("POST", f"{PREFIX}/plugins/0/toggle"),
             ("GET", f"{PREFIX}/config"),
-            ("PUT", f"{PREFIX}/config"),
+            ("GET", f"{PREFIX}/config/cors"),
+            ("PATCH", f"{PREFIX}/config/custom/custom"),
             ("GET", f"{PREFIX}/logs"),
             ("GET", f"{PREFIX}/ws/clients"),
             ("GET", f"{PREFIX}/auth/me"),
@@ -328,33 +329,12 @@ class TestPlugins:
 
 
 class TestConfig:
-    async def test_get_config_sections(self, client: AsyncClient) -> None:
+    async def test_config_without_config_providers(self, client: AsyncClient) -> None:
+        # A builder without config providers (this stub): 404 with the reason
         token = await get_token(client)
         resp = await client.get(f"{PREFIX}/config", headers=auth_header(token))
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "sections" in data
-        sections = data["sections"]
-        names = {s["name"] for s in sections}
-        assert "auth" in names
-        assert "server" in names
-        assert "custom" in names
-
-    async def test_update_settings(self, client: AsyncClient) -> None:
-        token = await get_token(client)
-        resp = await client.put(
-            f"{PREFIX}/config",
-            headers=auth_header(token),
-            json={"settings": {"logLevel": "DEBUG", "maxConnections": 50}},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["message"] == "Configuration updated"
-        # Verify settings persisted
-        custom_section = next(s for s in data["sections"] if s["name"] == "custom")
-        custom_keys = {e["key"]: e["value"] for e in custom_section["settings"]}
-        assert custom_keys["logLevel"] == "DEBUG"
-        assert custom_keys["maxConnections"] == 50
+        assert resp.status_code == 404
+        assert resp.json() == {"error": "config providers are not available on this server"}
 
 
 # ---------------------------------------------------------------------------
@@ -484,27 +464,9 @@ class TestAdminConfig:
         assert config.validate_credentials("admin", "wrong") is False
         assert config.validate_credentials("wrong", "secret") is False
 
-    def test_get_config_sections(self) -> None:
-        config = AdminConfig(username="admin", password="secret", jwt_secret="abc")
-        sections = config.get_config_sections()
-        assert len(sections) == 3
-        auth_section = next(s for s in sections if s["name"] == "auth")
-        auth_keys = {e["key"]: e["value"] for e in auth_section["settings"]}
-        assert auth_keys["username"] == "admin"
-        assert auth_keys["jwtSecretConfigured"] is True
-
-    def test_update_and_get_settings(self) -> None:
-        config = AdminConfig(username="a", password="b")
-        config.update_settings({"key1": "val1", "key2": 42})
-        settings = config.get_settings()
-        assert settings == {"key1": "val1", "key2": 42}
-
-    def test_jwt_secret_not_configured(self) -> None:
-        config = AdminConfig(username="a", password="b", jwt_secret="")
-        sections = config.get_config_sections()
-        auth_section = next(s for s in sections if s["name"] == "auth")
-        auth_keys = {e["key"]: e["value"] for e in auth_section["settings"]}
-        assert auth_keys["jwtSecretConfigured"] is False
+    def test_uses_default_credentials(self) -> None:
+        assert AdminConfig(username="admin", password="admin", warn_default=False).uses_default_credentials() is True
+        assert AdminConfig(username="admin", password="secret").uses_default_credentials() is False
 
 
 class TestJwtService:
