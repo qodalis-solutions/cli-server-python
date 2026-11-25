@@ -24,12 +24,19 @@ from .controllers.config_controller import create_config_router
 from .controllers.logs_controller import create_logs_router
 from .controllers.ws_clients_controller import create_ws_clients_router
 from .controllers.dashboard_marketplace_controller import create_dashboard_marketplace_router
+from .controllers.server_marketplace_controller import create_server_marketplace_router
 from .services.dashboard_marketplace import (
     DASHBOARD_INSTALL_PERMISSION,
     DashboardMarketplace,
     DashboardMarketplaceAssetRoute,
     DashboardMarketplaceDeps,
     DashboardMarketplaceOptions,
+)
+from .services.server_plugin_marketplace import (
+    PLUGINS_INSTALL_PERMISSION,
+    ServerPluginMarketplace,
+    ServerPluginMarketplaceDeps,
+    ServerPluginMarketplaceOptions,
 )
 from .services.admin_config import AdminConfig
 from .services.admin_config_providers import AdminAuthConfigProvider, create_logs_config_provider
@@ -105,6 +112,9 @@ class CliAdminPlugin:
     #: ``/api/v1/qcli/dashboard/marketplace``; ``None`` when turned off
     #: (``set_marketplace(False)``) or the builder cannot add pages at runtime.
     marketplace: DashboardMarketplace | None = None
+    #: Server plugins from the marketplace (``/api/v1/qcli/server/marketplace``); ``None`` when the marketplace is
+    #: off or the server has no runtime plugins (``builder.server_plugins``).
+    server_marketplace: ServerPluginMarketplace | None = None
     #: Serves the marketplace plugins' files at ``/qcli/modules/<id>/`` (mounted by ``mount_plugin``).
     asset_routes: list[Any] = field(default_factory=list)
     #: Holds the server options read by ``GET /auth/mode`` (see on_mount).
@@ -361,6 +371,34 @@ class CliAdminBuilder:
                 create_dashboard_marketplace_router(marketplace, auth_dep), prefix="/dashboard/marketplace",
             )
 
+        # Server plugins from the marketplace: Python packages installed into <data dir>/server-plugins, loaded at the
+        # next start (the same marketplace options)
+        server_marketplace: ServerPluginMarketplace | None = None
+        server_plugins = getattr(deps.builder, "server_plugins", None)
+        if self._marketplace is not None and server_plugins is not None and hasattr(server_plugins, "records"):
+
+            async def publish_server(event_type: str, data: dict[str, Any]) -> None:
+                bus = server.get("event_bus")
+                if bus is not None:
+                    from qodalis_cli_server_abstractions import CliEventAudience
+
+                    await bus.publish(event_type, data, CliEventAudience(permission="admin:access"))
+
+            m = self._marketplace
+            server_marketplace = ServerPluginMarketplace(ServerPluginMarketplaceOptions(
+                url=m.url, install=m.install, fetch=m.fetch, download=m.download, timeout=m.timeout,
+                pypi_url=m.pypi_url, pip=m.pip, server_version=m.server_version,
+            ), ServerPluginMarketplaceDeps(
+                plugins=server_plugins,
+                installed_plugins=lambda: list(getattr(deps.builder, "installed_plugins", None) or []),
+                restart=getattr(deps.builder, "restart", None),
+                audit=lambda: getattr(deps.builder, "audit_sink", None),
+                publish=publish_server,
+            ))
+            router.include_router(
+                create_server_marketplace_router(server_marketplace, auth_dep), prefix="/server/marketplace",
+            )
+
         plugins_router = create_plugins_router(module_registry, auth_dep, deps.builder, marketplace)
         router.include_router(plugins_router)
 
@@ -412,6 +450,7 @@ class CliAdminBuilder:
             installed_plugins=lambda: list(getattr(deps.builder, "installed_plugins", None) or []),
             marketplace=marketplace,
             restart=getattr(deps.builder, "restart", None),
+            server_marketplace=server_marketplace,
         ))
 
         return CliAdminPlugin(
@@ -431,9 +470,13 @@ class CliAdminBuilder:
                 CliRoutePermission(
                     path="/api/v1/qcli/dashboard/marketplace", read="admin:access", write=DASHBOARD_INSTALL_PERMISSION,
                 ),
+                CliRoutePermission(
+                    path="/api/v1/qcli/server/marketplace", read="admin:access", write=PLUGINS_INSTALL_PERMISSION,
+                ),
             ],
             config_providers=config_providers,
             marketplace=marketplace,
+            server_marketplace=server_marketplace,
             asset_routes=[DashboardMarketplaceAssetRoute(marketplace)] if marketplace is not None else [],
             _server=server,
         )

@@ -59,6 +59,8 @@ class AdminCommandDeps:
     marketplace: Optional[DashboardMarketplace] = None
     #: The server's restart service (``admin restart``); ``None`` on a server without one.
     restart: Any = None
+    #: Server plugins from the marketplace (``admin plugins search|installed|install|update|remove``).
+    server_marketplace: Any = None
 
 
 def _json(value: Any) -> str:
@@ -303,14 +305,18 @@ class AdminPluginsSwitchProcessor(CliCommandProcessor):
 class AdminPluginsProcessor(CliCommandProcessor):
     command = "plugins"
     aliases = ["modules"]
-    description = "Command modules: list them, enable or disable one"
+    description = "Command modules: list them, enable or disable one; server plugins from the marketplace: search, installed, install, update, remove"
     parameters = [_JSON]
 
-    def __init__(self, registry: ModuleRegistry) -> None:
+    def __init__(self, registry: ModuleRegistry, server_marketplace: Any = None) -> None:
         self._list = AdminPluginsListProcessor(registry)
         self._processors: list[ICliCommandProcessor] = [
             self._list, AdminPluginsSwitchProcessor(registry, True), AdminPluginsSwitchProcessor(registry, False),
         ]
+        if server_marketplace is not None:
+            from .admin_server_plugins_command import server_plugin_processors
+
+            self._processors.extend(server_plugin_processors(server_marketplace))
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
@@ -732,7 +738,7 @@ class CliAdminCommandProcessor(CliCommandProcessor):
         self._status = AdminStatusProcessor(deps)
         self._processors: list[ICliCommandProcessor] = [
             self._status,
-            AdminPluginsProcessor(deps.module_registry),
+            AdminPluginsProcessor(deps.module_registry, deps.server_marketplace),
             AdminClientsProcessor(deps.event_socket_manager),
             AdminLogsProcessor(deps.log_buffer),
         ]

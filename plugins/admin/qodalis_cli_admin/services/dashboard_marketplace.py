@@ -137,6 +137,14 @@ class DashboardMarketplaceOptions:
     cdns: Optional[list[str]] = None
     #: Timeout of each request in seconds (default 15).
     timeout: float = 15.0
+    #: Server plugins: the package index (default ``https://pypi.org``).
+    pypi_url: Optional[str] = None
+    #: Server plugins: runs pip (default ``sys.executable -m pip``; tests pass a fake).
+    pip: Optional[Callable[[list[str]], Awaitable[Any]]] = None
+    #: Server plugins: the HTTP client of wheel downloads (default: ``fetch`` when given, else the standard library's).
+    download: Optional[MarketplaceFetch] = None
+    #: Server plugins: the server's version (default: the installed ``qodalis-cli-server``'s).
+    server_version: Optional[str] = None
 
 
 @dataclass
