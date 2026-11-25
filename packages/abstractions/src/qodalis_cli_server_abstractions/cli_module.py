@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Sequence
+from typing import Any, Sequence
 
 from .cli_command_processor import ICliCommandProcessor
 from .cli_command_author import ICliCommandAuthor, DEFAULT_LIBRARY_AUTHOR
@@ -38,6 +38,12 @@ class ICliModule(abc.ABC):
     def processors(self) -> Sequence[ICliCommandProcessor]:
         """Command processors provided by this module."""
         ...
+
+    @property
+    def config_providers(self) -> Sequence[Any]:
+        """Config providers the module brings (``ICliConfigProvider``: its
+        settings), registered with the server's when the module is added."""
+        return []
 
     @property
     def icon(self) -> str | None:
