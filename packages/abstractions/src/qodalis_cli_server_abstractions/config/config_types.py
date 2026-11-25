@@ -25,11 +25,11 @@ CLI_CONFIG_ENTRY_TYPES: tuple[str, ...] = (
 CliConfigSource = Literal["default", "file", "environment", "database", "runtime"]
 
 #: What kind of store keeps the writable settings: in ``memory`` (lost on
-#: restart), a JSON ``file``, a ``database``, or a ``custom`` store.
-CliConfigStoreKind = Literal["memory", "file", "database", "custom"]
+#: restart), a JSON ``file``, a ``database``, ``redis``, or a ``custom`` store.
+CliConfigStoreKind = Literal["memory", "file", "database", "redis", "custom"]
 
-#: Where a provider's settings come from: ``store`` (changes are saved to the
-#: config store), ``runtime`` (the running process), ``options`` (the options
+#: Where a provider's settings come from: ``store`` (changes are saved to its
+#: config store, the provider view's ``store``), ``runtime`` (the running process), ``options`` (the options
 #: the server was created with), ``environment`` (environment variables),
 #: ``configuration`` (the host's configuration) or ``custom``.
 CliConfigStorageKind = Literal["store", "runtime", "options", "environment", "configuration", "custom"]
@@ -37,15 +37,17 @@ CliConfigStorageKind = Literal["store", "runtime", "options", "environment", "co
 
 @dataclass
 class CliConfigStoreDescription:
-    """Where changes are saved (``store`` of ``GET /api/v1/qcli/config``):
-    what a store says about itself (``ICliConfigStore.describe``).
-    ``detail`` names the file (relative to the app) or the database and
-    table, never credentials or a connection string."""
+    """Where changes are saved: what a store says about itself
+    (``ICliConfigStore.describe``), as each stored provider's ``store`` and
+    the top-level ``defaultStore`` of ``GET /api/v1/qcli/config``.
+    ``detail`` names the file (relative to the app), the database and table,
+    or the Redis host and key prefix, never credentials or a connection string."""
 
     kind: str
     #: ``In memory``, ``JSON file``, ``Database``, ...
     title: str
-    #: ``qcli-demo-config.json``, ``PostgreSQL database qcli, table QcliConfig``; ``''`` when nothing to add.
+    #: ``qcli-demo-config.json``, ``PostgreSQL database qcli, table QcliConfig``,
+    #: ``cache:6379/0, prefix qcli:config``; ``''`` when nothing to add.
     detail: str = ""
     #: Changes are kept across restarts.
     persistent: bool = False
@@ -409,8 +411,8 @@ class ICliConfigService(abc.ABC):
     async def list(self, context: CliConfigContext) -> list[dict[str, Any]]:
         """The providers the caller may see, sorted.  Raises 403 without ``config:read``."""
 
-    def describe_store(self) -> CliConfigStoreDescription:
-        """Where writable settings are saved (the config store's own description)."""
+    def describe_default_store(self) -> CliConfigStoreDescription:
+        """The store providers use unless they have their own (its own description)."""
         return CliConfigStoreDescription(kind="custom", title="Custom store", detail="", persistent=False)
 
     @abc.abstractmethod
