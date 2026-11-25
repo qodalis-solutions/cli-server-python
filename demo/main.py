@@ -30,6 +30,7 @@ from fastapi import APIRouter, Depends
 from qodalis_cli import (
     CliMcpOptions,
     CliPermission,
+    CliServerConfigOptions,
     CliServerOptions,
     CliShellOptions,
     create_cli_server,
@@ -44,6 +45,13 @@ from qodalis_cli import (
     install_log_redaction,
 )
 from qodalis_cli_server_abstractions import DataExplorerProviderOptions
+from qodalis_cli_server_abstractions.config import (
+    CliConfigSectionDefinition,
+    CliConfigSettingDefinition,
+    CliConfigValidation,
+    CliStoredConfigProvider,
+    JsonFileConfigStore,
+)
 from qodalis_cli_server_abstractions.jobs import CliJobOptions
 
 from qodalis_cli_jobs import CliJobsBuilder
@@ -129,11 +137,39 @@ DEMO_DIR = os.path.dirname(os.path.abspath(__file__))
 def create_demo_server():  # noqa: ANN201
     """The demo server (``CliServerResult``), without running it."""
 
+    # Config providers: settings changed from the dashboard's Config page,
+    # `config set` or MCP `config_set` are kept in a JSON file
+    # (QCLI_DEMO_CONFIG) and applied again at the next start.
+    import tempfile
+
+    config_store = JsonFileConfigStore(
+        os.environ.get("QCLI_DEMO_CONFIG") or os.path.join(tempfile.gettempdir(), "qcli-demo-config.json"),
+    )
+    # A host app's own settings: what the demo's greeting says, and a secret it never shows
+    greeting: dict = {"text": "Hello from the Qodalis CLI demo", "api_key": None}
+    demo_config = CliStoredConfigProvider(
+        id="demo",
+        title="Demo app",
+        description="The demo host application's own settings",
+        sections=[CliConfigSectionDefinition(id="greeting", title="Greeting", settings=[
+            CliConfigSettingDefinition(
+                key="text", label="Greeting", type="string", default=greeting["text"],
+                validation=CliConfigValidation(required=True, max=120),
+                apply=lambda v: greeting.__setitem__("text", str(v)),
+            ),
+            CliConfigSettingDefinition(
+                key="apiKey", label="Partner API key", description="Never shown, only whether it is set",
+                type="secret", apply=lambda v: greeting.__setitem__("api_key", v),
+            ),
+        ])],
+    )
+
     def configure(builder):  # noqa: ANN001
         # Host permission of the public API (a host token is created with it).
         builder.add_permissions([
             CliPermission(name="demo:read", description="Read the demo's public API", group="Demo"),
         ])
+        builder.add_config_provider(demo_config)
         builder \
             .add_processor(CliEchoCommandProcessor()) \
             .add_processor(CliStatusCommandProcessor()) \
@@ -263,6 +299,7 @@ def create_demo_server():  # noqa: ANN201
         CliServerOptions(
             configure=configure,
             allowed_origins=allowed_origins,
+            config=CliServerConfigOptions(store=config_store),
             # Opt-in remote shell.  The users plugin is mounted below, so the
             # shell runs in "users" mode: a WebSocket ticket of a session with
             # the shell:execute permission (root has '*').  Without the users
