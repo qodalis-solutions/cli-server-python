@@ -50,6 +50,9 @@ class CliConfigSettingDefinition:
     #: after a reset): called for every stored value when the store is
     #: attached, and after every change.
     apply: Optional[Callable[[CliConfigValue], None]] = None
+    #: Must have a value (stored, or a default) for the owner to work: a server plugin without it loads as
+    #: ``needs-configuration`` (see :meth:`CliStoredConfigProvider.missing`).
+    required: bool = False
 
     def __post_init__(self) -> None:
         self.validation = CliConfigValidation.of(self.validation)
@@ -198,6 +201,18 @@ class CliStoredConfigProvider(ICliConfigProvider, ICliConfigWriter):
             return clone_cli_config_value(stored[key])
         return None
 
+    def missing(self) -> list[str]:
+        """The required settings without a value (``section.key``; an empty string or list counts as none)."""
+        out: list[str] = []
+        for section in self._sections:
+            for setting in section.settings:
+                if not setting.required:
+                    continue
+                value = self.value(section.id, setting.key)
+                if value is None or value == "" or value == []:
+                    out.append(f"{section.id}.{setting.key}")
+        return out
+
     async def get_sections(self, context: Optional[CliConfigContext] = None) -> list[CliConfigSection]:
         result: list[CliConfigSection] = []
         source = self._ensure_store().source
@@ -227,6 +242,7 @@ class CliStoredConfigProvider(ICliConfigProvider, ICliConfigWriter):
                     sensitive=sensitive,
                     validation=CliConfigValidation(**vars(setting.validation)) if setting.validation else None,
                     editor=setting.editor,
+                    required=setting.required,
                 ))
             if section.allow_custom_keys:
                 known = {s.key for s in section.settings}

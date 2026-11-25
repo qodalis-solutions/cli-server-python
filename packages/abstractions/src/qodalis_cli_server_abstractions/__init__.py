@@ -67,10 +67,13 @@ from .config import *  # noqa: F401,F403 (config providers)
 from .config import __all__ as _config_all
 from .restart import *  # noqa: F401,F403 (restarting the server)
 from .restart import __all__ as _restart_all
+from .plugin_entry import *  # noqa: F401,F403 (server plugins installed at runtime)
+from .plugin_entry import __all__ as _plugin_entry_all
 
 __all__ = [
     *_config_all,
     *_restart_all,
+    *_plugin_entry_all,
     "DEFAULT_TABLE_PREFIX",
     "CliTableNameOptions",
     "is_sql_identifier",

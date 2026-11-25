@@ -162,6 +162,8 @@ class CliConfigEntry:
     validation: Optional[CliConfigValidation] = None
     #: A hint for a richer input: ``tags``, ``cron``, ``code``, ``origins``, ``textarea``, ...
     editor: Optional[str] = None
+    #: Must have a value for its owner to work (a server plugin without it loads as ``needs-configuration``).
+    required: bool = False
 
     @staticmethod
     def of(value: Any) -> "CliConfigEntry":
@@ -183,6 +185,7 @@ class CliConfigEntry:
                 is_set=value.get("is_set", value.get("isSet")),
                 validation=CliConfigValidation.of(value.get("validation")),
                 editor=value.get("editor"),
+                required=bool(value.get("required", False)),
             )
         raise TypeError(f"invalid config entry: {value!r}")
 
