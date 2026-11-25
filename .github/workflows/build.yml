@@ -34,7 +34,8 @@ jobs:
           pip install -e plugins/docs/
           pip install -e plugins/portal/
           pip install -e plugins/aws/
+          pip install -e plugins/config-redis/
           pip install -e ".[test]"
 
       - name: Test
-        run: pytest tests/ plugins/aws/tests/ -v
+        run: pytest tests/ plugins/aws/tests/ plugins/config-redis/tests/ -v

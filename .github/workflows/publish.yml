@@ -35,10 +35,11 @@ jobs:
           # Editable: the portal's wheel needs the portal site, bundled further down.
           pip install -e ./plugins/portal
           pip install ./plugins/aws
+          pip install ./plugins/config-redis
           pip install -e ".[test]"
 
       - name: Run tests
-        run: python -m pytest tests/ plugins/aws/tests/ -v
+        run: python -m pytest tests/ plugins/aws/tests/ plugins/config-redis/tests/ -v
 
       - name: Build abstractions package
         run: python -m build packages/abstractions/ --outdir dist-abstractions/
@@ -205,15 +206,15 @@ jobs:
           verbose: true
           attestations: false
 
-      - name: Build aws, public API, docs and data explorer plugins
+      - name: Build aws, public API, docs, config-redis and data explorer plugins
         run: |
-          for plugin in aws public-api docs data-explorer data-explorer-sql data-explorer-postgres data-explorer-mysql \
+          for plugin in aws public-api docs config-redis data-explorer data-explorer-sql data-explorer-postgres data-explorer-mysql \
                         data-explorer-mssql data-explorer-mongo data-explorer-redis data-explorer-elasticsearch; do
             python -m build plugins/$plugin/ --outdir dist-plugins/
           done
           python -m zipfile -l dist-plugins/qodalis_cli_server_plugin_data_explorer-*.whl | grep -q "qodalis_cli_data_explorer/dashboard/extension.js"
 
-      - name: Publish aws, public API, docs and data explorer plugins to PyPI
+      - name: Publish aws, public API, docs, config-redis and data explorer plugins to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_TOKEN }}
