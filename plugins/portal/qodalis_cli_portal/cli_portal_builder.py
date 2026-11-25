@@ -19,6 +19,7 @@ The portal answers only its own paths under the mount (the site's pages,
 
 from __future__ import annotations
 
+import copy
 import html
 import logging
 import os
@@ -38,7 +39,9 @@ from .options import (
     validate_path,
     validate_theme,
 )
-from .site_resolver import resolve_site_dir
+from .portal_command import CliPortalCommandProcessor, PortalModule, PortalStatus
+from .portal_config_provider import PortalBranding, PortalSiteFacts, create_portal_config_provider
+from .site_resolver import PortalSiteSource, resolve_site
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +110,33 @@ class CliPortalPlugin:
     #: protected server; under them the portal answers every path itself.
     #: Empty at ``/`` (never under ``/api/``) and without a site.
     public_paths: list[str] = field(default_factory=list)
+    #: Where the site was found (``siteDir``, ``package``, ``checkout``, ``bundled``); ``None`` without one.
+    site_source: Optional[PortalSiteSource] = None
+    #: The ``portal`` config provider: branding changeable at runtime
+    #: (``config set portal.branding.<key>``), the site read-only.
+    config_providers: list[Any] = field(default_factory=list)
+    #: The ``portal`` terminal command (``portal [status] [--json]``, ``config:read``), registered by ``mount_plugin``.
+    module: Any = None
+    #: The docs section's page count (the ``portal`` command shows it).
+    page_count: Optional[int] = None
     _index: Optional[str] = field(default=None, repr=False)
+
+    def apply_branding(self, branding: PortalBranding) -> None:
+        """Puts the branding in ``portal.json`` (the ``portal`` config provider calls it on every change)."""
+        self.document["name"] = branding.name
+        self.document["logo"] = branding.logo
+        self.document["theme"] = {**self.document["theme"], "mode": branding.theme_mode}
+        self.document["footerLinks"] = [dict(link) for link in branding.footer_links]
+
+    def status(self) -> PortalStatus:
+        """What ``portal --json`` prints: the current ``portal.json`` (docs with its page count) and where the site is."""
+        doc = copy.deepcopy(self.portal_json(""))
+        if doc.get("docs"):
+            doc["docs"] = {**doc["docs"], "pageCount": self.page_count}
+        doc["site"] = {
+            "path": self.prefix, "found": self.site_dir is not None, "source": self.site_source, "dir": self.site_dir,
+        }
+        return doc
 
     def portal_json(self, root: str) -> dict[str, Any]:
         doc = dict(self.document)
@@ -167,7 +196,10 @@ class CliPortalBuilder:
     def add_section(self, plugin: Any) -> CliPortalBuilder:
         """Show a plugin's section: the docs plugin (guides) or the public-api
         plugin (API reference); a ``portal_section`` dict works too."""
-        self._sections.append(getattr(plugin, "portal_section", plugin))
+        section = getattr(plugin, "portal_section", plugin)
+        # The docs plugin's page count, shown by the ``portal`` command
+        pages = getattr(plugin, "pages", None)
+        self._sections.append((section, len(pages) if isinstance(pages, (list, tuple)) else None))
         return self
 
     def set_site_dir(self, path: str | None) -> CliPortalBuilder:
@@ -187,7 +219,8 @@ class CliPortalBuilder:
             "api": None,
         }
         seen: set[str] = set()
-        for section in self._sections:
+        page_count: Optional[int] = None
+        for section, pages in self._sections:
             kind = section.get("kind") if isinstance(section, dict) else None
             if kind not in SECTION_KINDS:
                 raise ValueError(f"invalid portal section: {kind}")
@@ -197,13 +230,34 @@ class CliPortalBuilder:
             base = section["base_path"]
             if kind == "docs":
                 document["docs"] = {"title": section["title"], "pages": f"{base}/pages"}
+                page_count = pages
             else:
                 document["api"] = {
                     "title": section["title"], "openapi": f"{base}/openapi.json", "swagger": f"{base}/swagger",
                 }
 
-        site_dir = resolve_site_dir(self._site_dir)
-        plugin = CliPortalPlugin(prefix=path, router=APIRouter(), document=document, site_dir=site_dir)
+        site = resolve_site(self._site_dir)
+        site_dir = site[0] if site else None
+        plugin = CliPortalPlugin(
+            prefix=path, router=APIRouter(), document=document, site_dir=site_dir,
+            site_source=site[1] if site else None, page_count=page_count,
+        )
+        # The builder's branding is the default; the ``portal`` config provider's stored values override it (live)
+        defaults = PortalBranding(
+            name=document["name"], logo=document["logo"], theme_mode=document["theme"]["mode"],
+            footer_links=[dict(link) for link in document["footerLinks"]],
+        )
+        plugin.config_providers = [
+            create_portal_config_provider(
+                defaults,
+                plugin.apply_branding,
+                PortalSiteFacts(
+                    path=path, site_found=site_dir is not None,
+                    sections=[s.get("kind") for s, _ in self._sections],
+                ),
+            ),
+        ]
+        plugin.module = PortalModule(CliPortalCommandProcessor(plugin.status), _package_version())
         if site_dir is None:
             # Nothing is served, portal.json included.
             logger.warning(SITE_NOT_FOUND)
@@ -217,6 +271,15 @@ class CliPortalBuilder:
                 f"{path}/guides/*", f"{path}/reference", f"{path}/reference/*",
             ]
         return plugin
+
+
+def _package_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("qodalis-cli-server-plugin-portal")
+    except Exception:  # pragma: no cover - not installed as a package
+        return "1.0.0"
 
 
 def _router(plugin: CliPortalPlugin, site_dir: str) -> APIRouter:
