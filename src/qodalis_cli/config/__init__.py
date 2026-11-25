@@ -4,6 +4,7 @@ from .cli_config_registry import DEFAULT_CONFIG_PROVIDER_ORDER, CliConfigRegistr
 from .cli_config_service import CliConfigService, to_cli_config_entry_view, to_cli_config_section_view
 from .config_command import CliConfigCommandProcessor, config_context_of_auth, format_config_value
 from .providers.host_config_provider import (
+    DEFAULT_ENVIRONMENT_ALLOW,
     CliHostConfigProvider,
     CliHostEnvironmentOptions,
     CliHostOption,
@@ -27,6 +28,7 @@ __all__ = [
     "CliConfigCommandProcessor",
     "config_context_of_auth",
     "format_config_value",
+    "DEFAULT_ENVIRONMENT_ALLOW",
     "CliHostConfigProvider",
     "CliHostEnvironmentOptions",
     "CliHostOption",
