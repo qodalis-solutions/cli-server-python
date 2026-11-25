@@ -57,6 +57,28 @@ class TestRegistration:
         with pytest.raises(ValueError, match="^dashboard extension already registered: marketplace$"):
             builder.add_dashboard_extension({**MARKETPLACE, "title": "Again"})
 
+    def test_removes_an_extension_at_runtime_and_its_id_can_be_registered_again(self) -> None:
+        builder = _builder().add_dashboard_extension(MARKETPLACE)
+        builder.add_dashboard_extension({"id": "billing", "title": "Billing", "entry": "/b.js"})
+        assert builder.remove_dashboard_extension("marketplace") is True
+        assert builder.remove_dashboard_extension("marketplace") is False
+        assert [e.id for e in builder.dashboard_extensions] == ["billing"]
+        builder.add_dashboard_extension({**MARKETPLACE, "title": "Again"})
+        assert [e.title for e in builder.dashboard_extensions] == ["Billing", "Again"]
+
+    async def test_audit_sink_is_the_config_audit_store_else_none(self) -> None:
+        builder = _builder()
+        assert builder.audit_sink is None
+        logged: list = []
+
+        class _Store:
+            async def log(self, entry) -> None:  # noqa: ANN001
+                logged.append(entry)
+
+        builder.set_config_audit_store(_Store())
+        await builder.audit_sink({"event": "x.y"})
+        assert logged == [{"event": "x.y"}]
+
     def test_turns_an_unknown_group_into_system(self) -> None:
         builder = _builder().add_dashboard_extension({"id": "x", "title": "X", "entry": "/x.js", "group": "elsewhere"})
         assert builder.dashboard_extensions[0].group == "system"
@@ -167,3 +189,30 @@ class TestEndpoint:
             )
             assert res.status_code == 200
             assert [e["id"] for e in res.json()["extensions"]] == ["marketplace"]
+
+
+class TestAssetRoutes:
+    def test_serves_each_app_at_its_prefix_without_sign_in_and_unhandled_paths_fall_through(self) -> None:
+        from starlette.responses import PlainTextResponse
+
+        async def app(scope, receive, send) -> None:  # noqa: ANN001
+            await PlainTextResponse("ok", media_type="text/javascript")(scope, receive, send)
+
+        class _Asset:
+            prefix = "/qcli/assets-test"
+            handles = staticmethod(lambda path: path == "/hello.js")
+
+        _Asset.app = staticmethod(app)
+
+        class _Mounted:
+            prefix = "/api/v1/qcli/x"
+            router = APIRouter()
+            asset_routes = [_Asset()]
+
+        server = create_cli_server(CliServerOptions())
+        server.mount_plugin(_Mounted())
+        users = CliUsersBuilder().set_default_admin_password("root-pass-123").build()
+        server.mount_plugin(users)
+        with TestClient(server.app) as client:
+            assert client.get("/qcli/assets-test/hello.js").text == "ok"
+            assert client.get("/qcli/assets-test/other.js").status_code == 404
