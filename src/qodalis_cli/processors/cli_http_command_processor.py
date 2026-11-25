@@ -18,6 +18,9 @@ from ..abstractions import (
 )
 from ..abstractions import CliCommandExample
 
+#: The permission the ``http`` command (every sub-command) requires.
+HTTP_REQUEST = "http:request"
+
 
 def _url(command: CliProcessCommand) -> str | None:
     """The URL: the first positional argument, unquoted."""
@@ -270,6 +273,16 @@ class CliHttpCommandProcessor(CliCommandProcessor):
     @property
     def description(self) -> str:
         return "Makes HTTP requests from the server"
+
+    @property
+    def module(self) -> str | None:
+        """Listed under the server's built-in commands."""
+        return "core"
+
+    @property
+    def required_permissions(self) -> list[str]:
+        """``http:request``: the requests leave from the server, so they reach its network."""
+        return [HTTP_REQUEST]
 
     @property
     def examples(self) -> list[CliCommandExample]:
