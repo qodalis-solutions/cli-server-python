@@ -14,6 +14,8 @@ from typing import Any, AsyncIterator, Callable
 
 import psutil
 
+from .system_memory import read_system_memory
+
 logger = logging.getLogger(__name__)
 
 #: Seconds between two samples.
@@ -42,6 +44,7 @@ class StatusHistory:
         clock: Callable[[], float] = time.monotonic,
         cpu_clock: Callable[[], float] = time.process_time,
         memory: Callable[[], float] = memory_usage_mb,
+        system_memory: Callable[[], dict[str, Any]] = read_system_memory,
     ) -> None:
         self._event_socket_manager = event_socket_manager
         self.interval = interval
@@ -49,6 +52,7 @@ class StatusHistory:
         self._clock = clock
         self._cpu_clock = cpu_clock
         self._memory = memory
+        self._system_memory = system_memory
         self._last: tuple[float, float] | None = None
         self._task: asyncio.Task[None] | None = None
 
@@ -61,9 +65,12 @@ class StatusHistory:
             if elapsed > 0:
                 cpu_percent = round(max(cpu - self._last[1], 0.0) / elapsed * 100, 2)
         self._last = (wall, cpu)
+        system = self._read_system_memory()
         sample = {
             "timestamp": (now or datetime.now(timezone.utc)),
             "memoryMb": self._memory(),
+            "systemMemoryUsedMb": system.get("systemMemoryUsedMb"),
+            "systemMemoryTotalMb": system.get("systemMemoryTotalMb"),
             "cpuPercent": cpu_percent,
             "activeWsConnections": self._ws_connections(),
             "activeShellSessions": 0,
@@ -121,6 +128,12 @@ class StatusHistory:
             except Exception:  # never let one failed sample stop the history
                 logger.debug("Status sample failed", exc_info=True)
             await asyncio.sleep(self.interval)
+
+    def _read_system_memory(self) -> dict[str, Any]:
+        try:
+            return self._system_memory() or {}
+        except Exception:
+            return {}
 
     def _read_cpu(self) -> float | None:
         try:
