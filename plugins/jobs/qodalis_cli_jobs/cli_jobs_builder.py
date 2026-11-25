@@ -18,6 +18,7 @@ from qodalis_cli_server_abstractions.jobs import (
 )
 
 from .cli_job_scheduler import CliJobScheduler, BroadcastFn
+from .jobs_config_provider import create_jobs_config_provider
 from .cli_jobs_controller import create_cli_jobs_router
 from .in_memory_job_storage_provider import InMemoryJobStorageProvider
 
@@ -49,6 +50,8 @@ class CliJobsPlugin:
     scheduler: CliJobScheduler
     #: The dashboard's Jobs page, when the package carries its build (mounted with the plugin).
     dashboard_pages: list[Any] = field(default_factory=list)
+    #: The ``jobs`` config provider (history retention defaults), registered by ``mount_plugin``.
+    config_providers: list[Any] = field(default_factory=list)
 
     def on_mount(self, server: object) -> None:
         """Hook called by ``CliServerResult.mount_plugin``: publishes the
@@ -132,4 +135,5 @@ class CliJobsBuilder:
         return CliJobsPlugin(
             prefix="/api/v1/qcli/jobs", router=router, scheduler=scheduler,
             dashboard_pages=[page] if page else [],
+            config_providers=[create_jobs_config_provider(scheduler)],
         )

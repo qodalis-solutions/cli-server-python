@@ -224,6 +224,31 @@ class CliJobScheduler:
         return True
 
     @property
+    def history_prune_interval(self) -> str:
+        """How often the built-in ``jobs:prune-history`` job runs (``1d``)."""
+        retention = self.history_retention
+        interval = retention.prune_interval if retention is not None else JobHistoryRetention().prune_interval
+        return format_duration(parse_duration(interval)) or "1d"
+
+    def set_history_defaults(self, retention: JobHistoryRetention | None) -> None:
+        """Replaces the global history retention at runtime (the ``jobs``
+        config provider): the next prune applies it.  Registers (and, while
+        running, schedules) the ``jobs:prune-history`` job when it was not
+        needed before.  Raises ``ValueError`` on an invalid limit; the prune
+        interval stays what it was."""
+        if retention is not None:
+            current = self.history_retention
+            if current is not None:
+                retention.prune_interval = current.prune_interval
+            retention.validate()
+        self.history_retention = retention
+        existed = PRUNE_HISTORY_JOB_ID in self._registrations
+        if not existed and self.ensure_prune_history_job() and self._running:
+            reg = self._registrations.get(PRUNE_HISTORY_JOB_ID)
+            if reg is not None and reg.status == "active":
+                self._schedule_next(reg, run_now=True)
+
+    @property
     def registrations(self) -> dict[str, JobRegistration]:
         """Return the map of job ID to registration state."""
         return self._registrations
