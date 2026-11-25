@@ -9,7 +9,12 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional
 
-from .config_types import CliConfigConflictError, CliConfigValue
+from .config_types import (
+    CliConfigConflictError,
+    CliConfigProviderStorage,
+    CliConfigStoreDescription,
+    CliConfigValue,
+)
 from .config_validation import clone_cli_config_value
 
 
@@ -33,6 +38,12 @@ class ICliConfigStore(abc.ABC):
     #: The ``source`` of the settings it holds: ``runtime`` (memory), ``file`` or ``database``.
     source: str = "runtime"
 
+    # Stores may define ``describe() -> CliConfigStoreDescription``: where they
+    # keep the settings, shown by ``GET /config`` (``store``), the dashboard's
+    # Config page and ``config list``: the file name or the database and
+    # table, never credentials.  A store without it is shown as a ``custom``
+    # store (:func:`describe_cli_config_store`).
+
     @abc.abstractmethod
     async def read(self, provider: str, section: str) -> CliConfigStoredSection:
         """A section's values; ``CliConfigStoredSection({}, 0)`` when nothing is stored."""
@@ -48,6 +59,56 @@ class ICliConfigStore(abc.ABC):
         """Applies ``changes`` to a section atomically (``None`` removes a key)
         and returns the section as stored.  With ``expected_version``, raises
         :class:`CliConfigConflictError` when the stored version differs."""
+
+
+def cli_config_store_storage() -> CliConfigProviderStorage:
+    """The ``storage`` of a provider whose changes are kept in the config store."""
+    return CliConfigProviderStorage(kind="store", description="Changes are saved to the config store")
+
+
+#: The ``storage`` of a provider whose changes are kept in the config store.
+CLI_CONFIG_STORE_STORAGE = cli_config_store_storage()
+
+
+def describe_cli_config_store(store: Any) -> CliConfigStoreDescription:
+    """A store's description: its own ``describe()``, else a ``custom`` store named after its class."""
+    describe = getattr(store, "describe", None)
+    if callable(describe):
+        d = describe()
+        if isinstance(d, Mapping):
+            d = CliConfigStoreDescription(
+                kind=d.get("kind", "custom"), title=d.get("title", ""),
+                detail=d.get("detail") or "", persistent=d.get("persistent") is True,
+            )
+        return CliConfigStoreDescription(
+            kind=d.kind, title=d.title, detail=d.detail or "", persistent=d.persistent is True,
+        )
+    name = type(store).__name__
+    return CliConfigStoreDescription(
+        kind="custom",
+        title="Custom store",
+        detail=name if name and name != "object" else "",
+        persistent=getattr(store, "source", "runtime") != "runtime",
+    )
+
+
+def describe_cli_config_store_line(store: CliConfigStoreDescription) -> str:
+    """The store as one line: ``JSON file (qcli-demo-config.json), kept across restarts``."""
+    detail = f" ({store.detail})" if store.detail else ""
+    kept = "kept across restarts" if store.persistent else "changes are lost on restart"
+    return f"{store.title}{detail}, {kept}"
+
+
+def _display_path(file_path: str) -> str:
+    """A path relative to the working directory when inside it, else the file name only (no absolute paths in descriptions)."""
+    absolute = os.path.abspath(file_path)
+    try:
+        relative = os.path.relpath(absolute, os.getcwd())
+    except ValueError:
+        relative = ""
+    if relative and relative != "." and not relative.startswith("..") and not os.path.isabs(relative):
+        return relative.replace(os.sep, "/")
+    return os.path.basename(absolute)
 
 
 def apply_cli_config_changes(
@@ -96,6 +157,9 @@ class InMemoryConfigStore(ICliConfigStore):
     def __init__(self) -> None:
         self._data: _StoredData = {}
 
+    def describe(self) -> CliConfigStoreDescription:
+        return CliConfigStoreDescription(kind="memory", title="In memory", detail="", persistent=False)
+
     async def read(self, provider: str, section: str) -> CliConfigStoredSection:
         return _read_section(self._data, provider, section)
 
@@ -124,6 +188,10 @@ class JsonFileConfigStore(ICliConfigStore):
     def __init__(self, file_path: str | os.PathLike[str]) -> None:
         self.file_path = os.fspath(file_path)
         self._data: Optional[_StoredData] = None
+
+    def describe(self) -> CliConfigStoreDescription:
+        """The file's path relative to the working directory, or its name when outside it."""
+        return CliConfigStoreDescription(kind="file", title="JSON file", detail=_display_path(self.file_path), persistent=True)
 
     def _load(self) -> _StoredData:
         if self._data is not None:
