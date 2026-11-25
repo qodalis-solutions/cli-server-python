@@ -40,7 +40,8 @@ RUN pip install --no-cache-dir ./plugins/filesystem \
     && pip install --no-cache-dir ./plugins/data-explorer-elasticsearch \
     && pip install --no-cache-dir ./plugins/admin \
     && pip install --no-cache-dir ./plugins/public-api \
-    && pip install --no-cache-dir ./plugins/docs
+    && pip install --no-cache-dir ./plugins/docs \
+    && pip install --no-cache-dir ./plugins/config-redis
 
 # TEMPORARY (see above): the portal plugin without its site, installed editable
 # (a wheel build refuses without the site). The demo's portal then logs
