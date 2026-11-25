@@ -356,10 +356,10 @@ class CliShellSessionManager:
             except asyncio.TimeoutError:
                 pass
 
-    async def close_all(self, reason: str = "server shutdown") -> None:
-        """Close every open shell (e.g. on server shutdown)."""
+    async def close_all(self, reason: str = "server shutdown", code: int = 1001) -> None:
+        """Close every open shell (server shutdown: 1001; a restart passes 1012)."""
         for session in list(self._sessions.values()):
-            session.request_close(1001, reason, END_SHUTDOWN)
+            session.request_close(code, reason, END_SHUTDOWN)
 
     # ------------------------------------------------------------------
     # Audit / logging (C4) — never the command text or stdin

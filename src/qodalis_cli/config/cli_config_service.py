@@ -138,10 +138,16 @@ class CliConfigService(ICliConfigService):
         registry: CliConfigRegistry,
         audit: Optional[Callable[[], Optional[CliConfigAuditSink]]] = None,
         event_bus: Optional[Callable[[], Any]] = None,
+        restart: Optional[Callable[[], Any]] = None,
     ) -> None:
         self.registry = registry
         self._audit = audit
         self._event_bus = event_bus
+        #: The restart service: a change to a ``requiresRestart`` entry is marked pending
+        #: (``config:<provider>.<section>.<key>``).
+        self._restart = restart
+        #: The value of each ``requiresRestart`` entry changed so far, as it was at start (by pending id).
+        self._start_values: dict[str, Any] = {}
 
     def attach(
         self,
@@ -293,6 +299,7 @@ class CliConfigService(ICliConfigService):
             raw = changes.get(key)
             new = _audit_value(now or old, raw, "new") if (now is not None or raw is not None) else None
             audit_changes.append({"key": key, "old": _audit_value(old, None, "old"), "new": new})
+        self._track_restart(provider, section_id, result.applied, before, after)
         store = self.describe_provider_store(provider)
         store_kind = store.kind if store is not None else None
         await self._write_audit(provider.id, section_id, result.version, audit_changes, context, store_kind)
@@ -306,6 +313,33 @@ class CliConfigService(ICliConfigService):
             "requiresRestart": result.requires_restart,
             "version": result.version,
         }
+
+    def _track_restart(
+        self, provider: Any, section_id: str, applied: Any, before: dict[str, Any], after: dict[str, Any],
+    ) -> None:
+        """Marks a changed ``requiresRestart`` entry as waiting for a restart, and clears it when its value is set
+        back to what it was at start (a secret, whose value is never seen, stays marked)."""
+        restart = self._restart() if self._restart is not None else None
+        if restart is None:
+            return
+        for key in applied:
+            old = next((e for e in before["entries"] if e["key"] == key), None)
+            now = next((e for e in after["entries"] if e["key"] == key), None)
+            if not (old or {}).get("requiresRestart") and not (now or {}).get("requiresRestart"):
+                continue
+            pending_id = f"config:{provider.id}.{section_id}.{key}"
+            sensitive = bool((old or {}).get("sensitive") or (now or {}).get("sensitive"))
+            if pending_id not in self._start_values:
+                self._start_values[pending_id] = clone_cli_config_value((old or {}).get("value"))
+            unchanged = not sensitive and (now or {}).get("value") == self._start_values[pending_id]
+            label = (now or old or {}).get("label") or key
+            try:
+                if unchanged:
+                    restart.clear_required(pending_id)
+                else:
+                    restart.mark_required(pending_id, "config", f"{provider.title}: {label} changed")
+            except Exception as exc:  # noqa: BLE001 - the change is made; marking failing is logged
+                logger.error("Marking a restart failed: %s", exc)
 
     async def _publish(
         self,

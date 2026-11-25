@@ -81,6 +81,16 @@ from qodalis_cli_filesystem.providers import (
 )
 from .processors import CliHttpCommandProcessor
 from .create_cli_server import create_cli_server, CliServerConfigOptions, CliServerOptions, CliServerResult
+from .restart import (
+    DEFAULT_RESTART_DRAIN_TIMEOUT,
+    DEFAULT_RESTART_EXIT_CODE,
+    RESTART_NOT_SUPPORTED,
+    CliServerRestart,
+    CliServerRestartContext,
+    CliServerRestartOptions,
+    CliServerRestartRuntime,
+    detect_supervisor,
+)
 from .config import CliConfigService, CliHostEnvironmentOptions
 from .mcp import CliMcpOptions, IMcpToolProvider, McpTool, McpToolRegistry, McpToolResult
 from .shell_security import CliShellOptions, ShellAccessProvider, ShellPrincipal
@@ -154,6 +164,14 @@ __all__ = [
     "create_cli_server",
     "CliServerOptions",
     "CliServerConfigOptions",
+    "DEFAULT_RESTART_DRAIN_TIMEOUT",
+    "DEFAULT_RESTART_EXIT_CODE",
+    "RESTART_NOT_SUPPORTED",
+    "CliServerRestart",
+    "CliServerRestartContext",
+    "CliServerRestartOptions",
+    "CliServerRestartRuntime",
+    "detect_supervisor",
     "CliConfigService",
     "CliHostEnvironmentOptions",
     "CliServerResult",

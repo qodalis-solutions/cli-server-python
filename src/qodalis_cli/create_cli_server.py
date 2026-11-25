@@ -12,6 +12,7 @@ from typing import Any, Callable
 from fastapi import FastAPI, WebSocket
 from starlette.routing import Match, Mount
 
+from qodalis_cli_server_abstractions import CliRoutePermission
 from qodalis_cli_server_abstractions.config import create_custom_config_provider
 from qodalis_cli_filesystem.providers.os_provider import OsFileStorageProvider, OsProviderOptions
 
@@ -46,6 +47,13 @@ from .config import (
 )
 from .mcp import ConfigMcpToolProvider
 from .mcp.endpoint import MCP_PATH
+from .restart import (
+    CliRestartRequestTracker,
+    CliServerRestart,
+    CliServerRestartOptions,
+    CliServerRestartServices,
+    create_restart_router,
+)
 from .security import LiveCorsMiddleware, WebSocketOriginMiddleware, get_auth_context
 from .shell_security import CliShellOptions, ShellAccessProvider, remote_address
 from .services import (
@@ -130,6 +138,12 @@ class CliServerOptions:
     #: Config providers: the stores of writable settings (default and per provider), what the ``host``
     #: provider shows, the ``config`` command (:class:`CliServerConfigOptions`).
     config: CliServerConfigOptions | None = None
+    #: Restarting the server from the dashboard, ``admin restart`` or ``POST /api/v1/qcli/server/restart``
+    #: (:class:`CliServerRestartOptions` or a dict of its fields): ``mode`` ``auto`` (default: ``exit`` under a
+    #: detected supervisor, else not supported), ``exit`` (graceful shutdown, then exit with ``exit_code``, default
+    #: 75, for Docker, systemd, PM2 or Kubernetes to start it again), ``self`` (graceful shutdown, then the same
+    #: command runs again in this process: bare runs and development) or ``handler`` (the host's function).
+    restart: CliServerRestartOptions | dict[str, Any] | None = None
     configure: Callable[[CliBuilder], None] | None = None
 
 
@@ -179,6 +193,13 @@ class CliServerResult:
     #: users plugin's CSRF check): the ``cors`` config provider changes its
     #: items at runtime.
     allowed_origins: list[str] = field(default_factory=list)
+
+    @property
+    def restart(self) -> CliServerRestart:
+        """Restarting the server and the changes waiting for it (same as ``builder.restart``): ``mark_required``,
+        ``clear_required``, ``status()``, ``on_shutdown(name, fn)`` for the host's own clean-up (pools, stores),
+        ``attach_server(uvicorn_server)`` when uvicorn runs outside the main thread."""
+        return self.builder.restart
 
     @property
     def config(self) -> Any:
@@ -305,6 +326,15 @@ class CliServerResult:
         if callable(on_mount):
             on_mount(self)
 
+        # A restart's graceful shutdown stops the plugin's job scheduler and releases its resources
+        scheduler = getattr(plugin, "scheduler", None)
+        stop = getattr(scheduler, "stop", None)
+        if callable(stop):
+            self.restart.on_shutdown("job scheduler", stop)
+        dispose = getattr(plugin, "dispose", None)
+        if callable(dispose):
+            self.restart.on_shutdown(f"plugin {prefix or type(plugin).__name__}", dispose)
+
         dashboard_prefix = getattr(plugin, "dashboard_prefix", None)
         dashboard_app = getattr(plugin, "dashboard_app", None)
         if dashboard_prefix and dashboard_app and routes_off:
@@ -413,6 +443,9 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
             # Apply the stored settings before serving (a store that cannot be read fails startup)
             await server_ref[0].builder.config.ready()
         yield
+        if server_ref:
+            # A restart: the sockets closed with 1012, the shutdown hooks, then the mode's action
+            await server_ref[0].builder.restart.server_stopped()
         await shell_session_manager.close_all()
         await event_socket_manager.broadcast_disconnect()
         await log_socket_manager.broadcast_disconnect()
@@ -457,6 +490,20 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     if opts.configure:
         opts.configure(builder)
 
+    async def close_sockets(code: int, reason: str) -> None:
+        await shell_session_manager.close_all(reason, code)
+        await event_socket_manager.broadcast_disconnect(code, reason)
+        await log_socket_manager.broadcast_disconnect(code, reason)
+
+    restart = builder.restart.configure(opts.restart, CliServerRestartServices(
+        event_bus=lambda: event_bus,
+        audit=lambda: builder.audit_sink,
+        is_protected=lambda: _requires_authentication(server_ref[0]) if server_ref else False,
+        close_sockets=close_sockets,
+    ))
+    # In-flight requests, which a restart's graceful shutdown waits for (outermost)
+    app.add_middleware(CliRestartRequestTracker, restart=restart)
+
     executor = CliCommandExecutorService(registry, max_table_rows=opts.max_table_rows)
     executor.event_bus = event_bus
     shell_auth = lambda: shell_session_manager.access_mode  # noqa: E731
@@ -466,6 +513,8 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     if opts.cli_routes:
         app.include_router(router, prefix="/api/v1/qcli")
         app.include_router(version_router, prefix="/api/qcli")
+        # Restart: GET the status (admin:access), POST restarts (server:restart)
+        app.include_router(create_restart_router(restart), prefix="/api/v1/qcli/server/restart")
 
         if opts.base_path != "/api/v1/qcli":
             app.include_router(router, prefix=opts.base_path)
@@ -591,6 +640,10 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         allowed_origins=allowed_origins,
     )
     result.add_cli_route_prefix(opts.base_path)
+    if opts.cli_routes:
+        result.route_permissions.append(
+            CliRoutePermission(path="/api/v1/qcli/server/restart", read="admin:access", write="server:restart"),
+        )
     server_ref.append(result)
     _configure_config_providers(
         result, opts, package_version, cors_mode, mcp_options, fs_limits, fs_storage_name,

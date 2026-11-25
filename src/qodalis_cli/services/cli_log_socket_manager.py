@@ -124,13 +124,14 @@ class CliLogSocketManager(SessionBoundSockets):
         tasks = [self._safe_send(ws, message) for ws in targets]
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def broadcast_disconnect(self) -> None:
-        """Send a disconnect message to all clients and close connections."""
+    async def broadcast_disconnect(self, code: int = 1000, reason: str = "Server shutting down") -> None:
+        """Send a disconnect message to all clients and close connections (with ``code``: 1000 on shutdown, 1012 on
+        a restart)."""
         logger.info("Broadcasting disconnect to %d log clients", len(self._clients))
         message = json.dumps({"type": "disconnect"})
         tasks = []
         for ws, _ in list(self._clients.values()):
-            tasks.append(self._send_and_close(ws, message))
+            tasks.append(self._send_and_close(ws, message, code, reason))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._clients.clear()
@@ -143,10 +144,10 @@ class CliLogSocketManager(SessionBoundSockets):
             logger.debug("Log broadcast send failed, removing client")
 
     @staticmethod
-    async def _send_and_close(client: WebSocket, message: str) -> None:
+    async def _send_and_close(client: WebSocket, message: str, code: int = 1000, reason: str = "") -> None:
         try:
             await client.send_text(message)
-            await client.close()
+            await client.close(code, reason or None)
         except Exception:
             logger.debug("Failed to send disconnect to log client")
 
