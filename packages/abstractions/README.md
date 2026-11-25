@@ -72,7 +72,8 @@ Register it on the server with `builder.add_module(GreetingsModule())`; see the 
 | Jobs | `ICliJob`, `ICliJobExecutionContext`, `ICliJobLogger`, `CliJobOptions`, `ICliJobStorageProvider`, `JobExecution`, `JobState`, `JobLogEntry` |
 | Config providers | `ICliConfigProvider`, `ICliConfigWriter`, `CliConfigSection`, `CliConfigEntry`, `CliConfigValidation`, `CliConfigContext`, `CliConfigCaller`, `cli_config_context`, `has_cli_permission`, `ICliConfigService`, `CliConfigError`, `CliConfigConflictError`, `CliConfigValidationError`, `CliConfigPermissions`, `CLI_CONFIG_CHANGED_EVENT`, `CLI_CONFIG_AUDIT_EVENT` |
 | Config settings in code | `CliStoredConfigProvider`, `CliConfigSectionDefinition`, `CliConfigSettingDefinition`, `create_custom_config_provider`, `ICliModule.config_providers` |
-| Config stores | `ICliConfigStore`, `CliConfigStoredSection`, `InMemoryConfigStore` (source `runtime`), `JsonFileConfigStore` (source `file`, mode 0600) |
+| Config stores | `ICliConfigStore`, `CliConfigStoredSection`, `InMemoryConfigStore` (source `runtime`), `JsonFileConfigStore` (source `file`, mode 0600); `describe()` says where they keep the settings |
+| Where settings come from | `CliConfigStoreDescription`, `describe_cli_config_store` (`custom` for a store without `describe()`), `describe_cli_config_store_line` (its `config list` line), `CliConfigProviderStorage`, `cli_config_store_storage`, `ICliConfigService.describe_store` |
 | Config values | `validate_cli_config_value`, `parse_cli_config_input`, `parse_cli_config_duration`, `format_cli_config_duration`, `infer_cli_config_entry_type` |
 | Data explorer | `IDataExplorerProvider`, `DataExplorerProviderOptions`, `DataExplorerExecutionContext`, `DataExplorerResult`, `DataExplorerLanguage`, `DataExplorerOutputFormat`, `DataExplorerTemplate`, `DataExplorerParameterDescriptor`, schema types |
 

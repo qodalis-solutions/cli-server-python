@@ -66,7 +66,7 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli`). Exce
 | GET | `/plugins/installed` | List the installed server plugin packages (`id`, `name`, `version`, `description`) |
 | GET | `/plugins/{id}` | One plugin module by name (ignoring case); 404 `PLUGIN_NOT_FOUND` |
 | POST | `/plugins/{id}/toggle` | Enable or disable a plugin module |
-| GET | `/config` | The server's config providers the caller may see (`config:read`): `{"providers": [...]}` |
+| GET | `/config` | Where changes are saved and the server's config providers the caller may see (`config:read`), each with its `storage`: `{"store": {"kind", "title", "detail", "persistent"}, "providers": [...]}` |
 | GET | `/config/{provider}` | One config provider |
 | PATCH | `/config/{provider}/{section}` | Change settings (`config:write`): `{"changes": {...}, "version": "3"}`; 400 per-key errors, 409 stale version |
 | GET | `/logs` | Retrieve buffered log entries: `?level=` (one or comma-separated `DEBUG`, `INFO`, `WARN`, `ERROR`), `search=` (message or source), `service=`, `from=`/`to=` (ISO 8601, no offset = UTC), `limit=`, `offset=`; answers `entries`, `total`, `limit`, `offset`, `hasMore`, `store` (`memory`), `persistent` (`false`), `services` (`[]`) |
