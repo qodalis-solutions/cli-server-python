@@ -40,13 +40,16 @@ def create_users_auth_dependency(users_plugin: Any):
             raise HTTPException(status_code=403, detail="password change required")
         if not ctx.can("admin:access"):
             raise HTTPException(status_code=403, detail="missing permission: admin:access")
-        return {
+        session_user: dict[str, Any] = {
             "username": ctx.user.name,
-            "userId": ctx.user.id,
+            "userId": getattr(ctx.user, "id", None),
             "authenticatedAt": (ctx.session.created_at // 1000) if ctx.session else None,
-            # The config API checks config:read / config:write against them
-            "permissions": list(ctx.permissions),
         }
+        permissions = getattr(ctx, "permissions", None)
+        if permissions is not None:
+            # The config API checks config:read / config:write against them
+            session_user["permissions"] = list(permissions)
+        return session_user
 
     return require_auth
 
