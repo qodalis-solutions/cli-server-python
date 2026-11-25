@@ -316,9 +316,15 @@ class CliUsersPlugin:
         # The host application signs users in (read by the admin dashboard).
         if self.auth_service.external_auth and hasattr(options, "external_authentication"):
             options.external_authentication = True
+        # The server's live list (the ``cors`` config provider changes it at
+        # runtime), else a copy of its options' list (older servers)
+        live = getattr(server, "allowed_origins", None)
         origins = getattr(options, "allowed_origins", None)
-        if origins and self.auth_service.options.allowed_origins is None:
-            self.auth_service.options.allowed_origins = list(origins)
+        if self.auth_service.options.allowed_origins is None:
+            if isinstance(live, list):
+                self.auth_service.options.allowed_origins = live
+            elif origins:
+                self.auth_service.options.allowed_origins = list(origins)
         # A custom CLI API base path is protected like the default ones.
         base_path = getattr(options, "base_path", None)
         if isinstance(base_path, str) and base_path.strip("/"):

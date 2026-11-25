@@ -29,6 +29,8 @@ CORE_NAMES = [
     "jobs:manage",
     "logs:read",
     "admin:access",
+    "config:read",
+    "config:write",
     "audit:read",
     "audit:clear",
 ]

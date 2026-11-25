@@ -6,7 +6,7 @@ import shutil
 import stat
 from dataclasses import asdict
 from datetime import datetime, timezone
-from typing import Any, Union
+from typing import Any, Callable, Union
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -61,10 +61,14 @@ def _limited_receive(receive: Any, limit: int) -> Any:
     return wrapped
 
 
-async def _read_upload(request: Request, max_bytes: int) -> tuple[str, bytes]:
+async def _read_upload(request: Request, max_bytes: int | Callable[[], int]) -> tuple[str, bytes]:
     """Parse ``multipart/form-data`` with ``file`` and ``path`` fields and
     return ``(path, contents)``; 413 when the file is larger than
-    ``max_bytes`` (read in chunks, never more than the cap is kept)."""
+    ``max_bytes`` (read in chunks, never more than the cap is kept).
+    ``max_bytes`` may be a function, read per upload (the ``filesystem``
+    config provider changes the limit at runtime)."""
+    if callable(max_bytes):
+        max_bytes = max_bytes()
     body_limit = max_bytes + _MULTIPART_OVERHEAD
     content_length = request.headers.get("content-length")
     if content_length and content_length.isdigit() and int(content_length) > body_limit:
@@ -109,7 +113,7 @@ def _map_provider_error(exc: Exception) -> HTTPException:
 
 def create_filesystem_router(
     provider_or_validator: Union[IFileStorageProvider, FileSystemPathValidator],
-    max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+    max_upload_bytes: int | Callable[[], int] = DEFAULT_MAX_UPLOAD_BYTES,
 ) -> APIRouter:
     """Create a FastAPI router exposing filesystem operations.
 
@@ -124,7 +128,7 @@ def create_filesystem_router(
 
 
 def _create_provider_router(
-    provider: IFileStorageProvider, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+    provider: IFileStorageProvider, max_upload_bytes: int | Callable[[], int] = DEFAULT_MAX_UPLOAD_BYTES,
 ) -> APIRouter:
     """Create a router that delegates to *provider*."""
 
@@ -273,7 +277,7 @@ def _stat_entry(resolved: str) -> dict[str, Any]:
 
 
 def _create_legacy_router(
-    validator: FileSystemPathValidator, max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+    validator: FileSystemPathValidator, max_upload_bytes: int | Callable[[], int] = DEFAULT_MAX_UPLOAD_BYTES,
 ) -> APIRouter:
     """Create a router using the legacy :class:`FileSystemPathValidator`."""
 
