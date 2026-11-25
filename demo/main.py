@@ -128,20 +128,53 @@ DEMO_DIR = os.path.dirname(os.path.abspath(__file__))
 def create_demo_server():  # noqa: ANN201
     """The demo server (``CliServerResult``), without running it."""
 
-    # Config providers: settings changed from the dashboard's Config page,
-    # `config set` or MCP `config_set` are kept in a JSON file
-    # (QCLI_DEMO_CONFIG) and applied again at the next start.
+    # -----------------------------------------------------------------------
+    # Config stores: settings changed from the dashboard's Config page,
+    # `config set` or MCP `config_set` are kept and applied again at the next
+    # start.  Each provider may keep its settings in a store of its own:
+    #
+    #   - the default store, for every provider without one: a JSON file
+    #     (QCLI_DEMO_CONFIG).  To keep them in a section of the app's own
+    #     settings file instead: JsonFileConfigStore("config/app.json", section="qcli")
+    #   - `jobs` (history retention): the demo's SQLite database when it has one
+    #     (QCLI_DEMO_DB, a file path), table QcliConfig, set by id with
+    #     `stores` (the host's choice wins over the plugin's); else the default store
+    #   - `demo` (the app's own settings below): Redis when QCLI_DEMO_REDIS_URL
+    #     is set (redis://localhost:6379/0), through the provider's own `store`;
+    #     else the default store
+    #
+    # `config list` and GET /api/v1/qcli/config show the store of every provider.
+    # -----------------------------------------------------------------------
     import tempfile
 
     config_store = JsonFileConfigStore(
         os.environ.get("QCLI_DEMO_CONFIG") or os.path.join(tempfile.gettempdir(), "qcli-demo-config.json"),
     )
+    config_stores: dict = {}
+    demo_db_path = os.environ.get("QCLI_DEMO_DB")
+    if demo_db_path:
+        import sqlite3
+
+        from qodalis_cli_databases import CliDatabaseConfigStore, sqlite_connection
+
+        # The table is created by the store itself at startup (config.ready())
+        config_stores["jobs"] = CliDatabaseConfigStore(
+            sqlite_connection(sqlite3.connect(demo_db_path, check_same_thread=False)),
+            database=os.path.basename(demo_db_path),
+        )
+    redis_config_store = None
+    if os.environ.get("QCLI_DEMO_REDIS_URL"):
+        from qodalis_cli_config_redis import CliRedisConfigStore
+
+        redis_config_store = CliRedisConfigStore(url=os.environ["QCLI_DEMO_REDIS_URL"])
     # A host app's own settings: what the demo's greeting says, and a secret it never shows
     greeting: dict = {"text": "Hello from the Qodalis CLI demo", "api_key": None}
     demo_config = CliStoredConfigProvider(
         id="demo",
         title="Demo app",
         description="The demo host application's own settings",
+        # Its own store: Redis with QCLI_DEMO_REDIS_URL, else (None) the default store
+        store=redis_config_store,
         sections=[CliConfigSectionDefinition(id="greeting", title="Greeting", settings=[
             CliConfigSettingDefinition(
                 key="text", label="Greeting", type="string", default=greeting["text"],
@@ -283,7 +316,7 @@ def create_demo_server():  # noqa: ANN201
         CliServerOptions(
             configure=configure,
             allowed_origins=allowed_origins,
-            config=CliServerConfigOptions(store=config_store),
+            config=CliServerConfigOptions(store=config_store, stores=config_stores),
             # Opt-in remote shell.  The users plugin is mounted below, so the
             # shell runs in "users" mode: a WebSocket ticket of a session with
             # the shell:execute permission (root has '*').  Without the users
@@ -359,6 +392,8 @@ def create_demo_server():  # noqa: ANN201
         finally:
             await users_plugin.shutdown()
             await jobs_plugin.scheduler.stop()
+            if redis_config_store is not None:
+                await redis_config_store.close()
 
     result.app.router.lifespan_context = lifespan_with_plugins
 
