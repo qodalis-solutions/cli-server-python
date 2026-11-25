@@ -48,6 +48,11 @@ mysql://user:password@host:port/database
 - `qodalis-cli-server-plugin-data-explorer`
 - `aiomysql>=0.2.0`
 
+## Terminal commands
+
+None of its own: the provider is queried through the [data explorer plugin](../data-explorer/README.md#terminal-commands)
+(`data-explorer` in the web CLI).
+
 ## License
 
 MIT

@@ -91,6 +91,32 @@ Send `Authorization: Bearer <token>` to {{ baseUrl }}/v1/rates. Questions: {{sup
 The plugin's `pages` holds the parsed pages (`DocsPage(slug, title, group, order, markdown)`, variables not
 replaced) and `portal_section` (`{"kind": "docs", "title", "base_path"}`) what the portal plugin shows.
 
+## Terminal commands
+
+`docs`, registered by `mount_plugin` (the plugin's `module`). The pages are public, so the command needs no permission
+beyond `commands:execute` on a protected server. `{{baseUrl}}` is the `set_base_url` URL, else empty (links relative to
+the server root): a command has no request to take the host from.
+
+| Command | Permission | Does |
+|---|---|---|
+| `docs`, `docs list [--group <group>] [--json]` | none | Slug and title of every page, by group, in page order (`GET /pages`) |
+| `docs read <slug> [--json]` | none | The page's markdown with the variables replaced, its title as a heading unless the page starts with one (`GET /pages/{slug}`) |
+
+```text
+$ docs
+Guides
+  getting-started  Getting started with RateBell API
+  auth             Authentication
+
+Reference
+  errors           Errors
+
+$ docs read auth
+# Authentication
+
+Send `Authorization: Bearer <token>` with every request.
+```
+
 ## License
 
 MIT

@@ -160,6 +160,28 @@ variables point at empty databases the tests may use:
 - `QCLI_TEST_MYSQL`: a `mysql://` URL
 - `QCLI_TEST_MSSQL`: `mssql://user:password@host:port/db`
 
+## Terminal commands
+
+`databases` (alias `db`), registered by `mount_plugin`. The database name may be left out when there is only one.
+
+| Command | Permission | Does |
+|---|---|---|
+| `databases`, `databases list` | `databases:read` | Databases: dialect, size, applied, pending, problems |
+| `databases stats <db>` | `databases:read` | Server version, uptime, size, connections, load counters, cache hits, largest tables |
+| `databases migrations <db>` | `databases:read` | Every migration and its status |
+| `databases runs <db> [-n 20] [--json]` | `databases:read` | Run history, newest first (1-100): start, direction, status, migrations run, trigger and who ran it, target, error (`GET /{db}/migrations/runs`) |
+| `databases up <db> [--to <id>] [--dry-run] [--force]` | `databases:migrate` | Applies the pending migrations (`--dry-run` prints the SQL) |
+| `databases down <db> --to <id\|base> [--dry-run]` | `databases:migrate` | Rolls back what came after `--to` |
+
+```text
+$ databases runs main -n 3
+main (sqlite): 3 of 5 run(s)
+Started             Dir  Status    Count Trigger
+2026-11-25 10:02:00 down succeeded     1 terminal (root)  to 0002
+2026-11-25 10:01:00 up   failed        0 api  no such table: Notes
+2026-11-25 10:00:00 up   succeeded     2 startup
+```
+
 ## License
 
 MIT

@@ -39,6 +39,11 @@ Uses Python's built-in `sqlite3` module with no external dependencies. Supports 
 
 - `qodalis-cli-server-plugin-data-explorer`
 
+## Terminal commands
+
+None of its own: the provider is queried through the [data explorer plugin](../data-explorer/README.md#terminal-commands)
+(`data-explorer` in the web CLI).
+
 ## License
 
 MIT

@@ -49,6 +49,11 @@ Server=host,1433;Database=mydb;User Id=sa;Password=secret;TrustServerCertificate
 - `qodalis-cli-server-plugin-data-explorer`
 - `pymssql>=2.3.0`
 
+## Terminal commands
+
+None of its own: the provider is queried through the [data explorer plugin](../data-explorer/README.md#terminal-commands)
+(`data-explorer` in the web CLI).
+
 ## License
 
 MIT

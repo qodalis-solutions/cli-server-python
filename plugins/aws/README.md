@@ -148,6 +148,21 @@ This plugin uses boto3, the AWS SDK for Python:
 
 boto3 uses the standard AWS credential chain automatically, including environment variables, shared credentials file (`~/.aws/credentials`), and instance profile metadata.
 
+## Terminal commands
+
+The commands are listed under [Commands](#commands). Permissions, enforced on a protected server (the users plugin)
+along the command chain and added to the permission catalog by `add_module` (`AwsModule.permissions`, group `AWS`):
+
+| Permission | Commands |
+|---|---|
+| `aws:read` | Every `aws` command (the root needs it) |
+| `aws:write` (with `aws:read`) | `aws configure set`, `aws s3 cp`, `aws s3 rm`, `aws s3 mb`, `aws s3 rb`, `aws ec2 start`, `aws ec2 stop`, `aws ec2 reboot`, `aws lambda invoke`, `aws sqs send`, `aws sqs purge`, `aws sns publish` |
+
+```text
+$ aws s3 rm s3://reports/2026-11.csv      (signed in with aws:read only)
+forbidden: missing permission aws:write
+```
+
 ## License
 
 MIT

@@ -36,6 +36,11 @@ app = create_cli_server(configure=configure)
 
 The location can also be passed as the command value (e.g., `weather Paris`).
 
+## Terminal commands
+
+The commands are listed under [Commands](#commands); they need no permission beyond `commands:execute` on a protected
+server.
+
 ## License
 
 MIT

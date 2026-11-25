@@ -36,6 +36,11 @@ The JSON file is created automatically if it does not exist. Parent directories 
 
 - `qodalis-cli-server-plugin-filesystem`
 
+## Terminal commands
+
+None of its own: the storage is reached through the [filesystem plugin](../filesystem/README.md#terminal-commands)
+(`scp` in the web CLI).
+
 ## License
 
 MIT

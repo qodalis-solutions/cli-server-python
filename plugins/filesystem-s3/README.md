@@ -45,6 +45,11 @@ Directories are virtual: `mkdir` creates a zero-byte object with a trailing `/` 
 - `qodalis-cli-server-plugin-filesystem`
 - `boto3>=1.26.0`
 
+## Terminal commands
+
+None of its own: the storage is reached through the [filesystem plugin](../filesystem/README.md#terminal-commands)
+(`scp` in the web CLI).
+
 ## License
 
 MIT

@@ -40,6 +40,11 @@ postgresql://user:password@host:port/database
 - `qodalis-cli-server-plugin-data-explorer`
 - `asyncpg>=0.29.0`
 
+## Terminal commands
+
+None of its own: the provider is queried through the [data explorer plugin](../data-explorer/README.md#terminal-commands)
+(`data-explorer` in the web CLI).
+
 ## License
 
 MIT

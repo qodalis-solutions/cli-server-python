@@ -99,6 +99,11 @@ once and serves nothing, `portal.json` included.
 Publishing the package embeds the site: `npm install` (pins `@qodalis/cli-server-portal` in `package.json`), then
 `python scripts/copy_portal.py`, then build. Building a wheel or sdist without the site fails.
 
+## Terminal commands
+
+None: the portal is a site. Its content comes from the [docs plugin](../docs/README.md#terminal-commands) (`docs list`,
+`docs read`) and the [public-api plugin](../public-api/README.md#terminal-commands) (`api usage`).
+
 ## License
 
 MIT

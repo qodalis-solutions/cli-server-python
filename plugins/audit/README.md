@@ -88,6 +88,17 @@ The admin dashboard's Audit page is the module `@qodalis/cli-dashboard-module-au
 the npm package) and served at `/qcli/modules/audit`, outside the API, when the plugin is mounted; it is listed as a
 dashboard extension (permission `audit:read`), with a search (`/?q=`); the audit plugin that serves the log serves it, once per server. `CliAuditBuilder().set_dashboard_dir(path)` serves another build, `set_dashboard_dir(False)` leaves the page out.
 
+## Terminal commands
+
+No server-side command: the web CLI plugin [`@qodalis/cli-users`](https://www.npmjs.com/package/@qodalis/cli-users)
+reads the log through `GET/DELETE /api/v1/qcli/audit`.
+
+| Command | Permission | Does |
+|---|---|---|
+| `audit` | `audit:read` | The audit log, newest first |
+| `last [user]` | `audit:read` | Sign-in history (logins, logouts, failures) |
+| `audit clear` | `audit:clear` | Clears the audit log (asks first) |
+
 ## License
 
 MIT
