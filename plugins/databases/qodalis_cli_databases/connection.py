@@ -5,11 +5,13 @@ of them installed."""
 from __future__ import annotations
 
 import asyncio
+import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Callable, Literal, Protocol, Sequence
+from typing import Any, AsyncIterator, Callable, Literal, Optional, Protocol, Sequence
+from urllib.parse import unquote, urlsplit
 
 CliSqlDialect = Literal["postgres", "mysql", "mssql", "sqlite"]
 
@@ -34,13 +36,51 @@ class CliSqlSession(Protocol):
 
 
 class CliSqlConnection(Protocol):
-    """A database the plugin migrates: ``async with connection.session() as db``."""
+    """A database the plugin migrates: ``async with connection.session() as db``.  Adapters also set
+    ``database``: the database's name when the driver exposes it (a SQLite database: its file name), for
+    descriptions; never a connection string or credentials."""
 
     dialect: str
 
     def session(self) -> Any:
         """An async context manager giving a :class:`CliSqlSession` on a dedicated connection."""
         ...
+
+
+_URL_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
+
+
+def cli_database_name(value: Any, file: bool = False) -> Optional[str]:
+    """A database's name for descriptions: the name itself, the last path segment of a connection URL
+    (``postgres://user:pass@host/db`` gives ``db``), or a SQLite file's name.  ``None`` when there is none
+    (a connection string that is not a URL is never shown)."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    name = value.strip()
+    if _URL_SCHEME.match(name) and "/" in name:
+        try:
+            name = unquote(urlsplit(name).path)
+        except ValueError:
+            return None
+        file = True
+    elif "://" in name or "@" in name or ";" in name or "=" in name:
+        # A connection string, not a name: never shown
+        return None
+    if file:
+        parts = [p for p in re.split(r"[\\/]", name) if p]
+        name = parts[-1] if parts else ""
+    return name or None
+
+
+def _sqlite_file(conn: Any) -> Optional[str]:
+    """The main database's file of a ``sqlite3`` connection (``None`` in memory)."""
+    try:
+        for row in conn.execute("PRAGMA database_list").fetchall():
+            if row[1] == "main":
+                return row[2] or None
+    except Exception:  # noqa: BLE001 - a description only
+        return None
+    return None
 
 
 def number_placeholders(sql: str, style: Callable[[int], str]) -> str:
@@ -121,7 +161,8 @@ class _SqliteSession:
 class _SqliteConnection:
     dialect = "sqlite"
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, database: Optional[str] = None) -> None:
+        self.database = cli_database_name(database, True) or cli_database_name(_sqlite_file(conn), True)
         # Explicit transactions (BEGIN IMMEDIATE ... COMMIT): no implicit ones around statements
         conn.isolation_level = None
         self._conn = conn
@@ -133,11 +174,11 @@ class _SqliteConnection:
             yield _SqliteSession(self._conn)
 
 
-def sqlite_connection(conn: sqlite3.Connection) -> CliSqlConnection:
+def sqlite_connection(conn: sqlite3.Connection, database: Optional[str] = None) -> CliSqlConnection:
     """A SQLite database from a ``sqlite3`` connection (one connection: sessions run one after another).
     The connection is switched to autocommit (``isolation_level = None``): migrations open their own
-    transactions."""
-    return _SqliteConnection(conn)
+    transactions.  ``database``: its name in descriptions (default: the file's name)."""
+    return _SqliteConnection(conn, database)
 
 
 # ---------------------------------------------------------------------------
@@ -159,11 +200,28 @@ class _PostgresSession:
         await self._conn.execute(script)
 
 
+def _postgres_database(pool: Any) -> Optional[str]:
+    """asyncpg keeps the pool's ``database`` keyword and DSN."""
+    kwargs = getattr(pool, "_connect_kwargs", None)
+    if isinstance(kwargs, dict):
+        name = cli_database_name(kwargs.get("database"))
+        if name:
+            return name
+        name = cli_database_name(kwargs.get("dsn"))
+        if name:
+            return name
+    args = getattr(pool, "_connect_args", None)
+    if isinstance(args, (list, tuple)) and args:
+        return cli_database_name(args[0])
+    return None
+
+
 class _PostgresConnection:
     dialect = "postgres"
 
-    def __init__(self, pool: Any) -> None:
+    def __init__(self, pool: Any, database: Optional[str] = None) -> None:
         self._pool = pool
+        self.database = cli_database_name(database) or _postgres_database(pool)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[_PostgresSession]:
@@ -171,9 +229,10 @@ class _PostgresConnection:
             yield _PostgresSession(conn)
 
 
-def postgres_connection(pool: Any) -> CliSqlConnection:
-    """A PostgreSQL database from an ``asyncpg`` pool (``await asyncpg.create_pool(dsn)``)."""
-    return _PostgresConnection(pool)
+def postgres_connection(pool: Any, database: Optional[str] = None) -> CliSqlConnection:
+    """A PostgreSQL database from an ``asyncpg`` pool (``await asyncpg.create_pool(dsn)``).  ``database``:
+    its name in descriptions (default: the pool's database or the DSN's path)."""
+    return _PostgresConnection(pool, database)
 
 
 # ---------------------------------------------------------------------------
@@ -202,11 +261,20 @@ class _MysqlSession:
                 pass
 
 
+def _mysql_database(pool: Any) -> Optional[str]:
+    """aiomysql keeps the pool's connection keywords (``db``)."""
+    kwargs = getattr(pool, "_conn_kwargs", None)
+    if isinstance(kwargs, dict):
+        return cli_database_name(kwargs.get("db") or kwargs.get("database"))
+    return None
+
+
 class _MysqlConnection:
     dialect = "mysql"
 
-    def __init__(self, pool: Any) -> None:
+    def __init__(self, pool: Any, database: Optional[str] = None) -> None:
         self._pool = pool
+        self.database = cli_database_name(database) or _mysql_database(pool)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[_MysqlSession]:
@@ -215,11 +283,12 @@ class _MysqlConnection:
             yield _MysqlSession(conn)
 
 
-def mysql_connection(pool: Any) -> CliSqlConnection:
+def mysql_connection(pool: Any, database: Optional[str] = None) -> CliSqlConnection:
     """A MySQL / MariaDB database from an ``aiomysql`` pool.  Migration scripts with several statements need
     the pool created with ``client_flag=pymysql.constants.CLIENT.MULTI_STATEMENTS``.  MySQL commits DDL
-    statements on its own: a failing migration that created a table leaves it behind."""
-    return _MysqlConnection(pool)
+    statements on its own: a failing migration that created a table leaves it behind.  ``database``: its
+    name in descriptions (default: the pool's ``db``)."""
+    return _MysqlConnection(pool, database)
 
 
 # ---------------------------------------------------------------------------
@@ -282,8 +351,9 @@ class _MssqlSession:
 class _MssqlConnection:
     dialect = "mssql"
 
-    def __init__(self, connect: Callable[[], Any]) -> None:
+    def __init__(self, connect: Callable[[], Any], database: Optional[str] = None) -> None:
         self._connect = connect
+        self.database = cli_database_name(database)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[_MssqlSession]:
@@ -300,8 +370,9 @@ class _MssqlConnection:
             executor.shutdown(wait=False)
 
 
-def mssql_connection(connect: Callable[[], Any]) -> CliSqlConnection:
+def mssql_connection(connect: Callable[[], Any], database: Optional[str] = None) -> CliSqlConnection:
     """A SQL Server database from a function opening a ``pymssql`` connection
     (``lambda: pymssql.connect(server, user, password, database)``).  Each session opens its own connection,
-    so locks and transactions stay on it; ``GO`` lines split a script into batches."""
-    return _MssqlConnection(connect)
+    so locks and transactions stay on it; ``GO`` lines split a script into batches.  ``database``: its
+    name in descriptions (the connect function does not tell it)."""
+    return _MssqlConnection(connect, database)
