@@ -40,6 +40,15 @@ class ICliModule(abc.ABC):
         ...
 
     @property
+    def permissions(self) -> Sequence[Any]:
+        """Permissions its commands require (``required_permissions``), added
+        to the server's permission catalog with the module (``add_module``,
+        surface ``cli``): ``{"name", "description", "group"}`` dicts or
+        ``CliPermission`` entries; a name already in the catalog stays as
+        registered."""
+        return []
+
+    @property
     def config_providers(self) -> Sequence[Any]:
         """Config providers the module brings (``ICliConfigProvider``: its
         settings), registered with the server's when the module is added."""

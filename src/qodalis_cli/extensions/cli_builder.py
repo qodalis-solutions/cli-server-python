@@ -43,6 +43,10 @@ class _DataExplorerRegistration:
         self.options = options
 
 
+def _permission_name(entry: Any) -> Any:
+    return entry.get("name") if isinstance(entry, Mapping) else getattr(entry, "name", None)
+
+
 class CliBuilder:
     """Fluent builder for registering command processors, modules, and services."""
 
@@ -175,6 +179,13 @@ class CliBuilder:
         self.add_installed_plugin(module)
         for processor in module.processors:
             self._registry.register(processor)
+        permissions = list(getattr(module, "permissions", None) or [])
+        if permissions:
+            # A name already in the catalog (the host's, or the module added twice) stays as registered
+            known = {p.name.lower() for p in self._permissions.all()}
+            fresh = [p for p in permissions if not isinstance(_permission_name(p), str) or _permission_name(p).lower() not in known]
+            if fresh:
+                self.add_permissions(fresh, surface="cli")
         for provider in getattr(module, "config_providers", None) or []:
             self.add_config_provider(provider)
         return self
