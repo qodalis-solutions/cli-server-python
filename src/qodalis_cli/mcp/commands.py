@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Callable
 
 from ..abstractions import CliProcessCommand, ICliCommandProcessor
 from ..services.cli_command_executor_service import ICliCommandExecutorService, executing_as
@@ -147,9 +147,16 @@ class CommandsMcpToolProvider:
     mcp_tier = TIER_COMMANDS
     name = "commands"
 
-    def __init__(self, registry: ICliCommandRegistry, executor: ICliCommandExecutorService) -> None:
+    def __init__(
+        self,
+        registry: ICliCommandRegistry,
+        executor: ICliCommandExecutorService,
+        skip: Callable[[ICliCommandProcessor], bool] | None = None,
+    ) -> None:
         self.registry = registry
         self.executor = executor
+        #: Root commands left out (served by dedicated tools, e.g. ``config`` by ``config_*``).
+        self.skip = skip
 
     def get_tools(self, context: McpCallContext) -> list[McpTool]:
         tools: list[McpTool] = []
@@ -170,6 +177,8 @@ class CommandsMcpToolProvider:
                 visit(sub, path, perms)
 
         for root in self.registry.processors:
+            if self.skip is not None and self.skip(root):
+                continue
             visit(root, [], [COMMANDS_EXECUTE])
         return tools
 

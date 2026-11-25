@@ -12,7 +12,7 @@ from __future__ import annotations
 import fnmatch
 import logging
 import re
-from typing import Any, Iterable, Protocol
+from typing import Any, Callable, Iterable, Protocol
 from urllib.parse import urlsplit
 
 AUTH_STATE_KEY = "qcli_auth"
@@ -166,13 +166,22 @@ class WebSocketOriginMiddleware:
     server). Matches the node and .NET servers.
     """
 
-    def __init__(self, app: Any, allowed_origins: list[str], trust_proxy: bool | int = False) -> None:
+    def __init__(
+        self,
+        app: Any,
+        allowed_origins: list[str],
+        trust_proxy: bool | int = False,
+        enabled: Callable[[], bool] | None = None,
+    ) -> None:
         self.app = app
+        #: Read on every upgrade: the ``cors`` config provider changes the list in place.
         self.allowed_origins = allowed_origins
         self.trust_proxy = trust_proxy
+        #: When given, the check runs only while it returns true.
+        self.enabled = enabled
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
-        if scope["type"] == "websocket":
+        if scope["type"] == "websocket" and (self.enabled is None or self.enabled()):
             origin = _header(scope, b"origin")
             if origin is not None and not origin_allowed(
                 origin, self.allowed_origins, scope, self.trust_proxy
@@ -180,6 +189,44 @@ class WebSocketOriginMiddleware:
                 await close_websocket(receive, send, 4403, "origin not allowed")
                 return
         await self.app(scope, receive, send)
+
+
+class LiveCorsMiddleware:
+    """CORS over a live list of origins (the ``cors`` config provider changes
+    it at runtime): a Starlette ``CORSMiddleware`` rebuilt whenever the list
+    changes.  ``origins()`` returns the current list, ``None`` while CORS is
+    off; ``["*"]`` (or an empty list with ``permissive``) allows any origin
+    without credentials."""
+
+    def __init__(self, app: Any, origins: Callable[[], list[str] | None]) -> None:
+        self.app = app
+        self.origins = origins
+        self._key: tuple[str, ...] | None = None
+        self._cors: Any = None
+
+    def _middleware(self, origins: list[str]) -> Any:
+        key = tuple(origins)
+        if self._cors is None or key != self._key:
+            from starlette.middleware.cors import CORSMiddleware
+
+            wildcard = not origins or "*" in origins
+            self._cors = CORSMiddleware(
+                self.app,
+                allow_origins=["*"] if wildcard else [o.rstrip("/") for o in origins if "*" not in o],
+                allow_origin_regex=None if wildcard else origins_regex(origins),
+                allow_credentials=not wildcard,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+            self._key = key
+        return self._cors
+
+    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        origins = self.origins() if scope["type"] == "http" else None
+        if origins is None:
+            await self.app(scope, receive, send)
+            return
+        await self._middleware(list(origins))(scope, receive, send)
 
 
 def _header(scope: dict, name: bytes) -> str | None:

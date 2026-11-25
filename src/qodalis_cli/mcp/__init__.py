@@ -1,6 +1,7 @@
 """MCP endpoint — the whole server (commands, filesystem, data explorer,
 jobs and plugin tools) as MCP tools at ``POST /api/qcli/mcp``."""
 
+from .config_tools import ConfigMcpToolProvider
 from .commands import CommandsMcpToolProvider, command_tool_name, render_outputs
 from .core import (
     CliMcpOptions,
@@ -23,6 +24,7 @@ from .features import (
 __all__ = [
     "CliMcpOptions",
     "CommandsMcpToolProvider",
+    "ConfigMcpToolProvider",
     "DataExplorerMcpToolProvider",
     "FilesystemMcpToolProvider",
     "IMcpToolProvider",

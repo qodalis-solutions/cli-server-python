@@ -134,6 +134,8 @@ CORE_PERMISSIONS: tuple[CliPermission, ...] = (
     _core("jobs:manage", "Jobs", "Start, stop, pause and change jobs"),
     _core("logs:read", "Server", "Read the server's logs"),
     _core("admin:access", "Server", "Open the admin dashboard and its server pages"),
+    _core("config:read", "Config", "See the server's configuration (secrets stay hidden)"),
+    _core("config:write", "Config", "Change the server's configuration"),
     _core("audit:read", "Audit", "Read the audit log"),
     _core("audit:clear", "Audit", "Clear the audit log"),
 )

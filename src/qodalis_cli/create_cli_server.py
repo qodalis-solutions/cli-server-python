@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from fastapi import FastAPI, WebSocket
-from fastapi.middleware.cors import CORSMiddleware
 
+from qodalis_cli_server_abstractions.config import create_custom_config_provider
 from qodalis_cli_filesystem.providers.os_provider import OsFileStorageProvider, OsProviderOptions
 
 from .controllers import create_cli_router, create_cli_version_router
@@ -32,7 +32,20 @@ from .mcp import (
     create_mcp_router,
     resolve_mcp_options,
 )
-from .security import WebSocketOriginMiddleware, get_auth_context, origins_regex
+from .config import (
+    CliConfigCommandProcessor,
+    CliHostConfigProvider,
+    CliHostEnvironmentOptions,
+    CliHostOption,
+    CliServerConfigProvider,
+    FileSystemApiLimits,
+    create_cors_config_provider,
+    create_filesystem_config_provider,
+    create_mcp_config_provider,
+)
+from .mcp import ConfigMcpToolProvider
+from .mcp.endpoint import MCP_PATH
+from .security import LiveCorsMiddleware, WebSocketOriginMiddleware, get_auth_context
 from .shell_security import CliShellOptions, ShellAccessProvider, remote_address
 from .services import (
     CliCommandExecutorService,
@@ -44,6 +57,18 @@ from .services import (
     DEFAULT_MAX_TABLE_ROWS,
     WebSocketLogHandler,
 )
+
+
+@dataclass
+class CliServerConfigOptions:
+    """The ``config`` option of :class:`CliServerOptions`: config providers."""
+
+    #: Where writable settings are kept (default in memory); same as ``builder.set_config_store``.
+    store: Any = None
+    #: Which environment variables the ``host`` provider lists (default every one), secrets masked.
+    environment: CliHostEnvironmentOptions | None = None
+    #: Register the ``config`` command (default true).
+    command: bool = True
 
 
 @dataclass
@@ -94,6 +119,9 @@ class CliServerOptions:
     #: :mod:`qodalis_cli.dashboard_modules`): by id, another build's directory or ``False`` to leave the page out.
     #: By default each is served from the copy in its package when the feature is on.
     dashboard_pages: dict[str, str | bool] = field(default_factory=dict)
+    #: Config providers: the store of writable settings, what the ``host``
+    #: provider shows, the ``config`` command (:class:`CliServerConfigOptions`).
+    config: CliServerConfigOptions | None = None
     configure: Callable[[CliBuilder], None] | None = None
 
 
@@ -139,6 +167,17 @@ class CliServerResult:
     #: users plugin on a protected server: ``read`` for GET and HEAD,
     #: ``write`` otherwise; the longest path wins.
     route_permissions: list[Any] = field(default_factory=list)
+    #: The live list of allowed origins (CORS, WebSocket upgrades, MCP, the
+    #: users plugin's CSRF check): the ``cors`` config provider changes its
+    #: items at runtime.
+    allowed_origins: list[str] = field(default_factory=list)
+
+    @property
+    def config(self) -> Any:
+        """The server's configuration (same as ``builder.config``): ``await
+        result.config.ready()`` applies every provider's stored settings (the
+        app's startup does it too)."""
+        return self.builder.config
 
     def add_cli_route_prefix(self, prefix: str | None) -> None:
         """Count ``prefix`` among the CLI's routes (see
@@ -237,6 +276,10 @@ class CliServerResult:
                 self.builder.add_permissions(fresh, surface="cli")
         for provider in getattr(plugin, "mcp_providers", None) or []:
             self.mcp.add_provider(provider)
+        # The plugin's settings (a provider the host registered under the same id wins)
+        for provider in getattr(plugin, "config_providers", None) or []:
+            if not self.builder.config_registry.has(provider.id):
+                self.builder.add_config_provider(provider)
 
         # Pages the plugin adds to the admin dashboard
         for extension in getattr(plugin, "dashboard_extensions", None) or []:
@@ -329,9 +372,15 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     log_handler = WebSocketLogHandler(log_socket_manager)
     logging.getLogger().addHandler(log_handler)
 
+    #: Set to the result below (the lifespan applies the stored settings).
+    server_ref: list[CliServerResult] = []
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         shell_session_manager.log_startup()
+        if server_ref:
+            # Apply the stored settings before serving (a store that cannot be read fails startup)
+            await server_ref[0].builder.config.ready()
         yield
         await shell_session_manager.close_all()
         await event_socket_manager.broadcast_disconnect()
@@ -346,25 +395,31 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
             docs_url=None, redoc_url=None, openapi_url=None,
         )
 
+    # The live list of allowed origins (CORS, sockets, MCP, CSRF): the ``cors`` config provider changes its items
+    allowed_origins: list[str] = list(opts.allowed_origins or [])
+    origins_configured = opts.allowed_origins is not None
     mcp_options = resolve_mcp_options(opts.mcp)
     if mcp_options is not None and opts.cli_routes:
         # Origin check and 405s before any auth middleware (users plugin).
         app.add_middleware(
             McpGateMiddleware,
-            allowed_origins=lambda: opts.allowed_origins,
+            allowed_origins=lambda: allowed_origins,
             trust_proxy=lambda: opts.shell.trust_proxy,
         )
 
-    _configure_cors(app, opts)
-    if opts.allowed_origins is not None:
-        app.add_middleware(
-            WebSocketOriginMiddleware,
-            allowed_origins=list(opts.allowed_origins),
-            trust_proxy=opts.shell.trust_proxy,
-        )
+    cors_mode = _configure_cors(app, opts, allowed_origins)
+    # Checked once origins are configured (also when added at runtime)
+    app.add_middleware(
+        WebSocketOriginMiddleware,
+        allowed_origins=allowed_origins,
+        trust_proxy=opts.shell.trust_proxy,
+        enabled=lambda: origins_configured or len(allowed_origins) > 0,
+    )
 
     registry = CliCommandRegistry()
     builder = CliBuilder(registry)
+    if opts.config is not None and opts.config.store is not None:
+        builder.set_config_store(opts.config.store)
 
     if opts.configure:
         opts.configure(builder)
@@ -401,23 +456,24 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
                 allowed_paths=builder.filesystem_options.allowed_paths
             )
         )
+    fs_limits: FileSystemApiLimits | None = None
+    fs_storage_name = (
+        "os" if builder.file_storage_provider is None
+        else str(getattr(builder.file_storage_provider, "name", None) or type(builder.file_storage_provider).__name__)
+    )
     if fs_provider is not None:
         # The API and the MCP tools share it: one fs:changed per change.
         fs_provider = EventPublishingFileStorageProvider(fs_provider, event_bus)
-        fs_router = create_filesystem_router(
-            fs_provider,
-            max_upload_bytes=(
-                builder.filesystem_options.max_upload_bytes
-                if builder.filesystem_options is not None
-                else DEFAULT_MAX_UPLOAD_BYTES
-            ),
+        # Read per upload: the ``filesystem`` config provider changes it at runtime
+        fs_limits = FileSystemApiLimits(
+            builder.filesystem_options.max_upload_bytes
+            if builder.filesystem_options is not None
+            else DEFAULT_MAX_UPLOAD_BYTES
         )
+        fs_router = create_filesystem_router(fs_provider, max_upload_bytes=fs_limits)
         if opts.cli_routes:
             app.include_router(fs_router, prefix="/api/qcli/fs")
         mcp_tools.add_provider(FilesystemMcpToolProvider(fs_provider), builtin=True)
-
-    #: Set to the result below: the data explorer reads its audit log per query.
-    server_ref: list[CliServerResult] = []
 
     if builder.data_explorer_registrations:
         from qodalis_cli_data_explorer import (
@@ -455,7 +511,10 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
             builtin=True,
         )
 
-    mcp_tools.add_provider(CommandsMcpToolProvider(registry, executor))
+    # The ``config`` command is served by the config_* tools instead
+    mcp_tools.add_provider(CommandsMcpToolProvider(
+        registry, executor, skip=lambda root: isinstance(root, CliConfigCommandProcessor),
+    ))
     if mcp_options is not None and opts.cli_routes:
         app.include_router(create_mcp_router(
             mcp_tools,
@@ -496,9 +555,13 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         shell_session_manager=shell_session_manager,
         mcp=mcp_tools,
         event_bus=event_bus,
+        allowed_origins=allowed_origins,
     )
     result.add_cli_route_prefix(opts.base_path)
     server_ref.append(result)
+    _configure_config_providers(
+        result, opts, package_version, cors_mode, mcp_options, fs_limits, fs_storage_name,
+    )
 
     # The dashboard pages of the APIs the core serves
     if fs_provider is not None:
@@ -577,21 +640,101 @@ def _mcp_features(tools: McpToolRegistry, opts: CliServerOptions) -> list[str]:
     return features
 
 
-def _configure_cors(app: FastAPI, opts: CliServerOptions) -> None:
+def _configure_cors(app: FastAPI, opts: CliServerOptions, allowed_origins: list[str]) -> str:
     """CORS is off unless origins are configured (or ``cors=True``); ``*``
-    is never combined with credentials."""
-    origins = opts.cors_origins if opts.cors_origins is not None else opts.allowed_origins
-    enabled = opts.cors if opts.cors is not None else bool(origins)
-    if not enabled:
-        return
-    origins = list(origins) if origins else ["*"]
-    wildcard = "*" in origins
-    exact = [o.rstrip("/") for o in origins if "*" not in o]
+    is never combined with credentials.  Returns the mode the ``cors`` config
+    provider shows: ``disabled`` (``cors=False``), ``custom`` (``cors_origins``,
+    fixed), ``permissive`` (``cors=True`` without origins: any origin) or
+    ``origins`` (the live allowed origins, changeable at runtime)."""
+    if opts.cors is False:
+        return "disabled"
+    if opts.cors_origins is not None:
+        origins = list(opts.cors_origins) or ["*"]
+        if opts.cors is None and not opts.cors_origins:
+            return "disabled"
+        app.add_middleware(LiveCorsMiddleware, origins=lambda: origins)
+        return "custom"
+    forced = opts.cors is True
+    # While origins are allowed (the list changes at runtime); cors=True without any allows every origin
     app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"] if wildcard else exact,
-        allow_origin_regex=None if wildcard else origins_regex(origins),
-        allow_credentials=not wildcard,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        LiveCorsMiddleware,
+        origins=lambda: list(allowed_origins) if allowed_origins else (["*"] if forced else None),
     )
+    return "permissive" if forced and not allowed_origins else "origins"
+
+
+def _configure_config_providers(
+    result: CliServerResult,
+    opts: CliServerOptions,
+    version: str,
+    cors_mode: str,
+    mcp_options: CliMcpOptions | None,
+    fs_limits: FileSystemApiLimits | None,
+    fs_storage_name: str,
+) -> None:
+    """The built-in config providers (a provider the host registered under the
+    same id wins), the audit sink and event bus, the ``config`` command and
+    the ``config_*`` MCP tools."""
+    builder = result.builder
+    config_options = opts.config or CliServerConfigOptions()
+
+    def add_builtin(provider: Any) -> None:
+        if not builder.config_registry.has(provider.id):
+            builder.add_config_provider(provider)
+
+    def host_options() -> list[CliHostOption]:
+        shell = result.shell_session_manager
+        return [
+            CliHostOption("basePath", opts.base_path, "Base path", "Base path of the CLI routes"),
+            CliHostOption("cliRoutes", opts.cli_routes, "CLI routes", "The CLI's routes and sockets are served"),
+            CliHostOption("enableShell", opts.enable_shell, "Shell", "Interactive shell sessions are accepted"),
+            CliHostOption(
+                "shellAuth", str(getattr(shell, "access_mode", None) or "none"),
+                "Shell access", "How shell sessions are authorized",
+            ),
+            CliHostOption(
+                "trustProxy", int(opts.shell.trust_proxy),
+                "Trusted proxy hops", "Reverse proxies trusted for the client address",
+            ),
+            CliHostOption(
+                "maxTableRows", opts.max_table_rows, "Table rows", "Rows a table returns without paging (0: no limit)",
+            ),
+            CliHostOption(
+                "externalAuthentication", opts.external_authentication,
+                "External authentication", "The host application authenticates requests",
+            ),
+            CliHostOption(
+                "protected", _requires_authentication(result),
+                "Protected", "An auth provider protects every route",
+            ),
+        ]
+
+    add_builtin(CliServerConfigProvider(version))
+    add_builtin(CliHostConfigProvider(host_options, config_options.environment))
+    add_builtin(create_cors_config_provider(result.allowed_origins, cors_mode))
+    add_builtin(create_mcp_config_provider(mcp_options, MCP_PATH))
+    if opts.cli_routes and fs_limits is not None:
+        roots = builder.filesystem_options.allowed_paths if builder.filesystem_options is not None else None
+        add_builtin(create_filesystem_config_provider(fs_storage_name, fs_limits, roots))
+    add_builtin(create_custom_config_provider())
+    # The server's audit log (the audit plugin, mounted by the users plugin), unless set_config_audit_store set one
+    builder.attach_config_audit(lambda: _audit_log_sink(result))
+    builder.config.attach(event_bus=lambda: result.event_bus)
+    builder.config_registry.start()
+    if opts.cli_routes and config_options.command is not False and result.registry.find_processor("config") is None:
+        builder.add_processor(CliConfigCommandProcessor(builder.config))
+    if mcp_options is not None:
+        result.mcp.add_provider(ConfigMcpToolProvider(builder.config), builtin=True)
+
+
+def _requires_authentication(result: CliServerResult) -> bool:
+    check = getattr(result.event_socket_manager, "_requires_authentication", None)
+    return bool(check()) if callable(check) else False
+
+
+def _audit_log_sink(server: Any) -> Any:
+    """Writes config changes to the server's audit log, or ``None`` without one."""
+    plugin = getattr(server, "_qcli_audit_plugin", None)
+    if plugin is None:
+        return None
+    return plugin.log

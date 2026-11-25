@@ -148,6 +148,10 @@ def create_mcp_router(
             raise _RpcError(INVALID_PARAMS, "Invalid params: 'arguments' must be an object")
         tool = (await tools.tools(context)).get(name)
         if tool is None:
+            if tools.options is not None and tools.options.read_only and name in await tools.tools(
+                context, apply_read_only=False,
+            ):
+                raise _RpcError(INVALID_PARAMS, f"Tool {name} is not available: the MCP endpoint is read-only")
             raise _RpcError(INVALID_PARAMS, f"Unknown tool: {name}")
         error = validate_arguments(arguments, tool.input_schema)
         if error:

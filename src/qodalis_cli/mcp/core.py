@@ -6,7 +6,7 @@ from __future__ import annotations
 import inspect
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable, Protocol, Union, runtime_checkable
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,10 @@ class CliMcpOptions:
     token: str | None = None
     #: Returned by ``initialize``.
     instructions: str | None = None
+    #: Only tools annotated ``readOnlyHint: true`` are listed and callable
+    #: (e.g. ``config_get``, not ``config_set``): the server-side counterpart
+    #: of the MCP client's ``QCLI_READ_ONLY``.
+    read_only: bool = False
 
 
 def resolve_mcp_options(value: Any) -> CliMcpOptions | None:
@@ -46,10 +50,25 @@ def resolve_mcp_options(value: Any) -> CliMcpOptions | None:
     if value is True:
         return CliMcpOptions()
     if isinstance(value, dict):
-        value = CliMcpOptions(**value)
+        value = CliMcpOptions(**{_SNAKE.get(k, k): v for k, v in value.items()})
     if not isinstance(value, CliMcpOptions):
         raise TypeError("mcp must be a bool, a dict or CliMcpOptions")
-    return value if value.enabled else None
+    if not value.enabled:
+        return None
+    # A copy: the ``mcp`` config provider changes it at runtime, never the host's object
+    return replace(
+        value,
+        tools=list(value.tools) if value.tools is not None else None,
+        exclude=list(value.exclude) if value.exclude is not None else None,
+    )
+
+
+_SNAKE = {"readOnly": "read_only"}
+
+
+def is_read_only_tool(tool: "McpTool") -> bool:
+    """True for a tool annotated ``readOnlyHint: true``."""
+    return bool(tool.annotations) and tool.annotations.get("readOnlyHint") is True
 
 
 @dataclass
@@ -173,8 +192,10 @@ class McpToolRegistry:
     def providers(self) -> list[IMcpToolProvider]:
         return [p for _, _, p in sorted(self._providers, key=lambda x: (x[0], x[1]))]
 
-    async def tools(self, context: McpCallContext) -> dict[str, McpTool]:
-        """Tools visible to ``context``, by name (first registered wins)."""
+    async def tools(self, context: McpCallContext, *, apply_read_only: bool = True) -> dict[str, McpTool]:
+        """Tools visible to ``context``, by name (first registered wins).
+        With the ``read_only`` option only read-only tools, unless
+        ``apply_read_only`` is false."""
         options = self.options or CliMcpOptions()
         out: dict[str, McpTool] = {}
         for provider in self.providers:
@@ -193,6 +214,8 @@ class McpToolRegistry:
                 if options.tools is not None and not _matches(name, options.tools):
                     continue
                 if options.exclude and _matches(name, options.exclude):
+                    continue
+                if apply_read_only and options.read_only and not is_read_only_tool(tool):
                     continue
                 if not all(context.can(p) for p in tool.required_permissions):
                     continue

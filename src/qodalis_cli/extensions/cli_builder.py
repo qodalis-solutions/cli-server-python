@@ -21,6 +21,8 @@ from ..permissions import (
     CliPermissionCatalog,
     CliPermissionSurface,
 )
+from ..config.cli_config_registry import CliConfigRegistry
+from ..config.cli_config_service import CliConfigService
 from ..services.cli_command_registry import CliCommandRegistry
 
 if TYPE_CHECKING:
@@ -55,6 +57,15 @@ class CliBuilder:
         self.add_installed_plugin(CORE_DISTRIBUTION)
         self._permissions = CliPermissionCatalog()
         self._permissions.add(CORE_PERMISSIONS, "cli")
+        #: The config providers and the store of their writable settings (see :meth:`add_config_provider`).
+        self.config_registry = CliConfigRegistry()
+        self._config_audit_store: Any = None
+        self._config_audit: Any = None
+        #: The server's configuration (``GET/PATCH /api/v1/qcli/config``, the
+        #: ``config`` command, the ``config_*`` MCP tools): providers filtered
+        #: by permission, secrets masked, changes validated, audited
+        #: (``config.update``) and published (``config:changed``).
+        self.config = CliConfigService(self.config_registry, audit=self._config_audit_sink)
 
     def add_permissions(
         self,
@@ -164,7 +175,58 @@ class CliBuilder:
         self.add_installed_plugin(module)
         for processor in module.processors:
             self._registry.register(processor)
+        for provider in getattr(module, "config_providers", None) or []:
+            self.add_config_provider(provider)
         return self
+
+    def add_config_provider(self, provider: Any) -> CliBuilder:
+        """Register a config provider: its sections are listed by ``GET
+        /api/v1/qcli/config`` and the ``config`` command; a provider that also
+        implements ``ICliConfigWriter`` can be changed.  A
+        ``CliStoredConfigProvider`` keeps its changes in the server's config
+        store.  Raises ``ValueError``: ``config provider already registered: <id>``.
+
+        Example::
+
+            builder.add_config_provider(CliStoredConfigProvider(
+                id="billing", title="Billing",
+                sections=[CliConfigSectionDefinition(id="invoices", settings=[
+                    CliConfigSettingDefinition(key="dueDays", type="number", default=30,
+                                               validation=CliConfigValidation(min=1)),
+                ])],
+            ))
+        """
+        self.config_registry.add(provider)
+        return self
+
+    @property
+    def config_providers(self) -> list[Any]:
+        """The registered config providers, sorted by ``order``, then id."""
+        return self.config_registry.providers
+
+    def set_config_store(self, store: Any) -> CliBuilder:
+        """Keep writable settings in ``store`` (default in memory, lost on
+        restart): a ``JsonFileConfigStore``, or the databases plugin's
+        ``CliDatabaseConfigStore``.  Set it in ``configure``, before the
+        server is created."""
+        self.config_registry.set_store(store)
+        return self
+
+    def set_config_audit_store(self, store: Any) -> CliBuilder:
+        """Write config changes (``config.update``) to this audit log
+        (``IAuditStore``).  By default they go to the server's audit log (the
+        audit plugin, mounted by the users plugin), when there is one."""
+        self._config_audit_store = store
+        return self
+
+    def attach_config_audit(self, audit: Any) -> None:
+        """Used by ``create_cli_server``: the default audit sink (a function returning one or ``None``)."""
+        self._config_audit = audit
+
+    def _config_audit_sink(self) -> Any:
+        if self._config_audit_store is not None:
+            return self._config_audit_store.log
+        return self._config_audit() if self._config_audit is not None else None
 
     @property
     def modules(self) -> list[ICliModule]:
