@@ -88,10 +88,10 @@ class TestConfigMcpOpenServer:
             "config_list", "config_get", "config_set",
         ]
 
-    def test_config_list_the_store_providers_with_their_storage_and_section_summaries(self, cli: Rpc):
+    def test_config_list_the_default_store_providers_with_their_storage_and_section_summaries(self, cli: Rpc):
         res = cli.call("config_list")
         assert res["result"]["isError"] is False
-        assert res["result"]["structuredContent"]["store"] == {
+        assert res["result"]["structuredContent"]["defaultStore"] == {
             "kind": "memory", "title": "In memory", "detail": "", "persistent": False,
         }
         providers = res["result"]["structuredContent"]["providers"]
@@ -101,9 +101,12 @@ class TestConfigMcpOpenServer:
             "title": "App",
             "description": "",
             "writable": True,
-            "storage": {"kind": "store", "description": "Changes are saved to the config store", "sources": []},
+            "storage": {"kind": "store", "description": "Changes are saved to its config store", "sources": []},
+            "store": {"kind": "memory", "title": "In memory", "detail": "", "persistent": False},
             "sections": [{"id": "main", "title": "main", "mutable": True, "version": "0", "keys": 2}],
         }
+        # Read-only providers have no store
+        assert "store" not in next(p for p in providers if p["id"] == "server")
 
     def test_config_get_provider_section_entry_unknown_ones_are_errors(self, cli: Rpc):
         provider = cli.call("config_get", {"provider": "app"})["result"]["structuredContent"]["provider"]

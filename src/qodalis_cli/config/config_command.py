@@ -19,9 +19,11 @@ from qodalis_cli_server_abstractions.config import (
     CliConfigContext,
     CliConfigError,
     CliConfigPermissions,
+    CliConfigStoreDescription,
     ICliConfigService,
     cli_config_context,
     describe_cli_config_store_line,
+    describe_cli_config_store_name,
     parse_cli_config_input,
 )
 
@@ -152,20 +154,22 @@ class _ConfigSubcommand(CliCommandProcessor):
 
 class ConfigListProcessor(_ConfigSubcommand):
     command = "list"
-    description = "Lists where changes are saved, the config providers and their sections"
+    description = "Lists the config providers, the store each saves changes to, and their sections"
     value_required = None
     required_permissions = [CliConfigPermissions.READ]
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         try:
             providers = await self.service.list(_context())
-            lines: list[str] = [f"Store: {describe_cli_config_store_line(self.service.describe_store())}"]
+            lines: list[str] = [f"Default store: {describe_cli_config_store_line(self.service.describe_default_store())}"]
             if not providers:
                 return "\n".join([*lines, "No config providers."])
             for p in providers:
                 sources = (p.get("storage") or {}).get("sources") or []
                 notes = "; ".join(n for n in ("" if p["writable"] else "read-only", f"from {', '.join(sources)}" if sources else "") if n)
-                lines.append(f"{p['id']}  {p['title']}{f'  ({notes})' if notes else ''}")
+                store = p.get("store")
+                store_name = f"  · {describe_cli_config_store_name(CliConfigStoreDescription(**store))}" if store else ""
+                lines.append(f"{p['id']}  {p['title']}{f'  ({notes})' if notes else ''}{store_name}")
                 for s in p["sections"]:
                     version = f"  version {s['version']}" if s["version"] is not None else ""
                     lines.append(f"  {s['id'].ljust(16)} {str(len(s['entries'])).rjust(3)} setting(s){version}")

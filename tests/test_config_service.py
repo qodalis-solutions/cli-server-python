@@ -149,9 +149,9 @@ class TestRegistry:
         r.add(ReadOnly("last", 1000))
         assert [p.id for p in r.providers] == ["first", "alpha", "zeta", "last"]
 
-    async def test_store_in_memory_by_default_set_before_start_attached_also_later(self) -> None:
+    async def test_default_store_in_memory_by_default_set_before_start_attached_also_later(self) -> None:
         r = CliConfigRegistry()
-        assert r.store.source == "runtime"
+        assert r.default_store.source == "runtime"
         store = InMemoryConfigStore()
         await store.write("app", "main", {"limit": 9})
         await store.write("custom", "custom", {"a": 1})
@@ -495,6 +495,7 @@ class TestAuditAndEvent:
             "provider": "app",
             "section": "main",
             "version": "1",
+            "store": "memory",
             "via": "api",
             "changes": [
                 {"key": "limit", "old": 5, "new": 8},
@@ -562,7 +563,7 @@ class TestAuditAndEvent:
         assert event.audience == CliEventAudience(permission="config:read")
         assert event.data == {
             "provider": "app", "section": "main", "keys": ["apiKey", "limit"],
-            "version": "1", "requiresRestart": False, "user": "ann",
+            "version": "1", "requiresRestart": False, "store": "memory", "user": "ann",
         }
         assert "shh" not in json.dumps(event.data)
 

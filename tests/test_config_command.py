@@ -125,12 +125,13 @@ class TestConfigCommandOpenServer:
 
     def test_config_and_config_list_providers_and_sections(self, cli: Runner):
         text = cli.text("config list")
-        assert text.split("\n")[0] == "Store: In memory, changes are lost on restart"
+        assert text.split("\n")[0] == "Default store: In memory, changes are lost on restart"
         assert "server  Server  (read-only)" in text
         assert "host  Host  (read-only; from Server options, Environment variables)" in text
         assert re.search(
-            r"app {2}App\n {2}main +7 setting\(s\) {2}version 0\n {2}main\.extra +1 setting\(s\) {2}version 0", text,
+            r"app {2}App {2}· In memory\n {2}main +7 setting\(s\) {2}version 0\n {2}main\.extra +1 setting\(s\) {2}version 0", text,
         ), text
+        assert "custom  Custom  · In memory" in text
         assert cli.text("config") == text
 
     def test_get_provider_section_and_key(self, cli: Runner):
@@ -238,7 +239,7 @@ class TestConfigListStore:
         result = create_cli_server(CliServerOptions(config=CliServerConfigOptions(store=store)))
         with TestClient(result.app) as client:
             text = Runner(client, result).text("config list")
-        assert text.split("\n")[0] == "Store: JSON file (qcli-demo-config.json), kept across restarts"
+        assert text.split("\n")[0] == "Default store: JSON file (qcli-demo-config.json), kept across restarts"
         assert str(tmp_path) not in text
 
     def test_a_store_that_does_not_describe_itself_a_custom_store_named_after_its_class(self):
@@ -250,7 +251,7 @@ class TestConfigListStore:
         result = create_cli_server(CliServerOptions(config=CliServerConfigOptions(store=store)))
         with TestClient(result.app) as client:
             text = Runner(client, result).text("config list")
-        assert text.split("\n")[0] == "Store: Custom store (VaultStore), kept across restarts"
+        assert text.split("\n")[0] == "Default store: Custom store (VaultStore), kept across restarts"
 
 
 # ---------------------------------------------------------------------------

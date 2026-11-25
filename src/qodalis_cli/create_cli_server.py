@@ -63,8 +63,15 @@ from .services import (
 class CliServerConfigOptions:
     """The ``config`` option of :class:`CliServerOptions`: config providers."""
 
-    #: Where writable settings are kept (default in memory); same as ``builder.set_config_store``.
+    #: The default store: where the writable settings of every provider
+    #: without its own store are kept (default in memory); same as
+    #: ``builder.set_config_store(store)``.
     store: Any = None
+    #: A store per provider id, winning over the provider's own and the
+    #: default store: ``{"jobs": redis_store, "users": database_store}``; same
+    #: as ``builder.set_config_store(store, id)``.  A store may be given to
+    #: several providers.
+    stores: dict[str, Any] = field(default_factory=dict)
     #: Which environment variables the ``host`` provider lists (default every one), secrets masked.
     environment: CliHostEnvironmentOptions | None = None
     #: Register the ``config`` command (default true).
@@ -119,7 +126,7 @@ class CliServerOptions:
     #: :mod:`qodalis_cli.dashboard_modules`): by id, another build's directory or ``False`` to leave the page out.
     #: By default each is served from the copy in its package when the feature is on.
     dashboard_pages: dict[str, str | bool] = field(default_factory=dict)
-    #: Config providers: the store of writable settings, what the ``host``
+    #: Config providers: the stores of writable settings (default and per provider), what the ``host``
     #: provider shows, the ``config`` command (:class:`CliServerConfigOptions`).
     config: CliServerConfigOptions | None = None
     configure: Callable[[CliBuilder], None] | None = None
@@ -420,6 +427,8 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     builder = CliBuilder(registry)
     if opts.config is not None and opts.config.store is not None:
         builder.set_config_store(opts.config.store)
+    for provider_id, store in ((opts.config.stores or {}) if opts.config is not None else {}).items():
+        builder.set_config_store(store, provider_id)
 
     if opts.configure:
         opts.configure(builder)
