@@ -861,6 +861,77 @@ custom  Custom  · Database (PostgreSQL database qcli, table QcliConfig)
   custom             0 setting(s)  version 0
 ```
 
+## Restart
+
+Some changes take effect only after a restart: a setting with `requires_restart`, a plugin installed later. The
+server keeps the list of them and can restart itself, from the dashboard, `admin restart --yes` (admin plugin) or the
+API. Same contract and JSON as the Node and .NET servers.
+
+```python
+from qodalis_cli import CliServerOptions, CliServerRestartOptions, create_cli_server
+
+server = create_cli_server(CliServerOptions(
+    # "auto" (default): "exit" under a detected supervisor, else not supported
+    # "exit": exit with exit_code (default 75) for Docker (restart policy), systemd (Restart=always), PM2 or Kubernetes
+    # "self": run the same command again in this process (sys.executable, same arguments, environment, working directory)
+    # "handler": your function (sync or async), after the graceful shutdown
+    restart=CliServerRestartOptions(mode="self"),
+))
+server.restart.mark_required("plugin:tickets", "tickets", "Tickets plugin installed")
+server.restart.clear_required("plugin:tickets")
+server.restart.on_shutdown("pool", pool.close)  # your own clean-up, in registration order (sync or async)
+```
+
+- **Pending list**: `mark_required(id, source, description)` (once per id), `clear_required(id)`; empty after every
+  start. The config service marks a changed entry with `requires_restart` as `config:<provider>.<section>.<key>`
+  (source `config`, `CORS: Mode changed`) and clears it when the value is set back to what it was at start.
+- **Supervisor detection** (`auto`): PM2 (`pm_id`), systemd (`INVOCATION_ID`), Kubernetes (`KUBERNETES_SERVICE_HOST`,
+  `kubepods` in `/proc/1/cgroup`), Docker (`/.dockerenv`, `docker` in `/proc/1/cgroup`). Without one, restarting is
+  not supported until `restart.mode` is set.
+- **Graceful shutdown under uvicorn**: the uvicorn server running the app (found through its signal handler, or
+  `server.restart.attach_server(uvicorn_server)` when it runs outside the main thread) is asked to exit: it stops
+  accepting connections, closes the WebSockets with **1012** (service restart) and waits for in-flight requests (its
+  `timeout_graceful_shutdown`, set to `drain_timeout`, 10 s, when unset). Then the app's lifespan shutdown closes
+  what is left (events, logs and shell sockets with 1012) and runs the hooks: mounted job schedulers' `stop()`,
+  mounted plugins' `dispose()`, `on_shutdown` functions. Then the mode's action: `exit` ends the process with the exit
+  code (logs and output flushed first); `self` replaces it with the same command (`sys.executable` with
+  `sys.orig_argv`, so `python -m ...` and interpreter options keep working, same environment and working directory,
+  same pid and output: under `nohup ... >> server.log` it keeps writing there).
+- **Without uvicorn** (another ASGI server, tests): the service waits for the in-flight requests itself (up to
+  `drain_timeout`), closes the sockets with 1012, runs the hooks and the action.
+- The action runs at the end of the server's own lifespan: clean-up a host does after it (its own lifespan wrapper)
+  belongs in `on_shutdown` so it also runs before a restart.
+- **Sign-in**: on a server without an auth provider protecting it, restarting is refused (403) unless
+  `allow_anonymous=True`.
+- **Tests**: `CliServerRestartOptions(runtime={...})` replaces what the process does (`exit`, `exec`, `env`, `exists`,
+  `read_file`, `executable`, `argv`, `cwd`, `find_server`), so a test never exits or execs.
+
+| Route | Permission | Does |
+|---|---|---|
+| `GET /api/v1/qcli/server/restart` | `admin:access` | The status below |
+| `POST /api/v1/qcli/server/restart` `{ reason? }` | `server:restart` | 202 `{ restarting: true, pending: [ids] }`, then the restart; 409 `{ error: 'restart not supported: no supervisor detected; set restart.mode' }` or `restart already in progress`; 403 without sign-in |
+
+```json
+{
+  "supported": true,
+  "mode": "self",
+  "supervisor": null,
+  "startedAt": "2026-11-25T10:00:00.000Z",
+  "pending": [
+    { "id": "config:cors.cors.mode", "source": "config", "description": "CORS: Mode changed", "since": "2026-11-25T10:04:05.000Z" }
+  ]
+}
+```
+
+`mode` is the mode in effect (`auto` shows `exit`), null when not supported, with `reason`
+(`no supervisor detected; set restart.mode`). `startedAt` changes once the server is back: poll it (or
+`GET /api/qcli/versions`) to know when.
+
+- **Permission** `server:restart` (core catalog, group `Server`).
+- **Audit** `server.restart`: `target` `server`, `details` the reason, `properties` `{ reason, by, pending, mode, supervisor, via }`.
+- **Events** (audience `admin:access`): `server:restart-required` `{ pending }` whenever the list changes,
+  `server:restarting` `{ reason, by, pending, mode }` before the shutdown.
+
 ## Use with your app's sign-in
 
 When your application already signs users in (cookies, JWT, an identity provider), the users plugin can take its users from your app instead of its own logins. The browser terminal, the MCP endpoint and the admin dashboard then all use your session.

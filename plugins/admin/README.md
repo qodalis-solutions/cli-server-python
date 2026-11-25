@@ -267,11 +267,15 @@ file renamed over it). Changes run one at a time.
         { "file": "extension.css", "path": "dist/extension.css", "integrity": "sha384-…", "size": 5120 }
       ],
       "installedAt": "2026-11-25T10:04:05.123Z",
-      "installedBy": "admin"
+      "installedBy": "admin",
+      "config": { "entries": [{ "key": "refreshSeconds", "type": "number", "default": 30, "validation": { "min": 5, "max": 3600 } }] }
     }
   ]
 }
 ```
+
+`config` (the installed version's settings, see [Settings of dashboard plugins](#settings-of-dashboard-plugins)) is
+absent for a plugin without settings.
 
 The plugin is then registered as a dashboard extension at once (no restart): its page id is the package's suffix for
 `@qodalis/cli-dashboard-module-<id>`, else the extension's own id (`extension.id` of the version record, then of the
@@ -288,15 +292,100 @@ after the admin plugin cannot take a marketplace page's id, so mount the admin p
 their own.
 
 Every change is audited (`dashboard.plugin.install`, `dashboard.plugin.update`, `dashboard.plugin.remove`: target the
-package, `properties: { name, version, id, previousVersion? }`) in the server's audit log (the users plugin mounts it;
+package, `properties: { name, version, id, previousVersion?, config?, configDropped? }`, the keys of the settings
+given and dropped) in the server's audit log (the users plugin mounts it;
 or the store set with `builder.set_config_audit_store`) and published as `dashboard:extensions-changed`
 (`{ action, name, version, id, previousVersion? }`, audience `admin:access`), so open dashboards reload their pages.
+
+### Settings of dashboard plugins
+
+A dashboard plugin may declare settings with defaults, in the config providers' entry model: `qodalis.config.entries`
+of its package.json, published by the marketplace as `config: { entries }` of the version record:
+
+```json
+{
+  "entries": [
+    { "key": "refreshSeconds", "label": "Refresh every", "type": "number", "default": 30, "validation": { "min": 5, "max": 3600 } },
+    { "key": "columns", "type": "string[]", "default": ["name", "status"] },
+    { "key": "mode", "type": "enum", "default": "compact", "validation": { "options": ["compact", "full"] } }
+  ]
+}
+```
+
+Types `string`, `number`, `boolean`, `string[]`, `enum`, `json`, `duration` and `url`, **never `secret`** (a dashboard
+plugin runs in the browser: it cannot keep one). Keys match `^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$`, at most 50 entries, an
+`enum` has `validation.options`, every default passes its own validation, at most 32 KB of JSON. The marketplace
+rejects versions breaking these rules; the server checks them again (`parse_dashboard_plugin_config`), and a version
+whose settings fail installs **without settings**, the response carrying
+`"warnings": ["the settings of <name>@<version> are invalid and were ignored: <reason>"]`. Settings missing from the
+details' versions are read from the version record.
+
+The admin plugin registers the config provider **`dashboard-plugins`** ("Dashboard plugins", writable,
+`DashboardPluginsConfigProvider`) with **one section per installed plugin with settings**: the section id is the page
+id, its title the plugin's title, its entries the installed version's with their defaults. A plugin without settings
+gets no section. Its store is resolved like every provider's: the host's store for `dashboard-plugins`
+(`CliServerOptions(config=CliServerConfigOptions(stores={"dashboard-plugins": store}))`,
+`builder.set_config_store(store, "dashboard-plugins")`), else the default store, else memory.
+`GET /api/v1/qcli/config/dashboard-plugins`:
+
+```json
+{
+  "id": "dashboard-plugins",
+  "title": "Dashboard plugins",
+  "description": "Settings of the dashboard plugins installed from the marketplace",
+  "order": 85,
+  "writable": true,
+  "storage": { "kind": "store", "description": "Changes are saved to its config store", "sources": [] },
+  "store": { "kind": "file", "title": "JSON file", "detail": "qcli-config.json", "persistent": true },
+  "sections": [
+    {
+      "id": "tickets",
+      "title": "Tickets",
+      "description": "@acme/cli-dashboard-tickets@1.0.0",
+      "mutable": true,
+      "version": "1",
+      "allowCustomKeys": false,
+      "entries": [
+        { "key": "refreshSeconds", "label": "Refresh every", "description": "", "type": "number", "value": 60, "default": 30, "source": "file", "mutable": true, "requiresRestart": false, "sensitive": false, "validation": { "min": 5, "max": 3600 } },
+        { "key": "columns", "label": "columns", "description": "", "type": "string[]", "value": ["name", "status"], "default": ["name", "status"], "source": "default", "mutable": true, "requiresRestart": false, "sensitive": false },
+        { "key": "mode", "label": "mode", "description": "", "type": "enum", "value": "compact", "default": "compact", "source": "default", "mutable": true, "requiresRestart": false, "sensitive": false, "validation": { "options": ["compact", "full"] } }
+      ]
+    }
+  ]
+}
+```
+
+Settings are changed like any other: `PATCH /api/v1/qcli/config/dashboard-plugins/<id>` (`config:write`), `config set
+dashboard-plugins.<id>.<key> <value>`, MCP `config_set`; the same validation (400 with per-key errors), versions (409),
+audit (`config.update`) and `config:changed` event.
+
+- **Install**: `POST /installed` takes `config: { key: value }`, checked against the version's settings **before
+  anything is downloaded or stored** (400 `{ "error": "validation failed", "errors": { "refreshSeconds": "must be at
+  least 5", "nope": "unknown setting" } }`; `config must be an object` for anything else) and stored with the install
+  (`null` keeps the default). Values left in the store for that page id by an earlier install are cleared.
+  Install-time values need `dashboard:install`, not `config:write`.
+- **Update**: `PUT /installed/{name}` takes `config` too, checked against the new version's settings. Stored values
+  whose key the new version still has and whose value it still accepts are kept, the others deleted and listed in the
+  response as `configDropped` (`[]` when none); a value given for a key replaces it, `null` resets it. The same version
+  with `config` applies the values. A version without settings removes the section.
+- **Remove**: deletes the section and every value stored for it.
+- **Restart**: the sections are re-created from `installed.json` (it keeps each installed version's `config`), so
+  they come back offline with their stored values.
+- Changing stored values publishes `config:changed` (`{ provider: "dashboard-plugins", section, keys, version,
+  requiresRestart: false, store, user }`, audience `config:read`).
+
+The page reads its values from `GET /installed/{name}/config` (`admin:access`): the stored values over the defaults
+and the section's version, `{ "values": {}, "version": null }` for a plugin without settings, 404 when not installed:
+
+```json
+{ "values": { "refreshSeconds": 60, "columns": ["name", "status"], "mode": "compact" }, "version": "1" }
+```
 
 ### Marketplace API
 
 Mounted at `/api/v1/qcli/dashboard/marketplace`. Reading needs `admin:access`; `POST`, `PUT` and `DELETE` need
 `dashboard:install` (core catalog, group Server; the static admin of password sign-in holds every permission). Errors
-are `{ "error": "..." }`.
+are `{ "error": "..." }` (with `errors`, per key, when settings are refused).
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -304,9 +393,10 @@ are `{ "error": "..." }`.
 | GET | `/plugins?query=&page=&pageSize=` | The marketplace's list asked with `kind=dashboard&dashboardApi=1` (`{ items, total, page, pageSize }`); items of another kind are dropped (an older marketplace ignores `kind`; `total` is then the number of dashboard items), each item annotated (below); 502 `{ "error": "marketplace unreachable" }` |
 | GET | `/plugins/{name}` | One plugin with its `versions`, annotated; each version also `allowed` and `blockedReason`; 404 when not listed |
 | GET | `/installed` | The installed plugins (below); `updateAvailable` when the marketplace answers |
-| POST | `/installed` | `{ name, version? }`: 201 with the installed plugin; 400 invalid name or version, `needs dashboard API 2`; 403 `publisher not verified`, `install disabled`; 404 unknown plugin or version; 409 already installed, id taken; 502 `marketplace unreachable`, `integrity mismatch: <path>`, `download failed: <path>` |
-| PUT | `/installed/{name}` | `{ version? }`: updates (default: the newest fitting version), same checks; 404 when not installed |
-| DELETE | `/installed/{name}` | Removes the plugin; 404 when not installed |
+| GET | `/installed/{name}/config` | `{ values, version }`: the values of its settings (stored over defaults) and the section's version; `{ values: {}, version: null }` without settings |
+| POST | `/installed` | `{ name, version?, config? }`: 201 with the installed plugin (`warnings` when its settings were ignored); 400 invalid name or version, `needs dashboard API 2`, `validation failed` with `errors`; 403 `publisher not verified`, `install disabled`; 404 unknown plugin or version; 409 already installed, id taken; 502 `marketplace unreachable`, `integrity mismatch: <path>`, `download failed: <path>` |
+| PUT | `/installed/{name}` | `{ version?, config? }`: updates (default: the newest fitting version), same checks; the plugin with `configDropped`; 404 when not installed |
+| DELETE | `/installed/{name}` | Removes the plugin and its settings; 404 when not installed |
 
 Scoped names go in the path raw (`/installed/@acme/tickets`) or encoded (`/installed/%40acme%2Ftickets`).
 
@@ -342,10 +432,13 @@ the list form `[{ "ecosystem": "pypi", "name": ... }]`), else whether the server
     "id": "jobs",
     "installedAt": "2026-11-25T10:04:05.123Z",
     "installedBy": "admin",
+    "hasConfig": false,
     "updateAvailable": false
   }
 ]
 ```
+
+`hasConfig`: the plugin has settings (the section `dashboard-plugins.<id>`).
 
 ## Color scheme
 
@@ -441,8 +534,9 @@ CLI's. The values are served with the color scheme at `/qcli/admin/theme.json`; 
 The plugin brings the `admin` command (registered by `mount_plugin`, which also lets the module registry filter the
 executor). It reads the same services as the admin routes. On a protected server every sub-command needs
 `admin:access`; `admin logs` also needs `logs:read`, `admin dashboard install|update|remove` also
-`dashboard:install`. Server settings are the core
-[`config`](../../README.md#config-providers) command. Lists take `--json` (the payload of the matching route).
+`dashboard:install`, `admin restart` (but not `admin restart status`) `server:restart`. Server settings are the core
+[`config`](../../README.md#config-providers) command; a dashboard plugin's settings are changed after its install
+with `config set dashboard-plugins.<id>.<key> <value>` (`config:write`). Lists take `--json` (the payload of the matching route).
 
 | Command | Permission | Does |
 |---|---|---|
@@ -454,9 +548,12 @@ executor). It reads the same services as the admin routes. On a protected server
 | `admin logs [--level warn,error] [--search <text>] [--service <source>] [--since 5m\|1h\|7d\|<ISO date>] [-n 50] [--json]` | `admin:access`, `logs:read` | The newest matching log entries (1-1000), oldest first, from the log buffer (`--service` matches the logger name) |
 | `admin dashboard`, `admin dashboard list [--json]` | `admin:access` | The dashboard plugins installed from the marketplace: page id, package, version (and whether an update is available), when and by whom (`GET /dashboard/marketplace/installed`) |
 | `admin dashboard search [<query>] [--json]` | `admin:access` | The marketplace's dashboard plugins: package, version, publisher, installed / installable / blocked and why, a missing server plugin (`GET /dashboard/marketplace/plugins`) |
-| `admin dashboard install <name>[@version]` | `admin:access`, `dashboard:install` | Installs the newest version this dashboard runs, or the one given, with the API's checks (`POST /dashboard/marketplace/installed`) |
-| `admin dashboard update <name>` | `admin:access`, `dashboard:install` | Updates to the newest version (`PUT /dashboard/marketplace/installed/{name}`) |
-| `admin dashboard remove <name>` | `admin:access`, `dashboard:install` | Removes the page and its files (`DELETE /dashboard/marketplace/installed/{name}`) |
+| `admin dashboard info <name> [--json]` | `admin:access` | An installed plugin: page, files, and its settings with their values, defaults and rules (`*` marks a changed value) |
+| `admin dashboard install <name>[@version] [--config '<json>']` | `admin:access`, `dashboard:install` | Installs the newest version this dashboard runs, or the one given, with values for its settings, with the API's checks (`POST /dashboard/marketplace/installed`) |
+| `admin dashboard update <name> [--config '<json>']` | `admin:access`, `dashboard:install` | Updates to the newest version, reporting the settings it drops (`PUT /dashboard/marketplace/installed/{name}`) |
+| `admin dashboard remove <name>` | `admin:access`, `dashboard:install` | Removes the page, its files and its settings (`DELETE /dashboard/marketplace/installed/{name}`) |
+| `admin restart [--yes] [--reason <text>]` | `admin:access`, `server:restart` | Without `--yes` (server commands cannot ask): the changes waiting for a restart and how to confirm; with it, restarts the server like `POST /server/restart` (audited with `via: command`) |
+| `admin restart status [--json]` | `admin:access` | Start time, restart mode and supervisor (or why it cannot restart), the pending changes (`GET /server/restart`) |
 
 On a server without the users plugin, `/execute` is open, and so are these commands. To follow the log live, use
 `server logs` of the web CLI plugin `@qodalis/cli-server-logs` (the `/ws/v1/qcli/logs` socket, `logs:read`).
@@ -508,6 +605,49 @@ Removed @qodalis/cli-dashboard-module-jobs@1.1.0 (the page jobs).
 
 $ admin dashboard install @acme/cli-dashboard-tickets
 Error: publisher not verified
+
+$ admin dashboard install @acme/cli-dashboard-tickets --config '{"refreshSeconds":1,"mode":"huge"}'
+Error: validation failed
+  refreshSeconds: must be at least 5
+  mode: must be one of: compact, full
+
+$ admin dashboard install @acme/cli-dashboard-tickets --config '{"refreshSeconds":60}'
+Installed @acme/cli-dashboard-tickets@1.0.0: the dashboard page "Tickets" (/x/tickets).
+Its settings: admin dashboard info @acme/cli-dashboard-tickets
+
+$ admin dashboard info @acme/cli-dashboard-tickets
+@acme/cli-dashboard-tickets@1.0.0
+  Page        Tickets (/x/tickets)
+  Installed   2026-11-25 10:04:05 by admin
+  Files       extension.js (48211 bytes), extension.css (5120 bytes)
+Settings (config set dashboard-plugins.tickets.<key> <value>; version 1):
+Key             Value              Type      Default            Rule
+refreshSeconds  60 *               number    30                 min 5; max 3600
+columns         ["name","status"]  string[]  ["name","status"]  -
+mode            compact            enum      compact            one of compact, full
+* changed from the default
+
+$ config set dashboard-plugins.tickets.mode full
+Updated dashboard-plugins.tickets.mode = full (version 2)
+
+$ admin dashboard update @acme/cli-dashboard-tickets --config '{"theme":"dark"}'
+Updated @acme/cli-dashboard-tickets from 1.0.0 to 2.0.0.
+Settings dropped (the new version no longer accepts them): refreshSeconds, mode
+Its settings: admin dashboard info @acme/cli-dashboard-tickets
+
+$ admin restart
+1 change(s) take effect after a restart:
+  - CORS: Mode changed (config, since 2026-11-25 10:04:05)
+Restart mode: self (starts itself again)
+Run admin restart --yes [--reason "<why>"] to restart the server now.
+
+$ admin restart --yes --reason "apply CORS"
+Restarting the server to apply 1 pending change(s) (self mode). The connection drops and comes back once it runs again.
+
+$ admin restart status
+Running since 2026-11-25 10:06:12
+Restart mode: exit (exits for docker to start it again)
+No changes are waiting for a restart.
 ```
 
 ## License
