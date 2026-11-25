@@ -191,6 +191,21 @@ class ModuleRegistry(ICliProcessorFilter):
             self._disabled.add(entry.id)
         return self._describe(entry)
 
+    def set_enabled(self, module_id: str, enabled: bool) -> tuple[dict[str, Any], bool] | None:
+        """Enables or disables a module (idempotent, unlike :meth:`toggle`):
+        ``(module, changed)``, ``changed`` false when it already was; ``None``
+        for an unknown id."""
+        entry = self._find(module_id)
+        if entry is None:
+            return None
+        changed = (entry.id in self._disabled) == enabled
+        if changed:
+            if enabled:
+                self._disabled.discard(entry.id)
+            else:
+                self._disabled.add(entry.id)
+        return self._describe(entry), changed
+
     # -- helpers ------------------------------------------------------------
 
     def _find(self, module_id: str) -> _Entry | None:

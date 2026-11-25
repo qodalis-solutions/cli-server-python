@@ -56,3 +56,31 @@ def resolve_range(
     if since >= until:
         raise RangeError(f"'{start_name}' must be before '{end_name}'")
     return since, until
+
+
+_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+_RELATIVE = __import__("re").compile(r"^(\d+)\s*([smhd])$", __import__("re").IGNORECASE)
+
+
+def parse_since(value: str, name: str, now: datetime | None = None) -> datetime:
+    """A start time given as a duration back from now (``30s``, ``5m``,
+    ``1h``, ``7d``) or an ISO 8601 date (UTC when it names no offset).
+    :class:`RangeError` for anything else, a zero duration or a time in the
+    future."""
+    current = now or datetime.now(timezone.utc)
+    text = value.strip()
+    relative = _RELATIVE.match(text)
+    if relative:
+        amount = int(relative.group(1))
+        if amount <= 0:
+            raise RangeError(f"{name} must be more than 0")
+        return current - timedelta(seconds=amount * _UNIT_SECONDS[relative.group(2).lower()])
+    try:
+        date = parse_time(text, name)
+    except RangeError:
+        date = None
+    if date is None:
+        raise RangeError(f"{name} must be a duration (30s, 5m, 1h, 7d) or an ISO 8601 date")
+    if date > current:
+        raise RangeError(f"{name} is in the future")
+    return date

@@ -141,3 +141,28 @@ class StatusHistory:
 def _iso_ms(value: datetime) -> str:
     utc = value.astimezone(timezone.utc)
     return utc.strftime("%Y-%m-%dT%H:%M:%S.") + f"{utc.microsecond // 1000:03d}Z"
+
+
+def _range(values: list[float]) -> dict[str, float] | None:
+    if not values:
+        return None
+    return {"min": min(values), "avg": round(sum(values) / len(values), 2), "max": max(values)}
+
+
+def summarize_status_history(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    """Count, time span, min/avg/max memory and CPU (average rounded to 0.01,
+    as memory is), and the peak connections of the samples
+    (``admin status --history``)."""
+    summary: dict[str, Any] = {"count": len(samples)}
+    if samples:
+        summary["from"] = samples[0]["timestamp"]
+        summary["to"] = samples[-1]["timestamp"]
+    memory = _range([s["memoryMb"] for s in samples])
+    if memory is not None:
+        summary["memoryMb"] = memory
+    cpu = _range([s["cpuPercent"] for s in samples if isinstance(s.get("cpuPercent"), (int, float))])
+    if cpu is not None:
+        summary["cpuPercent"] = cpu
+    summary["maxWsConnections"] = max((s.get("activeWsConnections", 0) for s in samples), default=0)
+    summary["maxShellSessions"] = max((s.get("activeShellSessions", 0) for s in samples), default=0)
+    return summary
