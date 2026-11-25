@@ -310,7 +310,7 @@ class TestGrantable:
             "rates:read", "banks:read",
         ]
         root = await users.user_store.get_user("root")
-        assert len(await users.api_tokens.grantable_permissions(root.id)) == 16 + 12 + 2
+        assert len(await users.api_tokens.grantable_permissions(root.id)) == 17 + 12 + 2
 
     async def test_errors(self, users, alice):
         await _fails(users.api_tokens.grantable_permissions("nobody"), 404, "user not found")

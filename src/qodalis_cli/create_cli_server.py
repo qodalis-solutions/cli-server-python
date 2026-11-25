@@ -54,6 +54,7 @@ from .restart import (
     CliServerRestartServices,
     create_restart_router,
 )
+from .server_plugins import DEFAULT_DATA_DIR, CliServerPlugins, CliServerPluginsHost, CliServerPluginsOptions
 from .security import LiveCorsMiddleware, WebSocketOriginMiddleware, get_auth_context
 from .shell_security import CliShellOptions, ShellAccessProvider, remote_address
 from .services import (
@@ -144,6 +145,12 @@ class CliServerOptions:
     #: 75, for Docker, systemd, PM2 or Kubernetes to start it again), ``self`` (graceful shutdown, then the same
     #: command runs again in this process: bare runs and development) or ``handler`` (the host's function).
     restart: CliServerRestartOptions | dict[str, Any] | None = None
+    #: The server's data directory (default ``./qcli-data``, from the working directory): runtime-installed server
+    #: plugins (``server-plugins/``) and their own data (``plugin-data/<id>/``).
+    data_dir: str = DEFAULT_DATA_DIR
+    #: Server plugins installed at runtime from the marketplace (the admin plugin installs them): loaded at the app's
+    #: startup from ``<data_dir>/server-plugins`` (``dir`` to keep them elsewhere); ``False`` loads none.
+    server_plugins: CliServerPluginsOptions | dict[str, Any] | bool | None = None
     configure: Callable[[CliBuilder], None] | None = None
 
 
@@ -200,6 +207,12 @@ class CliServerResult:
         ``clear_required``, ``status()``, ``on_shutdown(name, fn)`` for the host's own clean-up (pools, stores),
         ``attach_server(uvicorn_server)`` when uvicorn runs outside the main thread."""
         return self.builder.restart
+
+    @property
+    def server_plugins(self) -> CliServerPlugins:
+        """Server plugins installed at runtime (same as ``builder.server_plugins``): loaded at the app's startup;
+        ``await result.server_plugins.ready()`` loads them before (tests, a host serving without the lifespan)."""
+        return self.builder.server_plugins
 
     @property
     def config(self) -> Any:
@@ -440,6 +453,9 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         shell_session_manager.log_startup()
         if server_ref:
+            # Server plugins installed at runtime, after the host's own mounts
+            await server_ref[0].builder.server_plugins.ready()
+        if server_ref:
             # Apply the stored settings before serving (a store that cannot be read fails startup)
             await server_ref[0].builder.config.ready()
         yield
@@ -487,6 +503,9 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     for provider_id, store in ((opts.config.stores or {}) if opts.config is not None else {}).items():
         builder.set_config_store(store, provider_id)
 
+    builder.use_server_plugins(CliServerPlugins(
+        opts.data_dir or DEFAULT_DATA_DIR, False if opts.server_plugins is False else opts.server_plugins,
+    ))
     if opts.configure:
         opts.configure(builder)
 
@@ -529,35 +548,52 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         shell_enabled=opts.enable_shell,
     ), builtin=True)
 
-    fs_provider = None
-    if builder.file_storage_provider is not None:
-        fs_provider = builder.file_storage_provider
-    elif builder.filesystem_options is not None:
-        fs_provider = OsFileStorageProvider(
-            OsProviderOptions(
-                allowed_paths=builder.filesystem_options.allowed_paths
+    # The filesystem API and the data explorer: wired at creation, and again once the server plugins installed at
+    # runtime are loaded (one of them may set the storage or add sources)
+    wired: dict[str, Any] = {"fs": None, "fs_limits": None, "de_registry": None, "de_count": 0}
+
+    def fs_storage_name() -> str:
+        provider = builder.file_storage_provider
+        return "os" if provider is None else str(getattr(provider, "name", None) or type(provider).__name__)
+
+    def wire_filesystem() -> None:
+        if wired["fs"] is not None:
+            return
+        fs_provider: Any = None
+        if builder.file_storage_provider is not None:
+            fs_provider = builder.file_storage_provider
+        elif builder.filesystem_options is not None:
+            fs_provider = OsFileStorageProvider(
+                OsProviderOptions(
+                    allowed_paths=builder.filesystem_options.allowed_paths
+                )
             )
-        )
-    fs_limits: FileSystemApiLimits | None = None
-    fs_storage_name = (
-        "os" if builder.file_storage_provider is None
-        else str(getattr(builder.file_storage_provider, "name", None) or type(builder.file_storage_provider).__name__)
-    )
-    if fs_provider is not None:
+        if fs_provider is None:
+            return
         # The API and the MCP tools share it: one fs:changed per change.
         fs_provider = EventPublishingFileStorageProvider(fs_provider, event_bus)
+        wired["fs"] = fs_provider
         # Read per upload: the ``filesystem`` config provider changes it at runtime
-        fs_limits = FileSystemApiLimits(
+        wired["fs_limits"] = FileSystemApiLimits(
             builder.filesystem_options.max_upload_bytes
             if builder.filesystem_options is not None
             else DEFAULT_MAX_UPLOAD_BYTES
         )
-        fs_router = create_filesystem_router(fs_provider, max_upload_bytes=fs_limits)
+        fs_router = create_filesystem_router(fs_provider, max_upload_bytes=wired["fs_limits"])
         if opts.cli_routes:
             app.include_router(fs_router, prefix="/api/qcli/fs")
         mcp_tools.add_provider(FilesystemMcpToolProvider(fs_provider), builtin=True)
 
-    if builder.data_explorer_registrations:
+    def wire_data_explorer() -> None:
+        registrations = builder.data_explorer_registrations
+        if not registrations:
+            return
+        if wired["de_registry"] is not None:
+            # Sources added later (a plugin loaded at runtime) join the served registry
+            for reg in registrations[wired["de_count"]:]:
+                wired["de_registry"].register(reg.provider, reg.options)
+            wired["de_count"] = len(registrations)
+            return
         from qodalis_cli_data_explorer import (
             DataExplorerRegistry,
             DataExplorerExecutor,
@@ -565,8 +601,10 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         )
 
         data_explorer_registry = DataExplorerRegistry()
-        for reg in builder.data_explorer_registrations:
+        for reg in registrations:
             data_explorer_registry.register(reg.provider, reg.options)
+        wired["de_registry"] = data_explorer_registry
+        wired["de_count"] = len(registrations)
         # The audit plugin can be mounted later (mount_plugin): read it per query
         data_explorer_executor = DataExplorerExecutor(
             data_explorer_registry,
@@ -592,6 +630,11 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
             ),
             builtin=True,
         )
+
+    wire_filesystem()
+    wire_data_explorer()
+    fs_provider = wired["fs"]
+    fs_limits: FileSystemApiLimits | None = wired["fs_limits"]
 
     # The ``config`` command is served by the config_* tools instead
     mcp_tools.add_provider(CommandsMcpToolProvider(
@@ -646,7 +689,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         )
     server_ref.append(result)
     _configure_config_providers(
-        result, opts, package_version, cors_mode, mcp_options, fs_limits, fs_storage_name,
+        result, opts, package_version, cors_mode, mcp_options, fs_limits, fs_storage_name(),
     )
 
     # The dashboard pages of the APIs the core serves
@@ -658,7 +701,50 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         page = data_explorer_page(opts.dashboard_pages.get("data-explorer"))
         if page is not None:
             result.add_dashboard_page(page)
+
+    def after_plugins_loaded() -> None:
+        """Wires what the plugins loaded at runtime set on the builder: the filesystem API (with its config provider
+        and page) and the data explorer (its new sources)."""
+        if not opts.cli_routes:
+            return
+        before = list(app.router.routes)
+        had_fs, had_de = wired["fs"] is not None, wired["de_registry"] is not None
+        wire_filesystem()
+        wire_data_explorer()
+        if not had_fs and wired["fs"] is not None:
+            if not builder.config_registry.has("filesystem"):
+                roots = builder.filesystem_options.allowed_paths if builder.filesystem_options is not None else None
+                builder.add_config_provider(create_filesystem_config_provider(fs_storage_name(), wired["fs_limits"], roots))
+            page = filesystem_page(opts.dashboard_pages.get("filesystem"))
+            if page is not None:
+                result.add_dashboard_page(page)
+        if not had_de and wired["de_registry"] is not None:
+            page = data_explorer_page(opts.dashboard_pages.get("data-explorer"))
+            if page is not None:
+                result.add_dashboard_page(page)
+        late_routes.extend(r for r in app.router.routes if r not in before)
+        _routes_first(app, late_routes)
+
+    late_routes: list[Any] = []
+
+    def mount_late(plugin: Any) -> None:
+        before = list(app.router.routes)
+        result.mount_plugin(plugin)
+        late_routes.extend(r for r in app.router.routes if r not in before)
+
+    builder.server_plugins.attach(CliServerPluginsHost(
+        builder=builder, config=builder.config, event_bus=event_bus, restart=restart,
+        mount=mount_late, after_load=after_plugins_loaded,
+    ))
     return result
+
+
+def _routes_first(app: FastAPI, routes: list[Any]) -> None:
+    """Moves the routes of plugins loaded at runtime ahead of a host's catch-all added before them."""
+    if not routes:
+        return
+    current = app.router.routes
+    current[:] = [r for r in current if r in routes] + [r for r in current if r not in routes]
 
 
 def data_explorer_caller(auth: Any, remote: str | None = None) -> Any:
