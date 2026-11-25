@@ -14,6 +14,7 @@ def create_plugins_router(
     module_registry: ModuleRegistry,
     auth_dependency: Any,
     builder: Any = None,
+    marketplace: Any = None,
 ) -> APIRouter:
     """Create a router with ``GET /plugins``, ``GET /plugins/installed``,
     ``GET /plugins/{id}`` and ``POST /plugins/{id}/toggle``."""
@@ -36,8 +37,15 @@ def create_plugins_router(
         page is listed; the dashboard hides those the user may not see and
         each plugin's own API enforces access."""
         extensions = getattr(builder, "dashboard_extensions", None) or []
+
+        def view(e: Any) -> dict[str, Any]:
+            # Pages installed from the marketplace are marked as such
+            if marketplace is not None and marketplace.has_extension(e.id):
+                return {**e.to_dict(), "source": "marketplace"}
+            return e.to_dict()
+
         return JSONResponse(
-            content={"extensions": [e.to_dict() for e in extensions]},
+            content={"extensions": [view(e) for e in extensions]},
             headers={"Cache-Control": "no-cache"},
         )
 

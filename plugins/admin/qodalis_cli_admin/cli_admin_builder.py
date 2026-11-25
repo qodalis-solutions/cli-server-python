@@ -23,6 +23,14 @@ from .controllers.plugins_controller import create_plugins_router
 from .controllers.config_controller import create_config_router
 from .controllers.logs_controller import create_logs_router
 from .controllers.ws_clients_controller import create_ws_clients_router
+from .controllers.dashboard_marketplace_controller import create_dashboard_marketplace_router
+from .services.dashboard_marketplace import (
+    DASHBOARD_INSTALL_PERMISSION,
+    DashboardMarketplace,
+    DashboardMarketplaceAssetRoute,
+    DashboardMarketplaceDeps,
+    DashboardMarketplaceOptions,
+)
 from .services.admin_config import AdminConfig
 from .services.admin_config_providers import AdminAuthConfigProvider, create_logs_config_provider
 from .services.admin_branding import validate_admin_branding
@@ -92,6 +100,12 @@ class CliAdminPlugin:
     #: The ``auth`` (read-only) and ``logs`` config providers, registered with
     #: the server's (also by ``build`` when the builder takes them).
     config_providers: list[Any] = field(default_factory=list)
+    #: Dashboard plugins from the marketplace (``set_marketplace``), served at
+    #: ``/api/v1/qcli/dashboard/marketplace``; ``None`` when turned off
+    #: (``set_marketplace(False)``) or the builder cannot add pages at runtime.
+    marketplace: DashboardMarketplace | None = None
+    #: Serves the marketplace plugins' files at ``/qcli/modules/<id>/`` (mounted by ``mount_plugin``).
+    asset_routes: list[Any] = field(default_factory=list)
     #: Holds the server options read by ``GET /auth/mode`` (see on_mount).
     _server: dict = field(default_factory=dict, repr=False)
 
@@ -101,6 +115,9 @@ class CliAdminPlugin:
         entries go to the server's event bus."""
         if self._server.get("options") is None:
             self._server["options"] = getattr(server, "options", None)
+        # ``dashboard:extensions-changed`` goes to the server's bus unless the plugin was built with one
+        if self._server.get("event_bus") is None:
+            self._server["event_bus"] = getattr(server, "event_bus", None)
         # Log entries are published on the server's bus (``log:entry``, audience ``logs:read``)
         # unless the plugin was built with a bus or a broadcast function
         if self.log_buffer.event_bus is None and self.log_buffer.broadcast_fn is None:
@@ -131,6 +148,24 @@ class CliAdminBuilder:
         self._branding: dict[str, Any] | None = None
         self._sign_in_url: str | None = None
         self._config_store: Any = None
+        self._marketplace: DashboardMarketplaceOptions | None = DashboardMarketplaceOptions()
+
+    def set_marketplace(self, options: DashboardMarketplaceOptions | Mapping[str, Any] | bool) -> CliAdminBuilder:
+        """Dashboard plugins from the marketplace: ``url`` (default ``https://plugins.qodalis.com``), ``install``
+        (``verified``, the default: listed versions of verified publishers only; ``listed``: any listed version;
+        ``off``: browse only), ``dir`` (default ``./qcli-data/dashboard-plugins``, from the working directory),
+        and ``fetch`` / ``cdns`` / ``timeout`` for the HTTP client.  A :class:`DashboardMarketplaceOptions` or a
+        dict of its fields; ``False`` turns the marketplace off (no routes, installed plugins not loaded),
+        ``True`` restores the defaults.  An invalid url or policy raises :class:`ValueError` in :meth:`build`."""
+        if options is False:
+            self._marketplace = None
+        elif options is True:
+            self._marketplace = DashboardMarketplaceOptions()
+        elif isinstance(options, DashboardMarketplaceOptions):
+            self._marketplace = options
+        else:
+            self._marketplace = DashboardMarketplaceOptions(**dict(options))
+        return self
 
     def set_config_store(self, store: Any) -> CliAdminBuilder:
         """Keeps the ``logs`` config provider's (log buffer size and level) changes in ``store`` (its own
@@ -283,7 +318,34 @@ class CliAdminBuilder:
         )
         router.include_router(status_router)
 
-        plugins_router = create_plugins_router(module_registry, auth_dep, deps.builder)
+        # Dashboard plugins from the marketplace: pages added and removed at runtime, served from this server
+        server["event_bus"] = deps.event_bus
+        marketplace: DashboardMarketplace | None = None
+        add_extension = getattr(deps.builder, "add_dashboard_extension", None)
+        remove_extension = getattr(deps.builder, "remove_dashboard_extension", None)
+        if self._marketplace is not None and callable(add_extension) and callable(remove_extension):
+
+            async def publish(event_type: str, data: dict[str, Any]) -> None:
+                bus = server.get("event_bus")
+                if bus is not None:
+                    from qodalis_cli_server_abstractions import CliEventAudience
+
+                    await bus.publish(event_type, data, CliEventAudience(permission="admin:access"))
+
+            marketplace = DashboardMarketplace(self._marketplace, DashboardMarketplaceDeps(
+                extension_ids=lambda: [e.id for e in getattr(deps.builder, "dashboard_extensions", None) or []],
+                add_extension=add_extension,
+                remove_extension=remove_extension,
+                server_plugins=lambda: [p.id for p in getattr(deps.builder, "installed_plugins", None) or []],
+                audit=lambda: getattr(deps.builder, "audit_sink", None),
+                publish=publish,
+            ))
+            marketplace.load()
+            router.include_router(
+                create_dashboard_marketplace_router(marketplace, auth_dep), prefix="/dashboard/marketplace",
+            )
+
+        plugins_router = create_plugins_router(module_registry, auth_dep, deps.builder, marketplace)
         router.include_router(plugins_router)
 
         # Config: the server's config providers (builder.config), with the plugin's own
@@ -329,6 +391,7 @@ class CliAdminBuilder:
             log_buffer=log_buffer,
             event_socket_manager=deps.event_socket_manager,
             installed_plugins=lambda: list(getattr(deps.builder, "installed_plugins", None) or []),
+            marketplace=marketplace,
         ))
 
         return CliAdminPlugin(
@@ -341,9 +404,16 @@ class CliAdminBuilder:
             dashboard_app=dashboard_app,
             module_registry=module_registry,
             status_history=status_history,
-            route_permissions=[CliRoutePermission(
-                path="/api/v1/qcli/config", read=CliConfigPermissions.READ, write=CliConfigPermissions.WRITE,
-            )],
+            route_permissions=[
+                CliRoutePermission(
+                    path="/api/v1/qcli/config", read=CliConfigPermissions.READ, write=CliConfigPermissions.WRITE,
+                ),
+                CliRoutePermission(
+                    path="/api/v1/qcli/dashboard/marketplace", read="admin:access", write=DASHBOARD_INSTALL_PERMISSION,
+                ),
+            ],
             config_providers=config_providers,
+            marketplace=marketplace,
+            asset_routes=[DashboardMarketplaceAssetRoute(marketplace)] if marketplace is not None else [],
             _server=server,
         )
