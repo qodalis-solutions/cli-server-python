@@ -24,6 +24,7 @@ from typing import Any, Union
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from .docs_command import CliDocsCommandProcessor, DocsModule
 from .pages import (
     DocsPage,
     apply_variables,
@@ -78,6 +79,8 @@ class CliDocsPlugin:
     #: Served without sign-in, also under ``/api/`` on a protected server
     #: (the router answers everything under ``pages/`` itself).
     public_paths: list[str] = field(default_factory=list)
+    #: The ``docs`` terminal command (``docs list``, ``docs read <slug>``), registered by ``mount_plugin``.
+    module: Any = None
 
     def variables_for(self, request: Request) -> dict[str, str]:
         base_url = self.base_url or (str(request.base_url).rstrip("/"))
@@ -162,7 +165,21 @@ class CliDocsBuilder:
         )
         plugin.router = _router(plugin)
         plugin.public_paths = [f"{base_path}/pages", f"{base_path}/pages/*"]
+        # No request in a command: {{baseUrl}} is the configured base URL, else empty (links relative to the server root)
+        plugin.module = DocsModule(
+            CliDocsCommandProcessor(plugin.pages, lambda: {**plugin.variables, "baseUrl": plugin.base_url or "", "name": plugin.name}),
+            _package_version(),
+        )
         return plugin
+
+
+def _package_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("qodalis-cli-server-plugin-docs")
+    except Exception:  # pragma: no cover - not installed as a package
+        return "1.0.0"
 
 
 INVALID_PATH_BASE = "invalid path base"
