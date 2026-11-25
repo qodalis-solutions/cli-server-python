@@ -63,8 +63,11 @@ from .table_names import (
     qcli_table_name,
 )
 from .route_permissions import CliRoutePermission
+from .config import *  # noqa: F401,F403 (config providers)
+from .config import __all__ as _config_all
 
 __all__ = [
+    *_config_all,
     "DEFAULT_TABLE_PREFIX",
     "CliTableNameOptions",
     "is_sql_identifier",
