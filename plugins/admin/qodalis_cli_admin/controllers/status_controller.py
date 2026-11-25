@@ -17,6 +17,33 @@ DEFAULT_HISTORY_MINUTES = 60
 MAX_HISTORY_MINUTES = 1440
 
 
+def status_snapshot(
+    start_time: float,
+    event_socket_manager: Any,
+    enabled_features: list[str] | None = None,
+    registry: Any = None,
+    builder: Any = None,
+    status_history: StatusHistory | None = None,
+) -> dict[str, Any]:
+    """The server status now (``GET /status`` and ``admin status``): process
+    metrics, the latest CPU sample and the counts."""
+    latest = status_history.samples[-1] if status_history is not None and status_history.samples else None
+    return {
+        "uptimeSeconds": time.time() - start_time,
+        "memoryUsageMb": memory_usage_mb(),
+        "cpuUsagePercent": latest.get("cpuPercent") if latest is not None else None,
+        "startedAt": datetime.fromtimestamp(start_time, tz=timezone.utc).isoformat(),
+        "platform": "python",
+        "platformVersion": platform.python_version(),
+        "os": f"{platform.system()} {platform.release()}",
+        "activeWsConnections": len(event_socket_manager.get_clients()),
+        "activeShellSessions": 0,
+        "registeredCommands": len(registry.processors) if registry is not None else 0,
+        "registeredJobs": 0,
+        "enabledFeatures": _features(enabled_features, builder),
+    }
+
+
 def create_status_router(
     start_time: float,
     event_socket_manager: Any,
@@ -33,27 +60,7 @@ def create_status_router(
     async def get_status(
         _user: dict[str, Any] = Depends(auth_dependency),
     ) -> dict[str, Any]:
-        uptime_seconds = time.time() - start_time
-
-        started_at = datetime.fromtimestamp(
-            start_time, tz=timezone.utc
-        ).isoformat()
-
-        registered_commands = len(registry.processors) if registry is not None else 0
-
-        return {
-            "uptimeSeconds": uptime_seconds,
-            "memoryUsageMb": memory_usage_mb(),
-            "startedAt": started_at,
-            "platform": "python",
-            "platformVersion": platform.python_version(),
-            "os": f"{platform.system()} {platform.release()}",
-            "activeWsConnections": len(event_socket_manager.get_clients()),
-            "activeShellSessions": 0,
-            "registeredCommands": registered_commands,
-            "registeredJobs": 0,
-            "enabledFeatures": _features(enabled_features, builder),
-        }
+        return status_snapshot(start_time, event_socket_manager, enabled_features, registry, builder, status_history)
 
     @router.get("/status/history")
     async def get_status_history(
