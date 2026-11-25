@@ -59,8 +59,9 @@ def _error(exc: Exception) -> JSONResponse:
 
 
 def create_config_router(get_service: Callable[[], Any], auth_dependency: Any) -> APIRouter:
-    """``GET /config`` (``{providers: [...]}``, the providers the caller may
-    see, ``config:read``), ``GET /config/{provider}`` and ``PATCH
+    """``GET /config`` (``{defaultStore, providers: [...]}``: the store
+    providers use unless they have their own, and the providers the caller
+    may see, ``config:read``, each stored one with its ``store``), ``GET /config/{provider}`` and ``PATCH
     /config/{provider}/{section}`` (``{changes, version?}``, ``config:write``):
     200 with the section, 400 ``{error, errors}`` per key, 403, 404, 409
     ``{error, version}`` when the version is stale."""
@@ -79,7 +80,7 @@ def create_config_router(get_service: Callable[[], Any], auth_dependency: Any) -
             return unavailable()
         try:
             providers = await service.list(config_context_of(request, user))
-            return JSONResponse({"store": service.describe_store().to_dict(), "providers": providers}, headers=_NO_STORE)
+            return JSONResponse({"defaultStore": service.describe_default_store().to_dict(), "providers": providers}, headers=_NO_STORE)
         except Exception as exc:  # noqa: BLE001
             return _error(exc)
 

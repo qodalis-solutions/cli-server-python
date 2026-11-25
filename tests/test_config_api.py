@@ -110,15 +110,16 @@ class TestConfigApiOpenServer:
         assert res.status_code == 200
         assert res.headers["cache-control"] == "no-store"
         body = res.json()
-        assert sorted(body) == ["providers", "store"]
-        assert body["store"] == {"kind": "memory", "title": "In memory", "detail": "", "persistent": False}
+        assert sorted(body) == ["defaultStore", "providers"]
+        assert body["defaultStore"] == {"kind": "memory", "title": "In memory", "detail": "", "persistent": False}
         providers = body["providers"]
         assert [p["id"] for p in providers] == [
             "server", "auth", "host", "cors", "mcp", "jobs", "logs", "billing", "custom",
         ]
         view = _provider(providers, "billing")
-        assert sorted(view) == ["description", "id", "order", "sections", "storage", "title", "writable"]
-        assert view["storage"] == {"kind": "store", "description": "Changes are saved to the config store", "sources": []}
+        assert list(view) == ["id", "title", "description", "order", "writable", "storage", "store", "sections"]
+        assert view["storage"] == {"kind": "store", "description": "Changes are saved to its config store", "sources": []}
+        assert view["store"] == {"kind": "memory", "title": "In memory", "detail": "", "persistent": False}
         storage = {p["id"]: p["storage"] for p in providers}
         assert storage["server"] == {"kind": "runtime", "description": "Read from the running server process", "sources": []}
         assert storage["host"] == {

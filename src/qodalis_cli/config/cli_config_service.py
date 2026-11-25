@@ -1,5 +1,6 @@
 """The server's configuration service: permissions, validation, conflicts,
-secrets masked, audit (``config.update``) and events (``config:changed``)."""
+secrets masked, audit (``config.update``) and events (``config:changed``),
+each stored provider with the store it saves to."""
 
 from __future__ import annotations
 
@@ -128,8 +129,9 @@ def _audit_value(view: Optional[dict[str, Any]], raw: Any, side: str) -> Any:
 class CliConfigService(ICliConfigService):
     """The server's config providers, read and changed with permissions,
     validation, conflicts, secrets masked, audit (``config.update``) and
-    events (``config:changed``): the HTTP API (admin plugin), the ``config``
-    command and the MCP tools all go through it."""
+    events (``config:changed``), each stored provider with the store it
+    saves to: the HTTP API (admin plugin), the ``config`` command and the MCP
+    tools all go through it."""
 
     def __init__(
         self,
@@ -182,19 +184,28 @@ class CliConfigService(ICliConfigService):
     async def _view(self, provider: Any, context: CliConfigContext) -> dict[str, Any]:
         writer = is_cli_config_writer(provider)
         sections = await self._sections(provider, context)
-        return {
+        view: dict[str, Any] = {
             "id": provider.id,
             "title": provider.title,
             "description": getattr(provider, "description", None) or "",
             "order": _order(provider),
             "writable": writer and context.has_permission(CliConfigPermissions.WRITE),
             "storage": cli_config_provider_storage_of(provider),
-            "sections": [to_cli_config_section_view(s, writer) for s in sections],
         }
+        store = self.describe_provider_store(provider)
+        if store is not None:
+            view["store"] = store.to_dict()
+        view["sections"] = [to_cli_config_section_view(s, writer) for s in sections]
+        return view
 
-    def describe_store(self) -> CliConfigStoreDescription:
-        """Where writable settings are saved: the store's own description (``custom`` when it has none)."""
-        return describe_cli_config_store(self.registry.store)
+    def describe_default_store(self) -> CliConfigStoreDescription:
+        """The store providers use unless they have their own: its own description (``custom`` when it has none)."""
+        return describe_cli_config_store(self.registry.default_store)
+
+    def describe_provider_store(self, provider: Any) -> Optional[CliConfigStoreDescription]:
+        """The store a provider's changes are saved to; ``None`` for a provider without one (read-only, or saving itself)."""
+        store = self.registry.store_of(provider)
+        return describe_cli_config_store(store) if store is not None else None
 
     async def list(self, context: CliConfigContext) -> list[dict[str, Any]]:
         self._require_permission(context, CliConfigPermissions.READ)
@@ -282,8 +293,10 @@ class CliConfigService(ICliConfigService):
             raw = changes.get(key)
             new = _audit_value(now or old, raw, "new") if (now is not None or raw is not None) else None
             audit_changes.append({"key": key, "old": _audit_value(old, None, "old"), "new": new})
-        await self._write_audit(provider.id, section_id, result.version, audit_changes, context)
-        await self._publish(provider.id, section_id, result, context)
+        store = self.describe_provider_store(provider)
+        store_kind = store.kind if store is not None else None
+        await self._write_audit(provider.id, section_id, result.version, audit_changes, context, store_kind)
+        await self._publish(provider.id, section_id, result, context, store_kind)
         if after["mutable"]:
             after["version"] = result.version
         return {
@@ -294,7 +307,14 @@ class CliConfigService(ICliConfigService):
             "version": result.version,
         }
 
-    async def _publish(self, provider_id: str, section_id: str, result: Any, context: CliConfigContext) -> None:
+    async def _publish(
+        self,
+        provider_id: str,
+        section_id: str,
+        result: Any,
+        context: CliConfigContext,
+        store_kind: Optional[str] = None,
+    ) -> None:
         bus = self._event_bus() if self._event_bus is not None else None
         if bus is None:
             return
@@ -305,6 +325,8 @@ class CliConfigService(ICliConfigService):
             "version": result.version,
             "requiresRestart": result.requires_restart,
         }
+        if store_kind:
+            data["store"] = store_kind
         user_name = context.caller.user_name if context.caller is not None else None
         if user_name:
             data["user"] = user_name
@@ -322,6 +344,7 @@ class CliConfigService(ICliConfigService):
         version: str,
         changes: list[dict[str, Any]],
         context: CliConfigContext,
+        store_kind: Optional[str] = None,
     ) -> None:
         sink = self._audit() if self._audit is not None else None
         if sink is None:
@@ -330,6 +353,8 @@ class CliConfigService(ICliConfigService):
         user_name = (caller.user_name if caller is not None else None) or "anonymous"
         user_id = caller.user_id if caller is not None else None
         properties: dict[str, Any] = {"provider": provider_id, "section": section_id, "version": version}
+        if store_kind:
+            properties["store"] = store_kind
         if context.via:
             properties["via"] = context.via
         properties["changes"] = changes

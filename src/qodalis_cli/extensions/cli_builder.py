@@ -194,8 +194,8 @@ class CliBuilder:
         """Register a config provider: its sections are listed by ``GET
         /api/v1/qcli/config`` and the ``config`` command; a provider that also
         implements ``ICliConfigWriter`` can be changed.  A
-        ``CliStoredConfigProvider`` keeps its changes in the server's config
-        store.  Raises ``ValueError``: ``config provider already registered: <id>``.
+        ``CliStoredConfigProvider`` keeps its changes in a config store (see
+        :meth:`set_config_store`).  Raises ``ValueError``: ``config provider already registered: <id>``.
 
         Example::
 
@@ -215,12 +215,25 @@ class CliBuilder:
         """The registered config providers, sorted by ``order``, then id."""
         return self.config_registry.providers
 
-    def set_config_store(self, store: Any) -> CliBuilder:
-        """Keep writable settings in ``store`` (default in memory, lost on
-        restart): a ``JsonFileConfigStore``, or the databases plugin's
-        ``CliDatabaseConfigStore``.  Set it in ``configure``, before the
-        server is created."""
-        self.config_registry.set_store(store)
+    def set_config_store(self, store: Any, provider_id: str | None = None) -> CliBuilder:
+        """Keep writable settings in ``store``: a ``JsonFileConfigStore`` (a
+        file, or a section of the app's settings file), the databases
+        plugin's ``CliDatabaseConfigStore``, the config-redis plugin's
+        ``CliRedisConfigStore``, ...
+
+        - Without ``provider_id``: the default store, for every provider
+          without a store of its own (in memory, lost on restart, unless
+          set).  Set it in ``configure``, before the server is created.
+        - With ``provider_id``: the store of that provider only, winning over
+          its own store.  Set it before the provider is registered (in
+          ``configure`` for plugins mounted later); raises after.
+
+        Example::
+
+            builder.set_config_store(JsonFileConfigStore("config.json"))
+            builder.set_config_store(CliRedisConfigStore(url=os.environ["REDIS_URL"]), "jobs")
+        """
+        self.config_registry.set_store(store, provider_id)
         return self
 
     def set_config_audit_store(self, store: Any) -> CliBuilder:
