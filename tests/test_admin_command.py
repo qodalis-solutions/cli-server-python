@@ -94,10 +94,12 @@ def host():
 def test_is_the_admin_module_with_its_sub_commands_and_permissions(host: Host):
     root = host.result.registry.find_processor("admin")
     assert root.required_permissions == ["admin:access"]
-    assert sub_permissions(host.result, "admin") == {"status": None, "plugins": None, "clients": None, "logs": ["logs:read"], "dashboard": None}
+    assert sub_permissions(host.result, "admin") == {"status": None, "plugins": None, "clients": None, "logs": ["logs:read"], "dashboard": None, "restart": None}
     assert any(m.name == "admin" for m in host.result.builder.modules)
     plugins = next(p for p in root.processors if p.command == "plugins")
-    assert [p.command for p in plugins.processors] == ["list", "enable", "disable"]
+    assert [p.command for p in plugins.processors] == [
+        "list", "enable", "disable", "search", "installed", "install", "update", "remove",
+    ]
 
 
 # --------------------------------------------------------------------------- status
