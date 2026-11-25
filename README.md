@@ -304,6 +304,27 @@ CORS never combines `*` with credentials. With `allowed_origins` set, a WebSocke
 
 Every WebSocket is also served without the version (`/ws/qcli/events`, ...). Plugins add their own routes, e.g. the users plugin's `/api/v1/qcli/sessions`, `/users`, `/groups` and `/tokens`.
 
+`GET /api/v1/qcli/commands` lists each command, and each sub-command in `processors`, with the permissions it declares
+itself as `requiredPermissions`; the field is left out when it declares none. Running a command also needs the
+permissions of the commands above it and, on a protected server, `commands:execute`; neither is repeated:
+
+```json
+{
+  "command": "aws",
+  "module": "aws",
+  "requiredPermissions": ["aws:read"],
+  "processors": [
+    {
+      "command": "s3",
+      "processors": [
+        { "command": "ls" },
+        { "command": "rm", "requiredPermissions": ["aws:write"] }
+      ]
+    }
+  ]
+}
+```
+
 ## Server Events
 
 `create_cli_server` creates one event bus, `result.event_bus` (`CliEventBus`, protocol `ICliEventBus` in
