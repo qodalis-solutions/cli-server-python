@@ -31,6 +31,7 @@ CORE_NAMES = [
     "logs:read",
     "admin:access",
     "dashboard:install",
+    "server:restart",
     "config:read",
     "config:write",
     "audit:read",
