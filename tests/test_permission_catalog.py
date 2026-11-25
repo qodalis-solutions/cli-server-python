@@ -22,6 +22,7 @@ from qodalis_cli.services import CliCommandRegistry  # noqa: E402
 CORE_NAMES = [
     "commands:execute",
     "shell:execute",
+    "http:request",
     "files:read",
     "files:write",
     "data:query",
@@ -56,6 +57,10 @@ def test_core_permissions_text():
         "Run commands on the server",
     )
     assert by_name["shell:execute"].description == "Open an interactive shell on the server"
+    assert (by_name["http:request"].group, by_name["http:request"].description) == (
+        "Commands",
+        "Make HTTP requests from the server",
+    )
     assert by_name["files:write"].description == "Upload, create and delete files"
     assert (by_name["data:query"].group, by_name["data:query"].description) == (
         "Data",
@@ -76,13 +81,13 @@ def test_core_permissions_text():
 
 
 def test_to_dict_shape():
-    assert CORE_PERMISSIONS[2].to_dict() == {
+    assert CORE_PERMISSIONS[3].to_dict() == {
         "name": "files:read",
         "description": "List, read and download files",
         "group": "Files",
         "surface": "cli",
     }
-    assert list(CORE_PERMISSIONS[2].to_dict()) == ["name", "description", "group", "surface"]
+    assert list(CORE_PERMISSIONS[3].to_dict()) == ["name", "description", "group", "surface"]
 
 
 def test_host_entries_through_create_cli_server():

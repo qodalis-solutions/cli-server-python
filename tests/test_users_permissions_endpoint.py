@@ -9,7 +9,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from qodalis_cli import CliEchoCommandProcessor, CliPermission, CliServerOptions, create_cli_server
+from qodalis_cli import CliPermission, CliServerOptions, create_cli_server
+from .demo_processors import CliEchoCommandProcessor
 from qodalis_cli_users import CliUsersBuilder
 from qodalis_cli_users.permissions import USERS_PERMISSION_ENTRIES
 
@@ -17,7 +18,7 @@ BASE = "/api/v1/qcli"
 ROOT_PASS = "rootpass1"
 
 CORE_NAMES = [
-    "commands:execute", "shell:execute", "files:read", "files:write", "data:query",
+    "commands:execute", "shell:execute", "http:request", "files:read", "files:write", "data:query",
     "jobs:read", "jobs:manage", "logs:read", "admin:access", "config:read", "config:write", "audit:read", "audit:clear",
 ]
 USERS_NAMES = [
@@ -107,8 +108,8 @@ def test_root_sees_every_entry_in_order(srv: Srv):
     assert res.status_code == 200, res.text
     body = res.json()
     assert [e["name"] for e in body] == [*CORE_NAMES, *USERS_NAMES, "rates:read"]
-    assert body[2] == {"name": "files:read", "description": "List, read and download files", "group": "Files", "surface": "cli"}
-    assert list(body[2]) == ["name", "description", "group", "surface"]
+    assert body[3] == {"name": "files:read", "description": "List, read and download files", "group": "Files", "surface": "cli"}
+    assert list(body[3]) == ["name", "description", "group", "surface"]
     assert body[-1] == RATES
 
 

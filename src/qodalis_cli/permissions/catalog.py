@@ -127,6 +127,7 @@ def _core(name: str, group: str, description: str) -> CliPermission:
 CORE_PERMISSIONS: tuple[CliPermission, ...] = (
     _core("commands:execute", "Commands", "Run commands on the server"),
     _core("shell:execute", "Commands", "Open an interactive shell on the server"),
+    _core("http:request", "Commands", "Make HTTP requests from the server"),
     _core("files:read", "Files", "List, read and download files"),
     _core("files:write", "Files", "Upload, create and delete files"),
     _core("data:query", "Data", "Query the data explorer's sources"),
