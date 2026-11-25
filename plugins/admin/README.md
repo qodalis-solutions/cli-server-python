@@ -208,6 +208,145 @@ when the jobs plugin is.
 
 The plugin can serve an optional SPA dashboard. Install the `@qodalis/cli-server-dashboard` npm package and the plugin will auto-detect the built assets, or set a custom path via `set_dashboard_path()`.
 
+## Dashboard plugins from the marketplace
+
+A *dashboard plugin* is an npm package whose bundle is a dashboard extension (`extension.js`, optional
+`extension.css`, built with `@qodalis/cli-server-dashboard-kit`'s `defineExtension`), listed in the
+[plugin marketplace](https://plugins.qodalis.com) with `kind: "dashboard"`. The admin plugin lists them, installs,
+updates and removes them at runtime, and serves them from the server's own origin. A plugin runs inside the dashboard
+with the signed-in user's rights, so by default only verified publishers' plugins can be installed. The marketplace is
+on by default; the same contract and JSON as the Node and .NET servers.
+
+```python
+from qodalis_cli_admin import CliAdminBuilder, DashboardMarketplaceOptions
+
+admin = (
+    CliAdminBuilder()
+    .set_users_plugin(users_plugin)
+    .set_marketplace(DashboardMarketplaceOptions(
+        url="https://plugins.qodalis.com",   # default
+        install="verified",                  # default; "listed": any listed version; "off": browse only
+        dir="./qcli-data/dashboard-plugins",  # default, from the working directory
+    ))
+    .build(AdminBuildDeps(registry=..., event_socket_manager=..., builder=...))
+)
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `url` | `https://plugins.qodalis.com` | The marketplace (its public API at `/api/v1/qcli/marketplace`) |
+| `install` | `verified` | `verified`: listed versions of verified publishers only; `listed`: any listed version; `off`: browse only |
+| `dir` | `./qcli-data/dashboard-plugins` | Where installed plugins are kept |
+| `fetch` | the standard library (`urllib`, in a thread) | The HTTP client for the marketplace and the CDNs: `async fetch(url, headers, timeout) -> MarketplaceResponse(status, body, headers)` (tests pass a fake) |
+| `cdns` | jsDelivr, unpkg | Where bundles are downloaded from, in order |
+| `timeout` | `15` | Timeout of each request, in seconds |
+
+`set_marketplace` also takes a dict of these fields. `set_marketplace(False)` serves none of the routes below, adds no
+`admin dashboard` command and loads no installed plugin. An invalid `url` or `install` raises `ValueError` in `build`.
+
+**Installing** reads the plugin (`GET /plugins/{name}` of the marketplace) and takes the newest listed version this
+dashboard runs (`dashboardApi` 1 or less) unless one is given, checks the trust policy, downloads each file of the
+version record (`files: [{ path, integrity, size }]`, read from `/plugins/{name}/versions/{version}` when the details
+leave them out) from jsDelivr, then unpkg (5 MB at most each), and checks its bytes against the marketplace's `sha384-`
+integrity before anything is written: a mismatch on every CDN is a 502 and stores nothing. The files are stored as
+`<dir>/<name>/<version>/extension.js|css` (a scoped name `@scope/name` as the directory `@scope+name`; names and
+versions are validated, so nothing leaves `dir`) and listed in `<dir>/installed.json`, written atomically (a temporary
+file renamed over it). Changes run one at a time.
+
+```json
+{
+  "plugins": [
+    {
+      "name": "@qodalis/cli-dashboard-module-jobs",
+      "version": "1.1.0",
+      "id": "jobs",
+      "title": "Jobs",
+      "icon": "⏱️",
+      "files": [
+        { "file": "extension.js", "path": "dist/extension.js", "integrity": "sha384-…", "size": 48211 },
+        { "file": "extension.css", "path": "dist/extension.css", "integrity": "sha384-…", "size": 5120 }
+      ],
+      "installedAt": "2026-11-25T10:04:05.123Z",
+      "installedBy": "admin"
+    }
+  ]
+}
+```
+
+The plugin is then registered as a dashboard extension at once (no restart): its page id is the package's suffix for
+`@qodalis/cli-dashboard-module-<id>`, else the extension's own id (`extension.id` of the version record, then of the
+plugin), else the package name without its scope and `cli-dashboard-` prefix. An id another extension already has is a
+409. Its files are served at `/qcli/modules/<id>/extension.js|css` (no sign-in, `Cache-Control: no-cache` with an ETag,
+the entry carrying `?v=<hash>`; the plugin's `asset_routes`, mounted by `mount_plugin`), and
+`GET /dashboard/extensions` lists it with `source: "marketplace"`. An update keeps the page id and deletes the
+previous version's files (updating to the installed version does nothing); a removal unregisters the page and deletes
+the files. `installedBy` is the signed-in user, `anonymous` for a command on a server without sign-in.
+
+At startup the plugin registers what `installed.json` lists, without the marketplace; a plugin whose files are missing
+or no longer match their integrity, or whose id another extension took, is skipped with a warning. Plugins mounted
+after the admin plugin cannot take a marketplace page's id, so mount the admin plugin after the plugins with pages of
+their own.
+
+Every change is audited (`dashboard.plugin.install`, `dashboard.plugin.update`, `dashboard.plugin.remove`: target the
+package, `properties: { name, version, id, previousVersion? }`) in the server's audit log (the users plugin mounts it;
+or the store set with `builder.set_config_audit_store`) and published as `dashboard:extensions-changed`
+(`{ action, name, version, id, previousVersion? }`, audience `admin:access`), so open dashboards reload their pages.
+
+### Marketplace API
+
+Mounted at `/api/v1/qcli/dashboard/marketplace`. Reading needs `admin:access`; `POST`, `PUT` and `DELETE` need
+`dashboard:install` (core catalog, group Server; the static admin of password sign-in holds every permission). Errors
+are `{ "error": "..." }`.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/` | `{ "marketplaceUrl": "https://plugins.qodalis.com", "install": "verified", "dashboardApi": 1 }` |
+| GET | `/plugins?query=&page=&pageSize=` | The marketplace's list asked with `kind=dashboard&dashboardApi=1` (`{ items, total, page, pageSize }`); items of another kind are dropped (an older marketplace ignores `kind`; `total` is then the number of dashboard items), each item annotated (below); 502 `{ "error": "marketplace unreachable" }` |
+| GET | `/plugins/{name}` | One plugin with its `versions`, annotated; each version also `allowed` and `blockedReason`; 404 when not listed |
+| GET | `/installed` | The installed plugins (below); `updateAvailable` when the marketplace answers |
+| POST | `/installed` | `{ name, version? }`: 201 with the installed plugin; 400 invalid name or version, `needs dashboard API 2`; 403 `publisher not verified`, `install disabled`; 404 unknown plugin or version; 409 already installed, id taken; 502 `marketplace unreachable`, `integrity mismatch: <path>`, `download failed: <path>` |
+| PUT | `/installed/{name}` | `{ version? }`: updates (default: the newest fitting version), same checks; 404 when not installed |
+| DELETE | `/installed/{name}` | Removes the plugin; 404 when not installed |
+
+Scoped names go in the path raw (`/installed/@acme/tickets`) or encoded (`/installed/%40acme%2Ftickets`).
+
+A `GET /plugins` item is the marketplace's item plus:
+
+```json
+{
+  "name": "@qodalis/cli-dashboard-module-jobs",
+  "kind": "dashboard",
+  "publisher": { "name": "@qodalis", "verified": true },
+  "version": "1.1.0",
+  "installed": { "version": "1.0.0" },
+  "updateAvailable": true,
+  "allowed": true,
+  "requires": { "serverPackage": "qodalis-cli-server-plugin-jobs", "installed": true }
+}
+```
+
+`installed` is null when not installed; `blockedReason` (only when `allowed` is false) is `install disabled`,
+`unverified publisher` or `needs dashboard API <n>` (a version of the details may also be `version flagged`);
+`requires` is null when the plugin names no Python server package (`serverPackages.python`, or the `pypi` entry of
+the list form `[{ "ecosystem": "pypi", "name": ... }]`), else whether the server has it (`GET /plugins/installed`).
+
+`GET /installed`:
+
+```json
+[
+  {
+    "name": "@qodalis/cli-dashboard-module-jobs",
+    "version": "1.1.0",
+    "title": "Jobs",
+    "icon": "⏱️",
+    "id": "jobs",
+    "installedAt": "2026-11-25T10:04:05.123Z",
+    "installedBy": "admin",
+    "updateAvailable": false
+  }
+]
+```
+
 ## Color scheme
 
 Match the dashboard to your own design with `set_theme()`:
@@ -301,7 +440,8 @@ CLI's. The values are served with the color scheme at `/qcli/admin/theme.json`; 
 
 The plugin brings the `admin` command (registered by `mount_plugin`, which also lets the module registry filter the
 executor). It reads the same services as the admin routes. On a protected server every sub-command needs
-`admin:access`; `admin logs` also needs `logs:read`. Server settings are the core
+`admin:access`; `admin logs` also needs `logs:read`, `admin dashboard install|update|remove` also
+`dashboard:install`. Server settings are the core
 [`config`](../../README.md#config-providers) command. Lists take `--json` (the payload of the matching route).
 
 | Command | Permission | Does |
@@ -312,6 +452,11 @@ executor). It reads the same services as the admin routes. On a protected server
 | `admin plugins enable <id>`, `admin plugins disable <id>` | `admin:access` | Turns a module's commands on or off, like `POST /plugins/{id}/toggle` but idempotent (`... is already enabled.`); the `admin` module itself cannot be disabled from the terminal |
 | `admin clients [--json]` | `admin:access` | Connected WebSocket clients: id, type, connected since, address (`GET /ws/clients`) |
 | `admin logs [--level warn,error] [--search <text>] [--service <source>] [--since 5m\|1h\|7d\|<ISO date>] [-n 50] [--json]` | `admin:access`, `logs:read` | The newest matching log entries (1-1000), oldest first, from the log buffer (`--service` matches the logger name) |
+| `admin dashboard`, `admin dashboard list [--json]` | `admin:access` | The dashboard plugins installed from the marketplace: page id, package, version (and whether an update is available), when and by whom (`GET /dashboard/marketplace/installed`) |
+| `admin dashboard search [<query>] [--json]` | `admin:access` | The marketplace's dashboard plugins: package, version, publisher, installed / installable / blocked and why, a missing server plugin (`GET /dashboard/marketplace/plugins`) |
+| `admin dashboard install <name>[@version]` | `admin:access`, `dashboard:install` | Installs the newest version this dashboard runs, or the one given, with the API's checks (`POST /dashboard/marketplace/installed`) |
+| `admin dashboard update <name>` | `admin:access`, `dashboard:install` | Updates to the newest version (`PUT /dashboard/marketplace/installed/{name}`) |
+| `admin dashboard remove <name>` | `admin:access`, `dashboard:install` | Removes the page and its files (`DELETE /dashboard/marketplace/installed/{name}`) |
 
 On a server without the users plugin, `/execute` is open, and so are these commands. To follow the log live, use
 `server logs` of the web CLI plugin `@qodalis/cli-server-logs` (the `/ws/v1/qcli/logs` socket, `logs:read`).
@@ -341,6 +486,28 @@ $ admin logs --level warn,error -n 2
 Last 2 of 7 entries
 2026-11-25 10:01:12 WARN  [jobs] cleanup took 12 s
 2026-11-25 10:03:40 ERROR [db] connection timeout
+
+$ admin dashboard search
+Package                             Version  Publisher            Status
+@qodalis/cli-dashboard-module-jobs  1.1.0    @qodalis (verified)  installable
+@acme/cli-dashboard-tickets         2.0.0    @acme                blocked: unverified publisher
+
+$ admin dashboard install @qodalis/cli-dashboard-module-jobs@1.0.0
+Installed @qodalis/cli-dashboard-module-jobs@1.0.0: the dashboard page "Jobs" (/x/jobs).
+
+$ admin dashboard
+1 dashboard plugin(s) from https://plugins.qodalis.com (install: verified)
+ID    Package                             Version                   Installed            By
+jobs  @qodalis/cli-dashboard-module-jobs  1.0.0 (update available)  2026-11-25 10:04:05  admin
+
+$ admin dashboard update @qodalis/cli-dashboard-module-jobs
+Updated @qodalis/cli-dashboard-module-jobs from 1.0.0 to 1.1.0.
+
+$ admin dashboard remove @qodalis/cli-dashboard-module-jobs
+Removed @qodalis/cli-dashboard-module-jobs@1.1.0 (the page jobs).
+
+$ admin dashboard install @acme/cli-dashboard-tickets
+Error: publisher not verified
 ```
 
 ## License
