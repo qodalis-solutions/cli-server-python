@@ -474,7 +474,10 @@ class TestStatusHistory:
             assert body["intervalSeconds"] == 15
             assert len(body["samples"]) == 1  # first sample at start
             sample = body["samples"][0]
-            assert set(sample) == {"timestamp", "memoryMb", "cpuPercent", "activeWsConnections", "activeShellSessions"}
+            assert set(sample) == {
+                "timestamp", "memoryMb", "systemMemoryUsedMb", "systemMemoryTotalMb", "cpuPercent",
+                "activeWsConnections", "activeShellSessions",
+            }
             assert sample["cpuPercent"] is None and sample["memoryMb"] > 0
 
             for minutes in ("0", "-5", "5000", "1", ""):

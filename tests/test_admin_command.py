@@ -24,6 +24,7 @@ from qodalis_cli_admin import (
     parse_since,
     summarize_status_history,
 )
+from qodalis_cli_admin.services import system_memory
 from qodalis_cli_admin.services.log_ring_buffer import LogEntry
 from qodalis_cli_admin.services.time_range import RangeError
 from qodalis_cli_server_abstractions import CliCommandProcessor, CliModule
@@ -109,7 +110,7 @@ def test_status_prints_version_platform_uptime_memory_cpu_connections(host: Host
     assert re.match(r"^Server {6}qodalis-cli-server \S+", lines[0])
     assert lines[1] == f"Platform    python {platform.python_version()} ({platform.system()} {platform.release()})"
     assert re.match(r"^Uptime {6}\d+ (s|min|h \d+ min|d \d+ h) \(since \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\)$", lines[2])
-    assert re.match(r"^Memory {6}[\d.]+ MB$", lines[3])
+    assert re.match(r"^Memory {6}[\d.]+ MB( \(process\) · (machine|container) .+)?$", lines[3])
     assert lines[4] == "CPU         n/a"
     assert lines[5] == "Connections 0 WebSocket, 0 shell"
     assert re.match(r"^Commands {4}\d+$", lines[6])
@@ -125,6 +126,32 @@ def test_status_json_prints_the_get_status_payload_with_the_server_package(host:
     assert body["server"]["id"] == "qodalis-cli-server"
     assert body["cpuUsagePercent"] is None
     assert isinstance(body["memoryUsageMb"], (int, float))
+    assert {"systemMemoryTotalMb", "systemMemoryUsedMb", "memoryLimited"} <= body.keys()
+
+
+def test_status_memory_the_machine_use_or_the_container_limit_and_its_usage(host: Host, monkeypatch: pytest.MonkeyPatch):
+    readers = system_memory.default_readers
+    gb = 1024 ** 3
+    monkeypatch.setattr(readers, "total_bytes", lambda: 16 * gb)
+    monkeypatch.setattr(readers, "available_bytes", lambda: 6 * gb)
+    monkeypatch.setattr(readers, "limit_bytes", lambda: None)
+    assert re.search(r"^Memory {6}[\d.]+ MB \(process\) · machine 10 GB of 16 GB used \(63%\)$", host.text("admin status"), re.M)
+    body = json.loads(host.text("admin status --json"))
+    assert (body["systemMemoryTotalMb"], body["systemMemoryUsedMb"], body["memoryLimited"]) == (16384, 10240, False)
+
+    monkeypatch.setattr(readers, "limit_bytes", lambda: 512 * 1024 ** 2)
+    monkeypatch.setattr(readers, "cgroup_usage_bytes", lambda: 300 * 1024 ** 2)
+    assert re.search(r"^Memory {6}[\d.]+ MB \(process\) · container 300 MB of 512 MB used \(59%\)$", host.text("admin status"), re.M)
+    body = json.loads(host.text("admin status --json"))
+    assert (body["systemMemoryTotalMb"], body["systemMemoryUsedMb"], body["memoryLimited"]) == (512, 300, True)
+
+    def unreadable() -> float:
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(readers, "total_bytes", unreadable)
+    assert re.search(r"^Memory {6}[\d.]+ MB$", host.text("admin status"), re.M)
+    body = json.loads(host.text("admin status --json"))
+    assert (body["systemMemoryTotalMb"], body["systemMemoryUsedMb"], body["memoryLimited"]) == (None, None, None)
 
 
 def test_status_shows_the_latest_cpu_sample(host: Host):

@@ -261,6 +261,9 @@ class TestStatus:
         assert "uptimeSeconds" in data
         assert data["uptimeSeconds"] >= 0
         assert "memoryUsageMb" in data
+        assert data["systemMemoryTotalMb"] > 0
+        assert "systemMemoryUsedMb" in data
+        assert isinstance(data["memoryLimited"], bool)
         assert data["platform"] == "python"
         assert "platformVersion" in data
         assert "os" in data
