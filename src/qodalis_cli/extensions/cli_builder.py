@@ -178,7 +178,7 @@ class CliBuilder:
         self._modules.append(module)
         self.add_installed_plugin(module)
         for processor in module.processors:
-            self._registry.register(processor)
+            self._registry.register(processor, module.name)
         permissions = list(getattr(module, "permissions", None) or [])
         if permissions:
             # A name already in the catalog (the host's, or the module added twice) stays as registered

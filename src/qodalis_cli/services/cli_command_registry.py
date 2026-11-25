@@ -16,13 +16,19 @@ class ICliCommandRegistry(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def register(self, processor: ICliCommandProcessor) -> None:
+    def register(self, processor: ICliCommandProcessor, module: str | None = None) -> None:
         """Register a command processor.
 
         Args:
             processor: The processor to register.
+            module: The name of the module that added it (``add_module``), if any.
         """
         ...
+
+    def module_of(self, processor: ICliCommandProcessor) -> str | None:
+        """The name of the module that registered ``processor``, if any. ``GET /commands``
+        lists it as the command's ``module`` when the processor names none itself."""
+        return None
 
     @abc.abstractmethod
     def find_processor(
@@ -47,13 +53,23 @@ class CliCommandRegistry(ICliCommandRegistry):
 
     def __init__(self) -> None:
         self._processors: dict[str, ICliCommandProcessor] = {}
+        self._modules: dict[str, str] = {}
 
     @property
     def processors(self) -> Sequence[ICliCommandProcessor]:
         return list(self._processors.values())
 
-    def register(self, processor: ICliCommandProcessor) -> None:
-        self._processors[processor.command.lower()] = processor
+    def register(self, processor: ICliCommandProcessor, module: str | None = None) -> None:
+        key = processor.command.lower()
+        self._processors[key] = processor
+        if module and module.strip():
+            self._modules[key] = module
+        else:
+            self._modules.pop(key, None)
+
+    def module_of(self, processor: ICliCommandProcessor) -> str | None:
+        key = processor.command.lower()
+        return self._modules.get(key) if self._processors.get(key) is processor else None
 
     def find_processor(
         self,

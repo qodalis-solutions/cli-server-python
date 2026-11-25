@@ -177,7 +177,16 @@ def create_cli_router(
 
     @router.get("/commands")
     async def get_commands() -> list[dict[str, Any]]:
-        return [_map_to_descriptor(p) for p in registry.processors]
+        # A command added by a module is listed under the module's name unless it names a module itself
+        module_of = getattr(registry, "module_of", None)
+        descriptors = []
+        for p in registry.processors:
+            descriptor = _map_to_descriptor(p)
+            module = descriptor.get("module") or (module_of(p) if module_of else None)
+            if module:
+                descriptor["module"] = module
+            descriptors.append(descriptor)
+        return descriptors
 
     @router.get("/commands/stats")
     async def get_command_stats() -> dict[str, Any]:
