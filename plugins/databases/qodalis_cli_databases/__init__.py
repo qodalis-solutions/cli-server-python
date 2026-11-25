@@ -18,12 +18,18 @@ from .connection import (
     CliSqlConnection,
     CliSqlDialect,
     CliSqlSession,
+    cli_database_name,
     mssql_connection,
     mysql_connection,
     postgres_connection,
     sqlite_connection,
 )
-from .config_store import CONFIG_STORE_MIGRATION_SOURCE, CliDatabaseConfigStore, config_store_migrations
+from .config_store import (
+    CONFIG_STORE_MIGRATION_SOURCE,
+    SQL_DIALECT_TITLES,
+    CliDatabaseConfigStore,
+    config_store_migrations,
+)
 from .controller import create_databases_router
 from .commands import CliDatabasesCommandProcessor
 from .dialects import (
@@ -53,6 +59,8 @@ __all__ = [
     "CONFIG_STORE_MIGRATION_SOURCE",
     "CliDatabaseConfigStore",
     "config_store_migrations",
+    "SQL_DIALECT_TITLES",
+    "cli_database_name",
     "DATABASES_PERMISSION_ENTRIES",
     "DATABASES_PREFIX",
     "CliDatabasesBuilder",

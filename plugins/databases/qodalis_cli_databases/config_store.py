@@ -10,18 +10,22 @@ from typing import Any, Mapping, Optional
 from qodalis_cli_server_abstractions import CliTableNameOptions, qcli_table_name
 from qodalis_cli_server_abstractions.config import (
     CliConfigConflictError,
+    CliConfigStoreDescription,
     CliConfigStoredSection,
     ICliConfigStore,
     apply_cli_config_changes,
 )
 
-from .connection import CliSqlConnection, CliSqlSession
+from .connection import CliSqlConnection, CliSqlSession, cli_database_name
 from .dialects import TRANSACTION, quote_ident, quote_table, table_exists
 from .runner import CliMigrationDatabaseOptions, CliMigrationRunner, CliMigrationRunOptions
 from .sources import CliMigration, CodeSource, code_source
 
 #: The migration source of the config table.
 CONFIG_STORE_MIGRATION_SOURCE = "qcli-config"
+
+#: Dialects as people name them.
+SQL_DIALECT_TITLES: dict[str, str] = {"postgres": "PostgreSQL", "mysql": "MySQL", "mssql": "SQL Server", "sqlite": "SQLite"}
 
 _COLUMN_TYPES = {
     "postgres": {"key": "varchar(150)", "long": "text", "time": "timestamptz", "int": "integer"},
@@ -93,9 +97,13 @@ class CliDatabaseConfigStore(ICliConfigStore):
         table_prefix: Optional[str] = None,
         schema: Optional[str] = None,
         tables: Optional[dict[str, str]] = None,
+        database: Optional[str] = None,
     ) -> None:
         self.connection = connection
         self.schema = schema
+        #: The database's name in the description, when the connection does not expose it (a name only: a
+        #: connection string is not shown).
+        self.database = cli_database_name(database, connection.dialect == "sqlite") or getattr(connection, "database", None)
         self.table = qcli_table_name(
             "Config", CliTableNameOptions(table_prefix=table_prefix, tables=dict(tables or {}), schema=schema),
         )
@@ -120,6 +128,14 @@ class CliDatabaseConfigStore(ICliConfigStore):
             if getattr(run, "status", None) == "failed":
                 raise RuntimeError(f"config store schema: {getattr(run, 'error', '')}")
             self._ready = True
+
+    def describe(self) -> CliConfigStoreDescription:
+        """``PostgreSQL database qcli, table QcliConfig``: the dialect, the database's name when known and the
+        table; never credentials."""
+        dialect = SQL_DIALECT_TITLES.get(self.connection.dialect, self.connection.dialect)
+        table = f"{self.schema}.{self.table}" if self.schema else self.table
+        database = f" database {self.database}" if self.database else ""
+        return CliConfigStoreDescription(kind="database", title="Database", detail=f"{dialect}{database}, table {table}", persistent=True)
 
     def _sql(self, dialect: str) -> tuple[Any, str]:
         return (lambda name: quote_ident(dialect, name)), quote_table(dialect, self.table, self.schema)
