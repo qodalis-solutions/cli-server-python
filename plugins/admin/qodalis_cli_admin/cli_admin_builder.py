@@ -11,7 +11,7 @@ from typing import Any, Callable, Awaitable
 
 from fastapi import APIRouter
 from qodalis_cli_server_abstractions import CliRoutePermission
-from qodalis_cli_server_abstractions.config import CliConfigPermissions
+from qodalis_cli_server_abstractions.config import CLI_CONFIG_CHANGED_EVENT, CliConfigPermissions
 from .spa_static_files import SPAStaticFiles
 
 from .auth.jwt_service import JwtService
@@ -97,8 +97,9 @@ class CliAdminPlugin:
     #: ``logs``), registered by ``mount_plugin``; needs ``admin:access`` on a
     #: protected server (``admin logs`` also ``logs:read``).
     module: Any = None
-    #: The ``auth`` (read-only) and ``logs`` config providers, registered with
-    #: the server's (also by ``build`` when the builder takes them).
+    #: The ``auth`` (read-only), ``logs`` and ``dashboard-plugins`` (with the
+    #: marketplace) config providers, registered with the server's (also by
+    #: ``build`` when the builder takes them).
     config_providers: list[Any] = field(default_factory=list)
     #: Dashboard plugins from the marketplace (``set_marketplace``), served at
     #: ``/api/v1/qcli/dashboard/marketplace``; ``None`` when turned off
@@ -332,6 +333,19 @@ class CliAdminBuilder:
 
                     await bus.publish(event_type, data, CliEventAudience(permission="admin:access"))
 
+            async def publish_config_changed(data: dict[str, Any]) -> None:
+                bus = server.get("event_bus")
+                if bus is not None:
+                    from qodalis_cli_server_abstractions import CliEventAudience
+
+                    await bus.publish(CLI_CONFIG_CHANGED_EVENT, data, CliEventAudience(permission=CliConfigPermissions.READ))
+
+            async def config_ready() -> None:
+                service = getattr(deps.builder, "config", None)
+                ready = getattr(service, "ready", None)
+                if callable(ready):
+                    await ready()
+
             marketplace = DashboardMarketplace(self._marketplace, DashboardMarketplaceDeps(
                 extension_ids=lambda: [e.id for e in getattr(deps.builder, "dashboard_extensions", None) or []],
                 add_extension=add_extension,
@@ -339,6 +353,8 @@ class CliAdminBuilder:
                 server_plugins=lambda: [p.id for p in getattr(deps.builder, "installed_plugins", None) or []],
                 audit=lambda: getattr(deps.builder, "audit_sink", None),
                 publish=publish,
+                publish_config_changed=publish_config_changed,
+                config_ready=config_ready,
             ))
             marketplace.load()
             router.include_router(
@@ -358,6 +374,9 @@ class CliAdminBuilder:
             AdminAuthConfigProvider(config, auth_mode),
             create_logs_config_provider(log_buffer).set_store(self._config_store),
         ]
+        if marketplace is not None:
+            # The dashboard plugins' settings: the host's store for ``dashboard-plugins``, else the default store
+            config_providers.append(marketplace.config)
         add_config_provider = getattr(deps.builder, "add_config_provider", None)
         registry = getattr(deps.builder, "config_registry", None)
         if callable(add_config_provider):

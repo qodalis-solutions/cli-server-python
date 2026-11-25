@@ -62,8 +62,30 @@ from .services.dashboard_marketplace import (
     sha384_integrity,
 )
 from .controllers.dashboard_marketplace_controller import create_dashboard_marketplace_router
+from .services.dashboard_plugin_config import (
+    DASHBOARD_PLUGINS_CONFIG_PROVIDER_ID,
+    DASHBOARD_PLUGIN_CONFIG_KEY,
+    DASHBOARD_PLUGIN_CONFIG_MAX_BYTES,
+    DASHBOARD_PLUGIN_CONFIG_MAX_ENTRIES,
+    DASHBOARD_PLUGIN_CONFIG_TYPES,
+    DashboardPluginConfig,
+    DashboardPluginConfigEntry,
+    DashboardPluginsConfigProvider,
+    parse_dashboard_plugin_config,
+    validate_dashboard_plugin_config_values,
+)
 
 __all__ = [
+    "DASHBOARD_PLUGINS_CONFIG_PROVIDER_ID",
+    "DASHBOARD_PLUGIN_CONFIG_KEY",
+    "DASHBOARD_PLUGIN_CONFIG_MAX_BYTES",
+    "DASHBOARD_PLUGIN_CONFIG_MAX_ENTRIES",
+    "DASHBOARD_PLUGIN_CONFIG_TYPES",
+    "DashboardPluginConfig",
+    "DashboardPluginConfigEntry",
+    "DashboardPluginsConfigProvider",
+    "parse_dashboard_plugin_config",
+    "validate_dashboard_plugin_config_values",
     "DASHBOARD_API_VERSION",
     "DASHBOARD_EXTENSIONS_CHANGED_EVENT",
     "DASHBOARD_INSTALL_PERMISSION",

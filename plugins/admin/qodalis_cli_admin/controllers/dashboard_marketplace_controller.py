@@ -6,9 +6,15 @@ installing, updating and removing ``dashboard:install``.
   ``updateAvailable``, ``allowed``, ``blockedReason``, ``requires``)
 - ``GET /plugins/{name}`` — one plugin with its versions
 - ``GET /installed`` — the installed plugins (``updateAvailable`` when the marketplace answers)
-- ``POST /installed`` ``{ name, version? }`` — 201 with the installed plugin
-- ``PUT /installed/{name}`` ``{ version? }`` — the updated plugin
-- ``DELETE /installed/{name}`` — the removed plugin
+- ``GET /installed/{name}/config`` — ``{ values, version }``: its settings' values (stored over defaults), the
+  section's version
+- ``POST /installed`` ``{ name, version?, config? }`` — 201 with the installed plugin (``warnings`` when its settings
+  were ignored)
+- ``PUT /installed/{name}`` ``{ version?, config? }`` — the updated plugin with ``configDropped``
+- ``DELETE /installed/{name}`` — the removed plugin (its settings deleted)
+
+``config`` (``{ key: value }``) is checked against the version's settings before anything is downloaded: 400
+``{ error: 'validation failed', errors: { key: message } }``.
 """
 
 from __future__ import annotations
@@ -57,7 +63,10 @@ def _json(body: Any, status: int = 200) -> JSONResponse:
 
 def _error(exc: Exception) -> JSONResponse:
     if isinstance(exc, DashboardMarketplaceError):
-        return _json({"error": exc.message}, exc.status)
+        body: dict[str, Any] = {"error": exc.message}
+        if exc.errors:
+            body["errors"] = exc.errors
+        return _json(body, exc.status)
     logger.error("dashboard marketplace request failed: %s", exc)
     return _json({"error": "internal server error"}, 500)
 
@@ -121,6 +130,13 @@ def create_dashboard_marketplace_router(marketplace: DashboardMarketplace, auth_
         except Exception as exc:  # noqa: BLE001
             return _error(exc)
 
+    @router.get("/installed/{name:path}/config")
+    async def plugin_config(name: str, _user: Any = Depends(auth_dependency)) -> JSONResponse:
+        try:
+            return _json(await marketplace.plugin_config(name))
+        except Exception as exc:  # noqa: BLE001
+            return _error(exc)
+
     @router.post("/installed")
     async def install(request: Request, user: Any = Depends(auth_dependency)) -> JSONResponse:
         actor = can_install(request, user)
@@ -128,7 +144,9 @@ def create_dashboard_marketplace_router(marketplace: DashboardMarketplace, auth_
             return actor
         try:
             body = await _body(request)
-            return _json(await marketplace.install_plugin(body.get("name"), body.get("version"), actor), 201)
+            return _json(
+                await marketplace.install_plugin(body.get("name"), body.get("version"), actor, body.get("config")), 201,
+            )
         except Exception as exc:  # noqa: BLE001
             return _error(exc)
 
@@ -139,8 +157,11 @@ def create_dashboard_marketplace_router(marketplace: DashboardMarketplace, auth_
             return actor
         try:
             body = await _body(request)
-            plugin, _changed, _previous = await marketplace.update_plugin(name, body.get("version"), actor)
-            return _json(plugin)
+            result = await marketplace.update_plugin(name, body.get("version"), actor, body.get("config"))
+            out = {**result["plugin"], "configDropped": result["configDropped"]}
+            if result.get("warnings"):
+                out["warnings"] = result["warnings"]
+            return _json(out)
         except Exception as exc:  # noqa: BLE001
             return _error(exc)
 
