@@ -144,6 +144,16 @@ class CliBuilder:
         self._dashboard_extensions.append(valid)
         return self
 
+    def remove_dashboard_extension(self, extension_id: str) -> bool:
+        """Remove a dashboard extension at runtime (the admin plugin's
+        marketplace plugins); ``GET /api/v1/qcli/dashboard/extensions`` reads
+        the list on every request.  ``False`` when no extension has that id."""
+        for i, e in enumerate(self._dashboard_extensions):
+            if e.id == extension_id:
+                del self._dashboard_extensions[i]
+                return True
+        return False
+
     @property
     def dashboard_extensions(self) -> list[CliDashboardExtension]:
         """The dashboard extensions registered so far, in registration order."""
@@ -246,6 +256,14 @@ class CliBuilder:
     def attach_config_audit(self, audit: Any) -> None:
         """Used by ``create_cli_server``: the default audit sink (a function returning one or ``None``)."""
         self._config_audit = audit
+
+    @property
+    def audit_sink(self) -> Any:
+        """Where the server's own changes are audited (``config.update``, the
+        admin plugin's ``dashboard.plugin.*``): the store set with
+        :meth:`set_config_audit_store`, else the server's audit log; ``None``
+        when there is neither.  An async function taking an ``AuditEntry``."""
+        return self._config_audit_sink()
 
     def _config_audit_sink(self) -> Any:
         if self._config_audit_store is not None:
