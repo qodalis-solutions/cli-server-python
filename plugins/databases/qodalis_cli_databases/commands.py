@@ -1,9 +1,11 @@
 """Terminal commands: ``databases`` (alias ``db``) — ``list``, ``stats <db>``, ``migrations <db>``,
-``up <db>``, ``down <db> --to <id>``."""
+``up <db>``, ``down <db> --to <id>``, ``runs <db>``."""
 
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from typing import Any
 
 from qodalis_cli_server_abstractions import (
@@ -24,6 +26,42 @@ _TO = CliCommandParameterDescriptor(
 )
 _DRY_RUN = CliCommandParameterDescriptor("dry-run", "Show the SQL instead of running it", False, "boolean")
 _FORCE = CliCommandParameterDescriptor("force", "Run although migrations changed or went missing", False, "boolean")
+
+
+_LIMIT = CliCommandParameterDescriptor(
+    "limit", "How many runs to show (1-100, default 20)", False, "number", aliases=["n"], default_value=20,
+)
+_JSON = CliCommandParameterDescriptor("json", "Print the runs as JSON", False, "boolean")
+
+
+def limit_of(command: CliProcessCommand, fallback: int, maximum: int) -> int | str:
+    """``--limit`` / ``-n``: a whole number from 1 to ``maximum``; ``fallback`` when not given; an error text when invalid."""
+    args = command.args or {}
+    raw = args.get("limit", args.get("n"))
+    if raw is None or raw is True:
+        return fallback
+    try:
+        n = float(raw) if not isinstance(raw, bool) else None
+    except (TypeError, ValueError):
+        n = None
+    if n is None or not n.is_integer() or n < 1 or n > maximum:
+        return f"Error: --limit must be a whole number from 1 to {maximum}"
+    return int(n)
+
+
+def _short_time(iso: str | None) -> str:
+    """``2026-11-25T10:04:05.123Z`` -> ``2026-11-25 10:04:05``."""
+    if not iso:
+        return ""
+    text = iso.replace("T", " ", 1)
+    return re.sub(r"(\.\d+)?(Z|[+-]00:00)$", "", text)
+
+
+def format_run_line(run: CliMigrationRun) -> str:
+    """One run as a line of ``databases runs``: time, direction, status, count, trigger/actor, error."""
+    who = f"{run.trigger} ({run.actor})" if run.actor else run.trigger
+    columns = [_short_time(run.started_at).ljust(19), run.direction.ljust(4), run.status.ljust(9), str(len(run.applied)).rjust(5), who]
+    return "  ".join(p for p in [" ".join(columns), f"to {run.target}" if run.target else "", run.error or ""] if p)
 
 
 def _database_of(databases: CliDatabases, command: CliProcessCommand) -> str:
@@ -251,9 +289,46 @@ class _RunProcessor(CliCommandProcessor):
             return f"Error: {exc}"
 
 
+class _RunsProcessor(CliCommandProcessor):
+    def __init__(self, databases: CliDatabases) -> None:
+        self._databases = databases
+
+    command = "runs"
+    description = "Shows the migration run history of a database: time, direction, status, count, who ran it, error"
+    value_required = False
+    required_permissions = [DATABASES_READ]
+    parameters = [_LIMIT, _JSON]
+    examples = [
+        CliCommandExample("databases runs main", "The last 20 runs of the database main"),
+        CliCommandExample("databases runs main -n 5 --json", "The last 5 runs as JSON"),
+    ]
+
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
+        try:
+            limit = limit_of(command, 20, 100)
+            if isinstance(limit, str):
+                return limit
+            name = _database_of(self._databases, command)
+            db = self._databases.database(name)
+            if db is None:
+                return f"Error: unknown database: {name}"
+            items, total = await db.runs(limit, 0)
+            if _flag(command, "json"):
+                return json.dumps({"database": db.name, "items": [r.to_dict() for r in items], "total": total}, indent=2)
+            if not items:
+                return f"{db.name}: no migration runs yet"
+            return "\n".join([
+                f"{db.name} ({db.dialect}): {len(items)} of {total} run(s)",
+                f"{'Started'.ljust(19)} Dir  Status    Count Trigger",
+                *(format_run_line(r) for r in items),
+            ])
+        except Exception as exc:  # noqa: BLE001 - shown to the user
+            return f"Error: {exc}"
+
+
 class CliDatabasesCommandProcessor(CliCommandProcessor):
     """``databases`` (alias ``db``): ``list``, ``stats <db>``, ``migrations <db>``, ``up <db>``,
-    ``down <db> --to <id>``."""
+    ``down <db> --to <id>``, ``runs <db>``."""
 
     def __init__(self, databases: CliDatabases) -> None:
         self._databases = databases
@@ -263,6 +338,7 @@ class CliDatabasesCommandProcessor(CliCommandProcessor):
             _MigrationsProcessor(databases),
             _RunProcessor(databases, "up"),
             _RunProcessor(databases, "down"),
+            _RunsProcessor(databases),
         ]
 
     @property
