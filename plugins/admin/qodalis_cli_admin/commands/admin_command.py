@@ -1,4 +1,5 @@
-"""``admin``: server administration from the terminal (status, command modules, WebSocket clients, logs)."""
+"""``admin``: server administration from the terminal (status, command modules, WebSocket clients, logs, dashboard
+plugins)."""
 
 from __future__ import annotations
 
@@ -21,6 +22,12 @@ from qodalis_cli_server_abstractions import (
 )
 
 from ..controllers.status_controller import DEFAULT_HISTORY_MINUTES, MAX_HISTORY_MINUTES
+from ..services.dashboard_marketplace import (
+    DASHBOARD_INSTALL_PERMISSION,
+    DashboardMarketplace,
+    DashboardMarketplaceActor,
+    DashboardMarketplaceError,
+)
 from ..services.log_ring_buffer import LOG_LEVELS, LogRingBuffer
 from ..services.module_registry import ModuleRegistry
 from ..services.status_history import StatusHistory, summarize_status_history
@@ -47,6 +54,8 @@ class AdminCommandDeps:
     log_buffer: LogRingBuffer
     event_socket_manager: Any
     installed_plugins: Callable[[], list[Any]]
+    #: Dashboard plugins from the marketplace (``admin dashboard``); ``None`` when the marketplace is off.
+    marketplace: Optional[DashboardMarketplace] = None
 
 
 def _json(value: Any) -> str:
@@ -407,13 +416,199 @@ class AdminLogsProcessor(CliCommandProcessor):
         return "\n".join([*header, *(format_log_line(e) for e in page)])
 
 
+def _terminal_actor() -> DashboardMarketplaceActor:
+    """Who runs the command: the signed-in caller, else ``anonymous`` (a server without sign-in)."""
+    try:
+        from qodalis_cli import get_cli_caller  # the server package, optional here
+    except ImportError:  # pragma: no cover
+        return DashboardMarketplaceActor(user_name="anonymous")
+    caller = get_cli_caller()
+    if caller is None:
+        return DashboardMarketplaceActor(user_name="anonymous")
+    return DashboardMarketplaceActor(user_name=caller.user_name, user_id=caller.user_id)
+
+
+async def _marketplace_call(fn: Callable[[], Any]) -> str:
+    """Runs a marketplace call, turning its refusals into ``Error: <reason>``."""
+    try:
+        return await fn()
+    except DashboardMarketplaceError as exc:
+        return f"Error: {exc.message}"
+
+
+class AdminDashboardListProcessor(CliCommandProcessor):
+    command = "list"
+    aliases = ["ls"]
+    description = "Lists the dashboard plugins installed from the marketplace: page id, package, version, who installed them"
+    parameters = [_JSON]
+
+    def __init__(self, marketplace: DashboardMarketplace) -> None:
+        self._marketplace = marketplace
+
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
+        plugins = await self._marketplace.installed(check_updates=True)
+        if _flag(command, "json"):
+            return _json(plugins)
+        info = self._marketplace.info()
+        url, install = info["marketplaceUrl"], info["install"]
+        if not plugins:
+            return f"No dashboard plugins installed (marketplace {url}, install: {install}; admin dashboard search <query> finds some)."
+        rows = [
+            [
+                p["id"], p["name"], f"{p['version']}{' (update available)' if p.get('updateAvailable') else ''}",
+                short_time(p["installedAt"]), p["installedBy"] or "-",
+            ]
+            for p in plugins
+        ]
+        return "\n".join([
+            f"{len(plugins)} dashboard plugin(s) from {url} (install: {install})",
+            format_table(["ID", "Package", "Version", "Installed", "By"], rows),
+        ])
+
+
+class AdminDashboardSearchProcessor(CliCommandProcessor):
+    command = "search"
+    description = "Searches the marketplace's dashboard plugins: package, version, publisher, whether it can be installed"
+    parameters = [_JSON]
+    examples = [CliCommandExample("admin dashboard search tickets", "Dashboard plugins about tickets")]
+
+    def __init__(self, marketplace: DashboardMarketplace) -> None:
+        self._marketplace = marketplace
+
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
+        async def run() -> str:
+            query = " ".join(get_positionals(command))
+            result = await self._marketplace.search(query, page_size=50)
+            if _flag(command, "json"):
+                return _json(result)
+            items = result["items"]
+            if not items:
+                return f'No dashboard plugins match "{query}".' if query else "The marketplace lists no dashboard plugins."
+
+            def status(p: dict[str, Any]) -> str:
+                if p.get("installed"):
+                    v = p["installed"]["version"]
+                    return f"installed {v}, update available" if p.get("updateAvailable") else f"installed {v}"
+                return "installable" if p.get("allowed") else f"blocked: {p.get('blockedReason')}"
+
+            rows = []
+            for p in items:
+                publisher = p.get("publisher") if isinstance(p.get("publisher"), dict) else {}
+                requires = p.get("requires")
+                missing = f"; needs server plugin {requires['serverPackage']}" if requires and not requires.get("installed") else ""
+                version = p.get("version") if p.get("version") is not None else p.get("latest")
+                rows.append([
+                    p["name"], str(version if version is not None else "-"),
+                    f"{publisher.get('name') or '-'}{' (verified)' if publisher.get('verified') else ''}",
+                    f"{status(p)}{missing}",
+                ])
+            more = [f"{len(items)} of {result['total']} shown"] if result["total"] > len(items) else []
+            return "\n".join([format_table(["Package", "Version", "Publisher", "Status"], rows), *more])
+
+        return await _marketplace_call(run)
+
+
+class AdminDashboardInstallProcessor(CliCommandProcessor):
+    command = "install"
+    description = "Installs a dashboard plugin from the marketplace (the newest version this dashboard runs, or name@version)"
+    value_required = True
+    required_permissions = [DASHBOARD_INSTALL_PERMISSION]
+    examples = [
+        CliCommandExample("admin dashboard install @qodalis/cli-dashboard-module-jobs", "The newest version"),
+        CliCommandExample("admin dashboard install @acme/cli-dashboard-tickets@1.2.0", "A given version"),
+    ]
+
+    def __init__(self, marketplace: DashboardMarketplace) -> None:
+        self._marketplace = marketplace
+
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
+        async def run() -> str:
+            words = get_positionals(command)
+            if len(words) != 1:
+                return "Error: name one package: admin dashboard install <name>[@version]"
+            spec = words[0]
+            at = spec.rfind("@")
+            name, version = (spec[:at], spec[at + 1:]) if at > 0 else (spec, None)
+            plugin = await self._marketplace.install_plugin(name, version, _terminal_actor())
+            return f'Installed {plugin["name"]}@{plugin["version"]}: the dashboard page "{plugin["title"]}" (/x/{plugin["id"]}).'
+
+        return await _marketplace_call(run)
+
+
+class AdminDashboardUpdateProcessor(CliCommandProcessor):
+    command = "update"
+    description = "Updates an installed dashboard plugin to the newest version this dashboard runs"
+    value_required = True
+    required_permissions = [DASHBOARD_INSTALL_PERMISSION]
+
+    def __init__(self, marketplace: DashboardMarketplace) -> None:
+        self._marketplace = marketplace
+
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
+        async def run() -> str:
+            words = get_positionals(command)
+            if len(words) != 1:
+                return "Error: name one package: admin dashboard update <name>"
+            plugin, changed, previous = await self._marketplace.update_plugin(words[0], None, _terminal_actor())
+            if not changed:
+                return f"{plugin['name']} is already at {plugin['version']}, the newest version."
+            return f"Updated {plugin['name']} from {previous} to {plugin['version']}."
+
+        return await _marketplace_call(run)
+
+
+class AdminDashboardRemoveProcessor(CliCommandProcessor):
+    command = "remove"
+    aliases = ["uninstall"]
+    description = "Removes an installed dashboard plugin: its page and its files"
+    value_required = True
+    required_permissions = [DASHBOARD_INSTALL_PERMISSION]
+
+    def __init__(self, marketplace: DashboardMarketplace) -> None:
+        self._marketplace = marketplace
+
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
+        async def run() -> str:
+            words = get_positionals(command)
+            if len(words) != 1:
+                return "Error: name one package: admin dashboard remove <name>"
+            plugin = await self._marketplace.remove_plugin(words[0], _terminal_actor())
+            return f"Removed {plugin['name']}@{plugin['version']} (the page {plugin['id']})."
+
+        return await _marketplace_call(run)
+
+
+class AdminDashboardProcessor(CliCommandProcessor):
+    command = "dashboard"
+    description = "Dashboard plugins from the marketplace: list the installed ones, search, install, update, remove"
+    parameters = [_JSON]
+
+    def __init__(self, marketplace: DashboardMarketplace) -> None:
+        self._list = AdminDashboardListProcessor(marketplace)
+        self._processors: list[ICliCommandProcessor] = [
+            self._list,
+            AdminDashboardSearchProcessor(marketplace),
+            AdminDashboardInstallProcessor(marketplace),
+            AdminDashboardUpdateProcessor(marketplace),
+            AdminDashboardRemoveProcessor(marketplace),
+        ]
+
+    @property
+    def processors(self) -> list[ICliCommandProcessor]:
+        return self._processors
+
+    async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
+        return await self._list.handle_async(command, cancellation_event)
+
+
 class CliAdminCommandProcessor(CliCommandProcessor):
-    """``admin``: ``status [--history]``, ``plugins [list|enable|disable <id>]``, ``clients``, ``logs [...]``.
-    Needs ``admin:access`` on a protected server; ``logs`` also ``logs:read``.  Server settings are the core
+    """``admin``: ``status [--history]``, ``plugins [list|enable|disable <id>]``, ``clients``, ``logs [...]``,
+    ``dashboard [list|search|install|update|remove]``.  Needs ``admin:access`` on a protected server; ``logs`` also
+    ``logs:read``, ``dashboard install|update|remove`` also ``dashboard:install``.  Server settings are the core
     ``config`` command."""
 
     command = "admin"
-    description = "Server administration: status, command modules, WebSocket clients, logs"
+    description = "Server administration: status, command modules, WebSocket clients, logs, dashboard plugins"
     module = ADMIN_MODULE_NAME
     icon = "🛠️"
     required_permissions = [ADMIN_ACCESS_PERMISSION]
@@ -426,6 +621,8 @@ class CliAdminCommandProcessor(CliCommandProcessor):
             AdminClientsProcessor(deps.event_socket_manager),
             AdminLogsProcessor(deps.log_buffer),
         ]
+        if deps.marketplace is not None:
+            self._processors.append(AdminDashboardProcessor(deps.marketplace))
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
@@ -440,7 +637,7 @@ class AdminModule(CliModule):
     """The ``admin`` terminal command, registered by ``mount_plugin``."""
 
     name = ADMIN_MODULE_NAME
-    description = "Server administration from the terminal: status, command modules, WebSocket clients, logs"
+    description = "Server administration from the terminal: status, command modules, WebSocket clients, logs, dashboard plugins"
     icon = "🛠️"
 
     def __init__(self, processor: CliAdminCommandProcessor, version: str) -> None:
