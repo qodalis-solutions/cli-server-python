@@ -82,15 +82,6 @@ Point the web terminal at `http://localhost:8048` and run `greet Ada`.
 
 uvicorn logs request paths with their query strings, which can contain WebSocket tickets (`ticket=`), tokens (`token=`, `access_token=`, `_header_Authorization=`) and shell commands (`cmd=`). `install_log_redaction()` adds a `RedactingLogFilter` to the `uvicorn`, `uvicorn.access` and `uvicorn.error` loggers; the filter class is exported for your own handlers.
 
-### Standalone server
-
-The package installs a `qodalis-cli-server` command that serves the built-in processors:
-
-```bash
-qodalis-cli-server                         # http://0.0.0.0:8048
-PORT=9000 HOST=127.0.0.1 qodalis-cli-server
-```
-
 ## Writing Commands
 
 ### Processors
@@ -209,7 +200,7 @@ Without a `total`, pass `has_more` (query `take + 1` rows to find out). Tables f
 
 ### Sub-commands
 
-Return child processors from `processors` to build hierarchies such as `math add --a 5 --b 3`; `chain_commands` tells the handler which one ran. See [`demo/processors`](demo/processors) for complete examples (`math`, `time`, `hello`, `status`, `echo`).
+Return child processors from `processors` to build hierarchies such as `math add --a 5 --b 3`; `chain_commands` tells the handler which one ran. See [`demo/processors`](demo/processors) for complete examples (`math`, `time`, `hello`, `status`, `echo`, `system`, `hash`, `base64`).
 
 ### Modules
 
@@ -244,16 +235,19 @@ create_cli_server(CliServerOptions(configure=lambda b: b.add_module(GreetingsMod
 
 ### Built-in processors
 
-Used by the standalone server; import them from `qodalis_cli` to add them to your own.
+`qodalis_cli` ships one command, added only when the host adds it:
 
 | Command | Class | Description |
 |---|---|---|
-| `echo` | `CliEchoCommandProcessor` | Echoes input text |
-| `status` | `CliStatusCommandProcessor` | Server status (uptime, OS) |
-| `system` | `CliSystemCommandProcessor` | System information (hostname, CPU, memory) |
-| `http` | `CliHttpCommandProcessor` | HTTP requests (`get`, `post`), streamed |
-| `hash` | `CliHashCommandProcessor` | Hash text (`--algorithm`, default `sha256`) |
-| `base64` | `CliBase64CommandProcessor` | Base64 encode / decode |
+| `http` | `CliHttpCommandProcessor` | HTTP requests from the server (`get`, `post`), streamed. Requires `http:request` (core permission, group Commands) and is listed under module `core` |
+
+```python
+from qodalis_cli import CliHttpCommandProcessor
+
+create_cli_server(CliServerOptions(configure=lambda b: b.add_processor(CliHttpCommandProcessor())))
+```
+
+The demo's example commands (`echo`, `status`, `time`, `hello`, `math`, `system`, `hash`, `base64`) are the `demo` module in [`demo/demo_module.py`](demo/demo_module.py); copy them into your app if you want them.
 
 ## Configuration
 
@@ -1241,7 +1235,7 @@ python main.py
 
 | Path | Contents |
 |---|---|
-| `src/qodalis_cli/` | Server: `create_cli_server`, controllers, services, MCP, shell security, built-in processors |
+| `src/qodalis_cli/` | Server: `create_cli_server`, controllers, services, MCP, shell security, the `http` command |
 | `packages/abstractions/` | `qodalis-cli-server-abstractions`, zero-dependency base types |
 | `plugins/` | Plugin packages |
 | `demo/` | Demo server with sample processors and every plugin |

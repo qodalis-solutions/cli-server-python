@@ -105,7 +105,7 @@ Groups carry `permissions` (`resource:action` strings, `*` wildcards such as `us
 
 ### Permission catalog
 
-The server keeps a catalog of the permissions a token can be given, each with a description and a group, for the dashboard's and the web CLI's token pickers. Core registers 11 entries (`commands:execute`, `shell:execute`, `files:read`, `files:write`, `data:query`, `jobs:read`, `jobs:manage`, `logs:read`, `admin:access`, `audit:read`, `audit:clear`) and this plugin adds 12 when mounted (`users:*`, `groups:*`, `sessions:read|revoke`, `tokens:read|revoke`), all with surface `cli`. The host adds its own routes' permissions with surface `host`:
+The server keeps a catalog of the permissions a token can be given, each with a description and a group, for the dashboard's and the web CLI's token pickers. Core registers 14 entries (`commands:execute`, `shell:execute`, `http:request`, `files:read`, `files:write`, `data:query`, `jobs:read`, `jobs:manage`, `logs:read`, `admin:access`, `config:read`, `config:write`, `audit:read`, `audit:clear`) and this plugin adds 12 when mounted (`users:*`, `groups:*`, `sessions:read|revoke`, `tokens:read|revoke`), all with surface `cli`. The host adds its own routes' permissions with surface `host`:
 
 ```python
 from qodalis_cli import CliPermission
