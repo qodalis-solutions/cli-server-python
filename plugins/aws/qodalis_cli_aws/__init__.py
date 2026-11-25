@@ -4,5 +4,6 @@
 __plugin_icon__ = "☁️"
 
 from .aws_module import AwsModule
+from .permissions import AWS_PERMISSION_ENTRIES, AWS_READ, AWS_WRITE, AwsPermissions
 
-__all__ = ["AwsModule"]
+__all__ = ["AwsModule", "AwsPermissions", "AWS_PERMISSION_ENTRIES", "AWS_READ", "AWS_WRITE"]

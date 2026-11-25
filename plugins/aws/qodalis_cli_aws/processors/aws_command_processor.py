@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..permissions import AWS_READ, AWS_WRITE
+
 import asyncio
 
 import os
@@ -43,6 +45,8 @@ class _AwsConfigureSetProcessor(CliCommandProcessor):
         super().__init__()
         self._config_service = config_service
         self._credential_manager = credential_manager
+
+    required_permissions = [AWS_WRITE]
 
     @property
     def command(self) -> str:
@@ -271,6 +275,9 @@ class AwsCommandProcessor(CliCommandProcessor):
             AwsDynamoDbProcessor(self._credential_manager),
             AwsIamProcessor(self._credential_manager),
         ]
+
+    #: Every sub-command; the changing ones also need ``aws:write``.
+    required_permissions = [AWS_READ]
 
     @property
     def command(self) -> str:

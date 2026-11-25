@@ -7,6 +7,7 @@ from qodalis_cli_server_abstractions import (
     ICliCommandProcessor,
 )
 
+from .permissions import AWS_PERMISSION_ENTRIES
 from .processors.aws_command_processor import AwsCommandProcessor
 
 
@@ -32,6 +33,11 @@ class AwsModule(CliModule):
     def icon(self) -> str | None:
         """One emoji or an image URL shown for the module."""
         return "☁️"
+
+    @property
+    def permissions(self) -> list[dict[str, str]]:
+        """``aws:read`` and ``aws:write``, added to the server's permission catalog (group AWS)."""
+        return [dict(e) for e in AWS_PERMISSION_ENTRIES]
 
     @property
     def processors(self) -> Sequence[ICliCommandProcessor]:
