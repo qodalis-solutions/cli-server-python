@@ -53,6 +53,11 @@ Queries use standard Redis command syntax (e.g., `GET mykey`, `HGETALL myhash`).
 - `qodalis-cli-server-plugin-data-explorer`
 - `redis[hiredis]>=5.0.0`
 
+## Terminal commands
+
+None of its own: the provider is queried through the [data explorer plugin](../data-explorer/README.md#terminal-commands)
+(`data-explorer` in the web CLI).
+
 ## License
 
 MIT

@@ -126,6 +126,13 @@ Queries run in order: permissions, rate limit (per user id, or client address wh
 | `qodalis-cli-server-plugin-data-explorer-redis` | Redis |
 | `qodalis-cli-server-plugin-data-explorer-elasticsearch` | Elasticsearch |
 
+## Terminal commands
+
+No server-side command: the web CLI plugin [`@qodalis/cli-data-explorer`](https://www.npmjs.com/package/@qodalis/cli-data-explorer)
+opens a console on a source (`data-explorer [--server <name>]`, `data:query` on a protected server) with `\format`,
+`\templates`, `\use`, `\schema`, `\history`, `\help` and `\quit`. With the MCP endpoint on, AI clients get the `data_*`
+tools.
+
 ## License
 
 MIT

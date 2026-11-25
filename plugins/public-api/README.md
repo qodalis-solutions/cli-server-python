@@ -201,6 +201,27 @@ Several services may *validate* tokens over shared stores (a guard-only users pl
 must be *created and revoked* from one service only: the token name's uniqueness and the 20-token limit are checked in
 the process that creates the token.
 
+## Terminal commands
+
+`api`, registered by `mount_plugin` (the plugin's `module`). The guard's routes are the host's
+(`Depends(public_api.guard(...))`), so the plugin does not know them and there is no `api routes`.
+
+| Command | Permission | Does |
+|---|---|---|
+| `api`, `api usage [--days 7] [--json]` | none beyond `commands:execute` | Your requests per token and UTC day (1-30 days, today included), totals, today's requests of every token (revoked ones too) and your quota |
+| `api usage --user <name\|id>` | `tokens:read` for another account (like `GET /tokens?all=true`) | The same for another account |
+
+```text
+$ api usage --user alice --days 3
+alice: 13 request(s) today (every token, revoked ones too)
+Quota: 1000 per day, 60 per minute
+Day         website  ci-bot  Total
+2026-11-23        0       0      0
+2026-11-24        2       0      2
+2026-11-25        3      10     13
+Total             5      10     15
+```
+
 ## License
 
 MIT

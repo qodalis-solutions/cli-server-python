@@ -1123,7 +1123,7 @@ Each plugin is a separate package under [`plugins/`](plugins) with its own READM
 |---|---|---|
 | [`qodalis-cli-server-plugin-users`](plugins/users/README.md) | `qodalis_cli_users` | Sign-in, users, groups and permissions, sessions, API tokens; protects the whole server; mounts the audit plugin |
 | [`qodalis-cli-server-plugin-audit`](plugins/audit/README.md) | `qodalis_cli_audit` | Audit log and its API (`/api/v1/qcli/audit`), in memory or a store of your own |
-| [`qodalis-cli-server-plugin-admin`](plugins/admin/README.md) | `qodalis_cli_admin` | Admin dashboard at `/qcli/admin` and its API |
+| [`qodalis-cli-server-plugin-admin`](plugins/admin/README.md) | `qodalis_cli_admin` | Admin dashboard at `/qcli/admin` and its API (status, configuration through the [config providers](#config-providers), logs) and the `admin` command |
 | [`qodalis-cli-server-plugin-jobs`](plugins/jobs/README.md) | `qodalis_cli_jobs` | Scheduled background jobs with history and logs; per-job `max_concurrent_runs` and overlap policy (skip, queue, cancel), retries holding their slot ([Concurrency](plugins/jobs/README.md#concurrency)) |
 | [`qodalis-cli-server-plugin-databases`](plugins/databases/README.md) | `qodalis_cli_databases` | The server's PostgreSQL, MySQL, SQL Server and SQLite databases: stats (size, connections, load, largest tables) and versioned schema migrations under a lock with history and runs; the API (`/api/v1/qcli/databases`), terminal `databases`, MCP tools and the dashboard's Databases page |
 | [`qodalis-cli-server-plugin-filesystem`](plugins/filesystem/README.md) | `qodalis_cli_filesystem` | `IFileStorageProvider` with in-memory and OS providers (installed with the server) |
@@ -1132,7 +1132,7 @@ Each plugin is a separate package under [`plugins/`](plugins) with its own READM
 | [`...-data-explorer-sql`](plugins/data-explorer-sql/README.md), [`-postgres`](plugins/data-explorer-postgres/README.md), [`-mysql`](plugins/data-explorer-mysql/README.md), [`-mssql`](plugins/data-explorer-mssql/README.md), [`-mongo`](plugins/data-explorer-mongo/README.md), [`-redis`](plugins/data-explorer-redis/README.md), [`-elasticsearch`](plugins/data-explorer-elasticsearch/README.md) | `qodalis_cli_data_explorer_<name>` | Data explorer providers |
 | [`qodalis-cli-server-plugin-weather`](plugins/weather/README.md) | `qodalis_cli_weather` | Example module (`weather current`, `weather forecast`) |
 | [`qodalis-cli-server-plugin-public-api`](plugins/public-api/README.md) | `qodalis_cli_public_api` | A public REST API of the host: routes guarded by `host` tokens with per-account quotas and `X-RateLimit-*` headers, usage per token, the public OpenAPI document and Swagger UI (`/qcli/api`) |
-| [`qodalis-cli-server-plugin-docs`](plugins/docs/README.md) | `qodalis_cli_docs` | Markdown guides from folders or code, with front matter and variables, served as JSON (`/qcli/docs`) |
+| [`qodalis-cli-server-plugin-docs`](plugins/docs/README.md) | `qodalis_cli_docs` | Markdown guides from folders or code, with front matter and variables, served as JSON (`/qcli/docs`) and read with `docs` |
 | [`qodalis-cli-server-plugin-portal`](plugins/portal/README.md) | `qodalis_cli_portal` | The prebuilt portal site (guides and API reference) at one mount (`/qcli/portal`), with `portal.json` |
 | [AWS](plugins/aws/README.md) | `qodalis_cli_aws` | `aws` commands for S3, EC2, Lambda, CloudWatch, SNS, SQS, IAM, DynamoDB, ECS (boto3) |
 
@@ -1147,6 +1147,26 @@ result.mount_plugin(users_plugin)  # protects every route and socket of the serv
 ```
 
 The users plugin README shows the full lifespan wiring, server protection, permissions and [API tokens](plugins/users/README.md#api-tokens).
+
+### Plugin commands
+
+Every plugin README has a `Terminal commands` section. Commands served by this server (registered by `mount_plugin`
+from a plugin's `module`, or by `add_module`; permissions enforced on a protected server, along the command chain):
+
+| Plugin | Commands | Permission |
+|---|---|---|
+| [admin](plugins/admin/README.md#terminal-commands) | `admin status [--history]`, `admin plugins [list\|enable\|disable <id>]`, `admin clients`, `admin logs [--level] [--search] [--service] [--since] [-n]` | `admin:access`; `logs` also `logs:read` |
+| [databases](plugins/databases/README.md#terminal-commands) | `databases list\|stats\|migrations\|runs\|up\|down` | `databases:read`; `up`/`down` `databases:migrate` |
+| [docs](plugins/docs/README.md#terminal-commands) | `docs list [--group]`, `docs read <slug>` | none |
+| [public-api](plugins/public-api/README.md#terminal-commands) | `api usage [--user <name\|id>] [--days N]` | none for your own; `tokens:read` for another account |
+| [aws](plugins/aws/README.md#terminal-commands) | `aws configure\|status\|s3\|ec2\|lambda\|cloudwatch\|sns\|sqs\|iam\|ecs\|dynamodb ...` | `aws:read`; changes also `aws:write` |
+| [weather](plugins/weather/README.md#terminal-commands) | `weather [current\|forecast] [location]` | none |
+
+Lists take `--json`. Plugins driven by web CLI plugins: jobs (`server jobs ...`, `@qodalis/cli-server-jobs`), users
+and audit (`adduser`, `token`, `link approve`, `audit`, ..., `@qodalis/cli-users`), data explorer (`data-explorer`,
+`@qodalis/cli-data-explorer`), filesystem (`scp`, `@qodalis/cli-scp`), live logs (`server logs`,
+`@qodalis/cli-server-logs`). Commands a module declares can bring their permissions to the catalog:
+`ICliModule.permissions` (`{"name", "description", "group"}` dicts, added by `add_module` with surface `cli`).
 
 ## Dashboard Extensions
 

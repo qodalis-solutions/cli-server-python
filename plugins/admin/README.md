@@ -294,6 +294,52 @@ CLI's. The values are served with the color scheme at `/qcli/admin/theme.json`; 
 - `fastapi>=0.100.0`
 - `psutil>=5.9.0`
 
+## Terminal commands
+
+The plugin brings the `admin` command (registered by `mount_plugin`, which also lets the module registry filter the
+executor). It reads the same services as the admin routes. On a protected server every sub-command needs
+`admin:access`; `admin logs` also needs `logs:read`. Server settings are the core
+[`config`](../../README.md#config-providers) command. Lists take `--json` (the payload of the matching route).
+
+| Command | Permission | Does |
+|---|---|---|
+| `admin`, `admin status [--json]` | `admin:access` | Server package and version, platform, uptime, memory, CPU, connections, commands, jobs, features (`GET /status`) |
+| `admin status --history [--minutes 60] [--json]` | `admin:access` | Summary of the status samples of the last minutes (1-1440): count, min/avg/max memory and CPU, peak connections (`GET /status/history`) |
+| `admin plugins`, `admin plugins list [--json]` | `admin:access` | Command modules: id, name, version, enabled or disabled, commands (`GET /plugins`) |
+| `admin plugins enable <id>`, `admin plugins disable <id>` | `admin:access` | Turns a module's commands on or off, like `POST /plugins/{id}/toggle` but idempotent (`... is already enabled.`); the `admin` module itself cannot be disabled from the terminal |
+| `admin clients [--json]` | `admin:access` | Connected WebSocket clients: id, type, connected since, address (`GET /ws/clients`) |
+| `admin logs [--level warn,error] [--search <text>] [--service <source>] [--since 5m\|1h\|7d\|<ISO date>] [-n 50] [--json]` | `admin:access`, `logs:read` | The newest matching log entries (1-1000), oldest first, from the log buffer (`--service` matches the logger name) |
+
+On a server without the users plugin, `/execute` is open, and so are these commands. To follow the log live, use
+`server logs` of the web CLI plugin `@qodalis/cli-server-logs` (the `/ws/v1/qcli/logs` socket, `logs:read`).
+
+```text
+$ admin status
+Server      qodalis-cli-server 1.0.0b31
+Platform    python 3.13.1 (Linux 6.8.0)
+Uptime      2 h 5 min (since 2026-11-25 08:00:00)
+Memory      84.2 MB
+CPU         1.3%
+Connections 2 WebSocket, 0 shell
+Commands    41
+Jobs        0
+Features    filesystem, jobs, audit
+
+$ admin status --history --minutes 15
+Last 15 min: 60 sample(s) every 15 s, 2026-11-25 09:50:00 to 2026-11-25 10:04:45
+Memory      min 80.1 MB  avg 82.4 MB  max 85.3 MB
+CPU         min 0.2%  avg 1.1%  max 5.4%
+Peak        3 WebSocket, 1 shell
+
+$ admin plugins disable weather
+Disabled weather (1 command).
+
+$ admin logs --level warn,error -n 2
+Last 2 of 7 entries
+2026-11-25 10:01:12 WARN  [jobs] cleanup took 12 s
+2026-11-25 10:03:40 ERROR [db] connection timeout
+```
+
 ## License
 
 MIT

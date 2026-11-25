@@ -61,6 +61,11 @@ result.mount_plugin(databases)
 - `qodalis-cli-server-plugin-filesystem`
 - `qodalis-cli-server-plugin-databases`
 
+## Terminal commands
+
+None of its own: the storage is reached through the [filesystem plugin](../filesystem/README.md#terminal-commands)
+(`scp` in the web CLI).
+
 ## License
 
 MIT

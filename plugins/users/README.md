@@ -454,6 +454,28 @@ engine.registerModule(usersModule.configure({ server: 'python' }));
 // options.servers must contain { name: 'python', url: 'http://localhost:8048' }
 ```
 
+## Terminal commands
+
+The plugin has no server-side command: the web CLI plugin [`@qodalis/cli-users`](https://www.npmjs.com/package/@qodalis/cli-users)
+drives its API in server mode. Its settings (session timeouts, lockout, password length) are the core `config`
+command (`config get users`).
+
+| Command | Permission | Does |
+|---|---|---|
+| `login [user]`, `logout` (`exit`), `su <user>` | | Sign in, sign out, switch user |
+| `whoami` (`me`), `id [user]`, `groups [user]`, `perms [user]` | signed in (`users:read` for others) | Identity, groups, effective permissions |
+| `passwd [user]` | signed in (`users:update` for others) | Changes your password, or resets another user's |
+| `adduser [name]` (`useradd`) | `users:create` | Creates a user |
+| `usermod <user>` | `users:update` | Changes a user (groups, name, email, enabled) |
+| `userdel <user>` (`deluser`) | `users:delete` | Deletes a user (asks first) |
+| `listusers` (`users`) | `users:read` | Lists users (`--query`, `--skip`, `--take`) |
+| `groupadd <name>`, `groupmod <group>`, `groupdel <name>` | `groups:create`, `groups:update`, `groups:delete` | Groups and their permissions |
+| `w` (`who`), `sessions` | signed in, `sessions:read` | Who is signed in, active sessions |
+| `session-kick <id>` | signed in (`sessions:revoke` for others) | Ends a session |
+| `token create <name>`, `token list` (`ls`), `token revoke <id>` (`rm`), `token permissions` | signed in (`tokens:revoke` for others' tokens) | API tokens |
+| `link approve <code> [--yes]`, `link deny <code>` | signed in | Approves or denies another terminal's link request (as the dashboard does) |
+| `last [user]`, `audit`, `audit clear` | `audit:read`, `audit:clear` | Sign-in history and the audit log (the [audit plugin](../audit/README.md)) |
+
 ## License
 
 MIT
