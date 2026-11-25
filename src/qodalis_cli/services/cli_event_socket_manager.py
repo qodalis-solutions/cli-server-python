@@ -204,13 +204,14 @@ class CliEventSocketManager(SessionBoundSockets):
             dict(info) for info in self._client_info.values()
         ]
 
-    async def broadcast_disconnect(self) -> None:
-        """Send a disconnect message to all clients and close their connections."""
+    async def broadcast_disconnect(self, code: int = 1000, reason: str = "Server shutting down") -> None:
+        """Send a disconnect message to all clients and close their connections (with ``code``: 1000 on shutdown,
+        1012 on a restart)."""
         logger.info("Broadcasting disconnect to %d event clients", len(self._clients))
         message = json.dumps({"type": "disconnect"})
         tasks = []
         for client in list(self._clients):
-            tasks.append(self._send_and_close(client, message))
+            tasks.append(self._send_and_close(client, message, code, reason))
         for client in list(self._senders):
             self._stop_sender(client)
         if tasks:
@@ -219,9 +220,9 @@ class CliEventSocketManager(SessionBoundSockets):
         self._client_info.clear()
         self._principals.clear()
 
-    async def _send_and_close(self, client: WebSocket, message: str) -> None:
+    async def _send_and_close(self, client: WebSocket, message: str, code: int = 1000, reason: str = "") -> None:
         try:
             await client.send_text(message)
-            await client.close()
+            await client.close(code, reason or None)
         except Exception:
             logger.debug("Broadcast send failed, removing client")

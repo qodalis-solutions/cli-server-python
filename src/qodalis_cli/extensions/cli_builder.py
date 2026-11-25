@@ -23,6 +23,7 @@ from ..permissions import (
 )
 from ..config.cli_config_registry import CliConfigRegistry
 from ..config.cli_config_service import CliConfigService
+from ..restart.cli_server_restart import CliServerRestart
 from ..services.cli_command_registry import CliCommandRegistry
 
 if TYPE_CHECKING:
@@ -69,7 +70,13 @@ class CliBuilder:
         #: ``config`` command, the ``config_*`` MCP tools): providers filtered
         #: by permission, secrets masked, changes validated, audited
         #: (``config.update``) and published (``config:changed``).
-        self.config = CliConfigService(self.config_registry, audit=self._config_audit_sink)
+        #: Restarting the server (``/api/v1/qcli/server/restart``, ``admin restart``) and the changes waiting for
+        #: it: plugins mark theirs with ``restart.mark_required(id, source, description)``; the config service
+        #: marks the settings with ``requires_restart``.
+        self.restart = CliServerRestart()
+        self.config = CliConfigService(
+            self.config_registry, audit=self._config_audit_sink, restart=lambda: self.restart,
+        )
 
     def add_permissions(
         self,
