@@ -79,14 +79,7 @@ from qodalis_cli_filesystem.providers import (
     OsFileStorageProvider,
     OsProviderOptions,
 )
-from .processors import (
-    CliEchoCommandProcessor,
-    CliStatusCommandProcessor,
-    CliSystemCommandProcessor,
-    CliHttpCommandProcessor,
-    CliHashCommandProcessor,
-    CliBase64CommandProcessor,
-)
+from .processors import CliHttpCommandProcessor
 from .create_cli_server import create_cli_server, CliServerConfigOptions, CliServerOptions, CliServerResult
 from .config import CliConfigService, CliHostEnvironmentOptions
 from .mcp import CliMcpOptions, IMcpToolProvider, McpTool, McpToolRegistry, McpToolResult
@@ -157,12 +150,7 @@ __all__ = [
     "CliInstalledPlugin",
     "FileSystemOptions",
     "FileSystemPathValidator",
-    "CliEchoCommandProcessor",
-    "CliStatusCommandProcessor",
-    "CliSystemCommandProcessor",
     "CliHttpCommandProcessor",
-    "CliHashCommandProcessor",
-    "CliBase64CommandProcessor",
     "create_cli_server",
     "CliServerOptions",
     "CliServerConfigOptions",

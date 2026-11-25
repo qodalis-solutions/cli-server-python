@@ -10,7 +10,8 @@ from fastapi import Depends, Request
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from qodalis_cli import CliEchoCommandProcessor, CliPermission, CliServerOptions, create_cli_server
+from qodalis_cli import CliPermission, CliServerOptions, create_cli_server
+from .demo_processors import CliEchoCommandProcessor
 from qodalis_cli_users import (
     ApiTokenCreateOptions,
     CliUsersBuilder,

@@ -1,12 +1,10 @@
-"""The echo processor prints a quoted value without its quotes, as the browser's echo does."""
+"""The demo's echo processor prints a quoted value without its quotes, as the browser's echo does."""
 
 import pytest
 
-from qodalis_cli.abstractions import CliProcessCommand
-from qodalis_cli.processors.cli_echo_command_processor import (
-    CliEchoCommandProcessor,
-    join_shell_words,
-)
+from qodalis_cli.abstractions import CliProcessCommand, join_shell_words
+
+from .demo_processors import CliEchoCommandProcessor
 
 
 async def _echo(value: str | None) -> str:

@@ -16,11 +16,11 @@ from httpx import ASGITransport, AsyncClient
 from starlette.websockets import WebSocketDisconnect
 
 from qodalis_cli import (
-    CliEchoCommandProcessor,
     CliServerOptions,
     InMemoryFileStorageProvider,
     create_cli_server,
 )
+from .demo_processors import CliEchoCommandProcessor
 from qodalis_cli.abstractions import CliCommandProcessor
 from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder
 from qodalis_cli_admin.auth.auth_controller import client_ip as admin_client_ip

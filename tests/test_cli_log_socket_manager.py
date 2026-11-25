@@ -247,21 +247,3 @@ class TestUvicornLogRedaction:
                 lg = logging.getLogger(name)
                 for f in [f for f in lg.filters if isinstance(f, RedactingLogFilter)]:
                     lg.removeFilter(f)
-
-    def test_standalone_server_installs_redaction(self, monkeypatch) -> None:
-        import uvicorn
-
-        from qodalis_cli import RedactingLogFilter
-        from qodalis_cli import server
-
-        calls = []
-        monkeypatch.setattr(uvicorn, "run", lambda *a, **kw: calls.append(kw))
-        try:
-            server.main()
-            assert calls
-            assert any(isinstance(f, RedactingLogFilter) for f in logging.getLogger("uvicorn.access").filters)
-        finally:
-            for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
-                lg = logging.getLogger(name)
-                for f in [f for f in lg.filters if isinstance(f, RedactingLogFilter)]:
-                    lg.removeFilter(f)

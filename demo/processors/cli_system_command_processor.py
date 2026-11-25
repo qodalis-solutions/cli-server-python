@@ -5,8 +5,8 @@ import os
 import platform
 import time
 
-from ..abstractions import CliCommandProcessor, CliProcessCommand
-from ..abstractions import CliCommandExample
+from qodalis_cli import CliCommandProcessor, CliProcessCommand
+from qodalis_cli import CliCommandExample
 
 _start_time = time.time()
 

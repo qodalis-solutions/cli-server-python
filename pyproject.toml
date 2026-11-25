@@ -38,9 +38,6 @@ Homepage = "https://github.com/qodalis-solutions/cli-server-python"
 Repository = "https://github.com/qodalis-solutions/cli-server-python"
 Issues = "https://github.com/qodalis-solutions/cli-server-python/issues"
 
-[project.scripts]
-qodalis-cli-server = "qodalis_cli.server:main"
-
 [project.optional-dependencies]
 test = [
     "pytest>=7.0",

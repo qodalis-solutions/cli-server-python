@@ -16,7 +16,7 @@ from qodalis_cli.controllers.cli_controller import _chain_processors
 from qodalis_cli.create_cli_server import CliServerOptions, create_cli_server
 from qodalis_cli.mcp.commands import command_input_schema
 from qodalis_cli.mcp.core import validate_arguments
-from qodalis_cli.processors.cli_hash_command_processor import CliHashCommandProcessor
+from .demo_processors import CliHashCommandProcessor
 from qodalis_cli.services.cli_command_registry import CliCommandRegistry
 
 

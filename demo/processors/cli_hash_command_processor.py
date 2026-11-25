@@ -3,14 +3,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 
-from ..abstractions import (
+from qodalis_cli import (
     CliCommandParameterDescriptor,
     CliCommandProcessor,
     CliProcessCommand,
     ICliCommandParameterDescriptor,
     get_positional_text,
 )
-from ..abstractions import CliCommandExample
+from qodalis_cli import CliCommandExample
 
 SUPPORTED_ALGORITHMS = ["md5", "sha1", "sha256", "sha512"]
 

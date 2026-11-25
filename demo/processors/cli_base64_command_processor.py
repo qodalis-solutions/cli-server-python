@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import base64
 
-from ..abstractions import CliCommandProcessor, CliProcessCommand, ICliCommandProcessor, get_positional_text
-from ..abstractions import CliCommandExample
+from qodalis_cli import CliCommandProcessor, CliProcessCommand, ICliCommandProcessor, get_positional_text
+from qodalis_cli import CliCommandExample
 
 
 class _Base64EncodeProcessor(CliCommandProcessor):
