@@ -66,8 +66,8 @@ All endpoints are mounted at the plugin's built-in prefix (`/api/v1/qcli`). Exce
 | GET | `/plugins/installed` | List the installed server plugin packages (`id`, `name`, `version`, `description`) |
 | GET | `/plugins/{id}` | One plugin module by name (ignoring case); 404 `PLUGIN_NOT_FOUND` |
 | POST | `/plugins/{id}/toggle` | Enable or disable a plugin module |
-| GET | `/config` | Where changes are saved and the server's config providers the caller may see (`config:read`), each with its `storage`: `{"store": {"kind", "title", "detail", "persistent"}, "providers": [...]}` |
-| GET | `/config/{provider}` | One config provider |
+| GET | `/config` | The store providers use unless they have their own and the server's config providers the caller may see (`config:read`), each with its `storage` and, when it saves to a store, its `store`: `{"defaultStore": {"kind", "title", "detail", "persistent"}, "providers": [...]}` |
+| GET | `/config/{provider}` | One config provider, with its `store` |
 | PATCH | `/config/{provider}/{section}` | Change settings (`config:write`): `{"changes": {...}, "version": "3"}`; 400 per-key errors, 409 stale version |
 | GET | `/logs` | Retrieve buffered log entries: `?level=` (one or comma-separated `DEBUG`, `INFO`, `WARN`, `ERROR`), `search=` (message or source), `service=`, `from=`/`to=` (ISO 8601, no offset = UTC), `limit=`, `offset=`; answers `entries`, `total`, `limit`, `offset`, `hasMore`, `store` (`memory`), `persistent` (`false`), `services` (`[]`) |
 | GET | `/logs/histogram` | Buffered log entries per level in equal time columns: `?from=&to=&buckets=` (default the last 24 h in 24 columns, `buckets` clamped to 1..200) with the filters of `/logs` |
@@ -160,7 +160,8 @@ The `/config` routes serve the server's config providers (`builder.config`; see 
 [server README](https://github.com/qodalis-solutions/cli-server-python#config-providers)). The plugin adds two: `auth`
 (read-only: the dashboard's sign-in mode, the admin username, whether the default credentials or an explicit JWT
 secret are in use, the sign-in URL; never a password or the secret) and `logs` (the log buffer's `capacity`,
-100-100000, and its lowest level `minLevel`, changeable at runtime). They are registered with the server when the
+100-100000, and its lowest level `minLevel`, changeable at runtime; kept in the server's default config store, or in
+its own with `CliAdminBuilder().set_config_store(store)`). They are registered with the server when the
 plugin is built (`config_providers` on the result). On a server protected by the users plugin the routes need
 `config:read` (GET) and `config:write` (PATCH); a users session's permissions are checked too, while the static admin
 of password mode may do everything. The former `GET`/`PUT /config` and `AdminConfig.get_config_sections`/

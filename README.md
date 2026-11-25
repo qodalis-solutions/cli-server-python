@@ -586,7 +586,8 @@ show what they return. The Node and .NET servers implement the same contract and
 
 A provider has sections; a section has entries (settings). A provider is read-only unless it also implements the
 writer; each entry says whether it can change (`mutable`) and whether a change needs a restart. Writable settings are
-kept in the server's **config store** (in memory by default, a JSON file or a database) and applied again at startup.
+kept in a **config store** and applied again at startup. Every provider may have its own store, some in the app's
+JSON settings file, some in a database, some in Redis; the others use the default store (in memory unless set).
 
 ### The contract
 
@@ -663,8 +664,8 @@ result = create_cli_server(CliServerOptions(
 ))
 ```
 
-`CliStoredConfigProvider` describes settings in code: the server attaches its store and calls `apply` with every
-stored value, then after each change (with the default after a reset). `provider.value(section, key)` reads a
+`CliStoredConfigProvider` describes settings in code: the server attaches its store ([which one](#stores)) and calls
+`apply` with every stored value, then after each change (with the default after a reset). `provider.value(section, key)` reads a
 setting, secrets included, for the host's own code. Any object implementing `ICliConfigProvider` (and
 `ICliConfigWriter`) works too. Modules bring providers in `config_providers` (`builder.add_module`), plugins in their
 `config_providers` (`mount_plugin`). A provider registered under a built-in id replaces the built-in one.
@@ -675,28 +676,67 @@ setting, secrets included, for the host's own code. Any object implementing `ICl
 |---|---|---|
 | `InMemoryConfigStore` (default) | `runtime` | memory: changes apply at once and are lost on restart |
 | `JsonFileConfigStore(path)` | `file` | one JSON file, rewritten on every change (temp file + rename, mode 0600) |
+| `JsonFileConfigStore(path, section="qcli")` | `file` | a section of the app's own JSON settings file: `qcli`, or nested as `app.qcli` / `app:qcli`. The file is re-read on every write and only the section replaced: the other keys, their order, the indentation and the file's mode stay |
 | `CliDatabaseConfigStore(connection)` (databases plugin) | `database` | table `QcliConfig` (PostgreSQL, MySQL, SQL Server, SQLite), one row per section, changes in a transaction with the row locked; migration source `qcli-config` |
+| `CliRedisConfigStore(url=... \| client=...)` ([config-redis plugin](plugins/config-redis/README.md)) | `database` | one Redis hash per section (`qcli:config:<provider>:<section>`), writes checked against the version by a Lua script |
 
-A store keeps only the values changed from their defaults, with a version per section. Set it with
-`builder.set_config_store(store)` or `CliServerOptions(config=CliServerConfigOptions(store=...))`, before the server
-is created. Stored values are applied at the app's startup (its lifespan) or on the first config request, whichever
-comes first; `await result.config.ready()` applies them by hand (a store that cannot be read fails startup).
-Implement `ICliConfigStore` (`read(provider, section)`, `write(provider, section, changes, expected_version)`) to keep
-them elsewhere. Secrets are stored as given: keep the file or table readable by the server only.
+A store keeps only the values changed from their defaults, with a version per section, keyed by provider and
+section: one store can serve several providers. **Each provider can have its own store.** The store a provider gets,
+in this order:
+
+1. the host's store for its id: `CliServerConfigOptions(stores={"jobs": redis_store})` or
+   `builder.set_config_store(redis_store, "jobs")`;
+2. the provider's own: `CliStoredConfigProvider(..., store=store)` (or `provider.set_store(store)` before it is
+   registered), or `set_config_store(store)` on the builder of the plugin that adds it: `CliJobsBuilder` (`jobs`),
+   `CliUsersBuilder` (`users`), `CliPortalBuilder` (`portal`), `CliAdminBuilder` (`logs`);
+   `create_custom_config_provider(store=store)`;
+3. the default store: `CliServerConfigOptions(store=store)` or `builder.set_config_store(store)`;
+4. in memory.
+
+```python
+import os
+
+from qodalis_cli_config_redis import CliRedisConfigStore
+from qodalis_cli_databases import CliDatabaseConfigStore, postgres_connection
+
+database = CliDatabaseConfigStore(postgres_connection(pool))
+result = create_cli_server(CliServerOptions(
+    config=CliServerConfigOptions(
+        store=JsonFileConfigStore("config/app.json", section="qcli"),  # every other provider
+        stores={
+            "jobs": CliRedisConfigStore(url=os.environ["REDIS_URL"]),
+            "users": database,
+            "billing": database,                                       # one store, two providers
+        },
+    ),
+))
+```
+
+Set the default store before the server is created; a store for an id before that provider is registered (plugins
+mounted later can still get one after the server is created; once the provider is registered, setting it raises).
+Stored values are applied at the app's startup (its lifespan) or on the first config request, whichever comes first;
+`await result.config.ready()` applies them by hand: it waits for every store (its optional `ready`, e.g. a database
+store's table) and every provider's values (a store that cannot be read fails startup). Versions and conflicts are
+per store and section. Implement `ICliConfigStore` (`read(provider, section)`, `write(provider, section, changes,
+expected_version)`, optional `describe()` and `ready`: a method returning an awaitable, or a future) to keep them
+elsewhere. Secrets are stored as given: keep the file, table or keys readable by the server only.
 
 Every store says where it keeps the settings with `describe()`: a `CliConfigStoreDescription`
-(`{kind, title, detail, persistent}`), shown as `store` by `GET /api/v1/qcli/config`, on the dashboard's Config page
-and on the first line of `config list`. `detail` names the file (relative to the working directory, or its name only
-outside it) or the dialect, database name and table (`PostgreSQL database qcli, table QcliConfig`), never credentials
-or a connection string. A custom store without `describe()` is shown as
+(`{kind, title, detail, persistent}`, `kind` `memory`, `file`, `database`, `redis` or `custom`), shown as each stored
+provider's `store` and as `defaultStore` by `GET /api/v1/qcli/config`, on the dashboard's Config page and by
+`config list`. `detail` names the file (relative to the working directory, or its name only outside it) and its
+section, the dialect, database name and table (`PostgreSQL database qcli, table QcliConfig`), or the Redis host, port,
+database and key prefix, never credentials or a connection string. A custom store without `describe()` is shown as
 `{"kind": "custom", "title": "Custom store", "detail": "<class name>"}`, persistent unless its `source` is `runtime`
-(`describe_cli_config_store`, `describe_cli_config_store_line`).
+(`describe_cli_config_store`, `describe_cli_config_store_line`, `describe_cli_config_store_name`).
 
-| Store | `describe()` | `config list` |
+| Store | `describe()` | In `config list` |
 |---|---|---|
-| `InMemoryConfigStore` | `{"kind": "memory", "title": "In memory", "detail": "", "persistent": false}` | `Store: In memory, changes are lost on restart` |
-| `JsonFileConfigStore` | `{"kind": "file", "title": "JSON file", "detail": "qcli-demo-config.json", "persistent": true}` | `Store: JSON file (qcli-demo-config.json), kept across restarts` |
-| `CliDatabaseConfigStore` | `{"kind": "database", "title": "Database", "detail": "PostgreSQL database qcli, table QcliConfig", "persistent": true}` | `Store: Database (PostgreSQL database qcli, table QcliConfig), kept across restarts` |
+| `InMemoryConfigStore` | `{"kind": "memory", "title": "In memory", "detail": "", "persistent": false}` | `In memory` |
+| `JsonFileConfigStore` | `{"kind": "file", "title": "JSON file", "detail": "qcli-demo-config.json", "persistent": true}` | `JSON file (qcli-demo-config.json)` |
+| `JsonFileConfigStore` with `section` | `{"kind": "file", "title": "JSON file", "detail": "config/app.json, section qcli", "persistent": true}` | `JSON file (config/app.json, section qcli)` |
+| `CliDatabaseConfigStore` | `{"kind": "database", "title": "Database", "detail": "PostgreSQL database qcli, table QcliConfig", "persistent": true}` | `Database (PostgreSQL database qcli, table QcliConfig)` |
+| `CliRedisConfigStore` | `{"kind": "redis", "title": "Redis", "detail": "cache:6379/0, prefix qcli:config", "persistent": true}` | `Redis (cache:6379/0, prefix qcli:config)` |
 
 ### Built-in providers
 
@@ -732,7 +772,7 @@ its optional `storage` attribute, a `CliConfigProviderStorage`):
 
 | `kind` | Providers | Meaning |
 |---|---|---|
-| `store` | `cors`, `mcp`, `filesystem`, `jobs`, `users`, `logs`, `portal`, `custom` (every `CliStoredConfigProvider`) | changes are saved to the config store |
+| `store` | `cors`, `mcp`, `filesystem`, `jobs`, `users`, `logs`, `portal`, `custom` (every `CliStoredConfigProvider`) | changes are saved to its config store (the provider's `store`) |
 | `runtime` | `server` | read from the running server process |
 | `options` | `host` (sources `Server options`, `Environment variables`), `auth` | the options the server or plugin was created with |
 | `environment`, `configuration` | (the .NET server's `host` lists its IConfiguration sources) | environment variables; the host's configuration |
@@ -746,14 +786,15 @@ plugin the route also needs `config:read` for GET and `config:write` for PATCH).
 
 | Method | Path | Answer |
 |---|---|---|
-| GET | `/api/v1/qcli/config` | `{"store": {...}, "providers": [provider, ...]}`: where changes are saved, and the providers the caller may see, by `order` then id |
-| GET | `/api/v1/qcli/config/{provider}` | one provider |
+| GET | `/api/v1/qcli/config` | `{"defaultStore": {...}, "providers": [provider, ...]}`: the store providers use unless they have their own, and the providers the caller may see, by `order` then id, each stored one with its `store` |
+| GET | `/api/v1/qcli/config/{provider}` | one provider (with its `store`) |
 | PATCH | `/api/v1/qcli/config/{provider}/{section}` | body `{"changes": {"key": value}, "version": "3"}` (`version` optional) |
 
 ```json
 {
   "id": "cors", "title": "CORS", "description": "...", "order": 30, "writable": true,
-  "storage": {"kind": "store", "description": "Changes are saved to the config store", "sources": []},
+  "storage": {"kind": "store", "description": "Changes are saved to its config store", "sources": []},
+  "store": {"kind": "database", "title": "Database", "detail": "PostgreSQL database qcli, table QcliConfig", "persistent": true},
   "sections": [{
     "id": "cors", "title": "CORS", "description": "", "mutable": true, "version": "2", "allowCustomKeys": false,
     "entries": [{
@@ -769,10 +810,12 @@ Every entry has all of `key`, `label`, `description`, `type`, `value`, `default`
 `requiresRestart` and `sensitive`; `validation` and `editor` when set; `isSet` for sensitive entries, whose `value`
 and `default` are always `null`. A section's `version` is `null` when it is read-only. A provider's `writable` is true
 when it implements the writer and the caller holds `config:write`; its `storage` says where its settings come from
-(`sources` always present, `[]` when none). `store` is in the list only, not in `GET /config/{provider}`:
+(`sources` always present, `[]` when none). A provider that saves to a store (`storage.kind` `store`) has its
+`store` (`{kind, title, detail, persistent}`), in the list and in `GET /config/{provider}`; other providers have none.
+`defaultStore` is in the list only:
 
 ```json
-{"store": {"kind": "database", "title": "Database", "detail": "PostgreSQL database qcli, table QcliConfig", "persistent": true}, "providers": [...]}
+{"defaultStore": {"kind": "file", "title": "JSON file", "detail": "config/app.json, section qcli", "persistent": true}, "providers": [...]}
 ```
 
 | PATCH answer | Body |
@@ -790,10 +833,12 @@ when it implements the writer and the caller holds `config:write`; its `storage`
 - **Audit**: every change writes `config.update` to the server's audit log (the audit plugin, mounted by the users
   plugin), or to `builder.set_config_audit_store(store)`: `username`/`actor` the caller (`anonymous` without one),
   `target` `config:<provider>.<section>`, `details` `<provider>.<section>: key1, key2`, `properties`
-  `{provider, section, version, via, changes: [{key, old, new}]}` with secrets as `***` (`null` when unset).
-- **Event**: `config:changed` `{provider, section, keys, version, requiresRestart, user}`, audience `config:read`,
-  never values.
-- **MCP** (when `mcp` is on): `config_list` (the store, providers with their `storage`, and section summaries) and `config_get` (`provider`, `section?`, `key?`), read-only, need
+  `{provider, section, version, store, via, changes: [{key, old, new}]}` with secrets as `***` (`null` when unset);
+  `store` is the kind of store written (`file`, `database`, `redis`, ...), never its detail, and absent for a provider
+  that saves itself.
+- **Event**: `config:changed` `{provider, section, keys, version, requiresRestart, store, user}` (`store`: the kind
+  written), audience `config:read`, never values.
+- **MCP** (when `mcp` is on): `config_list` (the default store, providers with their `storage` and `store`, and section summaries) and `config_get` (`provider`, `section?`, `key?`), read-only, need
   `config:read`; `config_set` (`provider`, `section`, `changes`, `version?`) needs `config:write` and is not
   read-only, so the MCP client's `QCLI_READ_ONLY` and the endpoint's own `CliMcpOptions(read_only=True)` hide and
   refuse it. Errors come back as `isError` with `{error, errors?, version?}`. The `config` command is not also served
@@ -801,8 +846,20 @@ when it implements the writer and the caller holds `config:write`; its `storage`
 - **Terminal**: `config list`, `config get <provider>[.<section>[.<key>]]`,
   `config set <provider>.<section>.<key> <value> [--expected-version v]` (lists as `a,b` or a JSON array) and
   `config reset <provider>.<section>.<key>`; `config:read`, set and reset `config:write`. Secrets are accepted, never
-  printed. `config list` starts with the store (`Store: JSON file (qcli-demo-config.json), kept across restarts`) and
-  shows read-only providers' sources (`host  Host  (read-only; from Server options, Environment variables)`).
+  printed. `config list` starts with the default store, then the providers (each stored one with its store) and their
+  sections, and shows read-only providers' sources:
+
+```text
+Default store: JSON file (config/app.json, section qcli), kept across restarts
+server  Server  (read-only)
+host  Host  (read-only; from Server options, Environment variables)
+cors  CORS  · JSON file (config/app.json, section qcli)
+  cors               2 setting(s)  version 1
+jobs  Jobs  · Redis (cache:6379/0, prefix qcli:config)
+  history            5 setting(s)  version 3
+custom  Custom  · Database (PostgreSQL database qcli, table QcliConfig)
+  custom             0 setting(s)  version 0
+```
 
 ## Use with your app's sign-in
 
@@ -1173,6 +1230,7 @@ Each plugin is a separate package under [`plugins/`](plugins) with its own READM
 | [`qodalis-cli-server-plugin-audit`](plugins/audit/README.md) | `qodalis_cli_audit` | Audit log and its API (`/api/v1/qcli/audit`), in memory or a store of your own |
 | [`qodalis-cli-server-plugin-admin`](plugins/admin/README.md) | `qodalis_cli_admin` | Admin dashboard at `/qcli/admin` and its API (status, configuration through the [config providers](#config-providers), logs) and the `admin` command |
 | [`qodalis-cli-server-plugin-jobs`](plugins/jobs/README.md) | `qodalis_cli_jobs` | Scheduled background jobs with history and logs; per-job `max_concurrent_runs` and overlap policy (skip, queue, cancel), retries holding their slot ([Concurrency](plugins/jobs/README.md#concurrency)) |
+| [`qodalis-cli-server-plugin-config-redis`](plugins/config-redis/README.md) | `qodalis_cli_config_redis` | `CliRedisConfigStore`: a [config provider](#config-providers)'s settings in Redis, one hash per section, versioned writes checked atomically |
 | [`qodalis-cli-server-plugin-databases`](plugins/databases/README.md) | `qodalis_cli_databases` | The server's PostgreSQL, MySQL, SQL Server and SQLite databases: stats (size, connections, load, largest tables) and versioned schema migrations under a lock with history and runs; the API (`/api/v1/qcli/databases`), terminal `databases`, MCP tools and the dashboard's Databases page |
 | [`qodalis-cli-server-plugin-filesystem`](plugins/filesystem/README.md) | `qodalis_cli_filesystem` | `IFileStorageProvider` with in-memory and OS providers (installed with the server) |
 | [`...-filesystem-json`](plugins/filesystem-json/README.md), [`-sqlite`](plugins/filesystem-sqlite/README.md), [`-s3`](plugins/filesystem-s3/README.md) | `qodalis_cli_filesystem_json`, `_sqlite`, `_s3` | Persistent file storage |
@@ -1274,9 +1332,9 @@ Every package in this repository (`qodalis-cli-server`, `qodalis-cli-server-abst
 python -m venv .venv && source .venv/bin/activate
 pip install -e packages/abstractions/ -e plugins/filesystem/ -e plugins/filesystem-json/ \
     -e plugins/databases/ -e plugins/filesystem-sqlite/ -e plugins/filesystem-s3/ -e plugins/weather/ \
-    -e plugins/jobs/ -e plugins/audit/ -e plugins/users/ -e plugins/admin/
+    -e plugins/jobs/ -e plugins/audit/ -e plugins/users/ -e plugins/admin/ -e plugins/config-redis/
 pip install -e ".[test]"
-pytest                                   # the suite CI runs (tests/)
+pytest tests/ plugins/aws/tests/ plugins/config-redis/tests/   # the suite CI runs (QCLI_TEST_REDIS adds a real Redis)
 ```
 
 Run the demo server (port 8048, `root` / `admin`):
