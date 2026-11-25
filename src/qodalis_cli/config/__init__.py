@@ -1,7 +1,12 @@
 """Config providers: registry, service, built-in providers and the ``config`` command."""
 
 from .cli_config_registry import DEFAULT_CONFIG_PROVIDER_ORDER, CliConfigRegistry
-from .cli_config_service import CliConfigService, to_cli_config_entry_view, to_cli_config_section_view
+from .cli_config_service import (
+    CliConfigService,
+    cli_config_provider_storage_of,
+    to_cli_config_entry_view,
+    to_cli_config_section_view,
+)
 from .config_command import CliConfigCommandProcessor, config_context_of_auth, format_config_value
 from .providers.host_config_provider import (
     DEFAULT_ENVIRONMENT_ALLOW,
@@ -25,6 +30,7 @@ __all__ = [
     "CliConfigService",
     "to_cli_config_entry_view",
     "to_cli_config_section_view",
+    "cli_config_provider_storage_of",
     "CliConfigCommandProcessor",
     "config_context_of_auth",
     "format_config_value",

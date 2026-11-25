@@ -19,10 +19,13 @@ from qodalis_cli_server_abstractions.config import (
     CliConfigError,
     CliConfigErrors,
     CliConfigPermissions,
+    CliConfigProviderStorage,
     CliConfigSection,
+    CliConfigStoreDescription,
     CliConfigValidationError,
     ICliConfigService,
     clone_cli_config_value,
+    describe_cli_config_store,
     is_cli_config_writer,
     maybe_await,
     validate_cli_config_value,
@@ -85,6 +88,27 @@ def to_cli_config_section_view(section: Any, writable: bool) -> dict[str, Any]:
         "version": (s.version if s.version is not None else None) if mutable else None,
         "allowCustomKeys": allow_custom_keys,
         "entries": entries,
+    }
+
+
+def cli_config_provider_storage_of(provider: Any) -> dict[str, Any]:
+    """A provider's ``storage`` as the API returns it: its own, else ``custom`` (saved / read by the provider)."""
+    own = getattr(provider, "storage", None)
+    if isinstance(own, Mapping):
+        own = CliConfigProviderStorage(
+            kind=own.get("kind"), description=own.get("description") or "", sources=own.get("sources") or [],
+        ) if isinstance(own.get("kind"), str) else None
+    if isinstance(own, CliConfigProviderStorage) and isinstance(own.kind, str):
+        sources = own.sources if isinstance(own.sources, (list, tuple)) else []
+        return {
+            "kind": own.kind,
+            "description": own.description or "",
+            "sources": [s for s in sources if isinstance(s, str)],
+        }
+    return {
+        "kind": "custom",
+        "description": "Saved by the provider" if is_cli_config_writer(provider) else "Read by the provider",
+        "sources": [],
     }
 
 
@@ -164,8 +188,13 @@ class CliConfigService(ICliConfigService):
             "description": getattr(provider, "description", None) or "",
             "order": _order(provider),
             "writable": writer and context.has_permission(CliConfigPermissions.WRITE),
+            "storage": cli_config_provider_storage_of(provider),
             "sections": [to_cli_config_section_view(s, writer) for s in sections],
         }
+
+    def describe_store(self) -> CliConfigStoreDescription:
+        """Where writable settings are saved: the store's own description (``custom`` when it has none)."""
+        return describe_cli_config_store(self.registry.store)
 
     async def list(self, context: CliConfigContext) -> list[dict[str, Any]]:
         self._require_permission(context, CliConfigPermissions.READ)

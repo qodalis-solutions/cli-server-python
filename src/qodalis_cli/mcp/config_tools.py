@@ -41,12 +41,13 @@ class ConfigMcpToolProvider:
         async def config_list(args: dict[str, Any], ctx: McpCallContext) -> McpToolResult:
             async def run() -> McpToolResult:
                 providers = await service.list(config_context_of_auth(ctx.auth, "mcp"))
-                return _json({"providers": [
+                return _json({"store": service.describe_store().to_dict(), "providers": [
                     {
                         "id": p["id"],
                         "title": p["title"],
                         "description": p["description"],
                         "writable": p["writable"],
+                        "storage": p.get("storage"),
                         "sections": [
                             {
                                 "id": s["id"], "title": s["title"], "mutable": s["mutable"],
@@ -92,8 +93,8 @@ class ConfigMcpToolProvider:
             McpTool(
                 name="config_list",
                 description=(
-                    "The server's config providers and their sections (ids, titles, whether writable, versions); "
-                    "read a section with config_get"
+                    "Where config changes are saved (store), the server's config providers (where each reads its "
+                    "settings from) and their sections (ids, titles, whether writable, versions); read a section with config_get"
                 ),
                 input_schema=object_schema(),
                 call=config_list,
