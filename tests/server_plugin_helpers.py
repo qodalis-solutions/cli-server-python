@@ -129,6 +129,10 @@ class FakePip:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
         self.fail: Optional[str] = None
+        #: The requirements file of the last hash-checked install.
+        self.requirements: Optional[str] = None
+        #: Extra distributions a dependency install brings (``name``), as pip resolving a tree would.
+        self.brings: list[str] = []
 
     async def __call__(self, args: list[str]) -> PipRunResult:
         self.calls.append(list(args))
@@ -141,13 +145,23 @@ class FakePip:
             with zipfile.ZipFile(wheels[0]) as z:
                 z.extractall(target)
             return PipRunResult(0, "", "")
-        for req in [a for a in args[args.index("--target") + 2:] if not a.startswith("-") and a != ":all:"]:
+        reqs = [a for a in args[args.index("--target") + 2:] if not a.startswith("-") and a != ":all:"]
+        if "-r" in args:
+            path = args[args.index("-r") + 1]
+            with open(path, encoding="utf-8") as f:
+                self.requirements = f.read()
+            reqs = [line.split(" ")[0].replace("==", ">=") for line in self.requirements.splitlines() if line.strip()]
+        for req in reqs:
             dist = req.split(">")[0].split("=")[0].split("<")[0].split("[")[0].strip().replace("-", "_")
             os.makedirs(os.path.join(target, f"{dist}-9.9.9.dist-info"), exist_ok=True)
             with open(os.path.join(target, f"{dist}-9.9.9.dist-info", "METADATA"), "w") as f:
                 f.write(f"Metadata-Version: 2.1\nName: {dist}\nVersion: 9.9.9\n")
             with open(os.path.join(target, f"{dist}-9.9.9.dist-info", "RECORD"), "w") as f:
                 f.write(f"{dist}-9.9.9.dist-info/METADATA,,\n")
+        for dist in self.brings:
+            os.makedirs(os.path.join(target, f"{dist}-9.9.9.dist-info"), exist_ok=True)
+            with open(os.path.join(target, f"{dist}-9.9.9.dist-info", "RECORD"), "w") as f:
+                f.write(f"{dist}-9.9.9.dist-info/RECORD,,\n")
         return PipRunResult(0, "", "")
 
 
@@ -165,7 +179,7 @@ class FakeServerNet:
         self, name: str = "hello", *, versions: Optional[list[str]] = None, package: str = HELLO_PACKAGE,
         verified: bool = True, platforms: Optional[list[str]] = None, server_range: Optional[str] = ">=1.0.0b7",
         wheel: Optional[Any] = None, marketplace_integrity: Any = "same", auto_install: Optional[bool] = None,
-        needs_configuration: Optional[list[str]] = None,
+        needs_configuration: Optional[list[str]] = None, dependencies: Optional[list[dict[str, Any]]] = None,
     ) -> None:
         """A plugin with a Python package (and others listed); each version's wheel on PyPI (``wheel(version)``)."""
         versions = versions or [HELLO_VERSION]
@@ -197,6 +211,8 @@ class FakeServerNet:
                             record["autoInstallReason"] = "needs the host's code"
                     if needs_configuration:
                         record["needsConfiguration"] = needs_configuration
+                    if dependencies is not None:
+                        record["dependencies"] = dependencies
                 item["versions"].append(record)
         self.plugins[name] = item
 
