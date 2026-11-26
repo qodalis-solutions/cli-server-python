@@ -27,6 +27,9 @@ dependencies = [
     "qodalis-cli-server-abstractions",
 ]
 
+[project.entry-points."qodalis_cli.plugins"]
+data-explorer-sql = "qodalis_cli_data_explorer_sql.plugin:create_plugin"
+
 [project.urls]
 Homepage = "https://github.com/qodalis-solutions/cli-server-python"
 Repository = "https://github.com/qodalis-solutions/cli-server-python"

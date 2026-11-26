@@ -28,6 +28,9 @@ dependencies = [
     "elasticsearch[async]>=8.16.0",
 ]
 
+[project.entry-points."qodalis_cli.plugins"]
+data-explorer-elasticsearch = "qodalis_cli_data_explorer_elasticsearch.plugin:create_plugin"
+
 [project.urls]
 Homepage = "https://github.com/qodalis-solutions/cli-server-python"
 Repository = "https://github.com/qodalis-solutions/cli-server-python"
