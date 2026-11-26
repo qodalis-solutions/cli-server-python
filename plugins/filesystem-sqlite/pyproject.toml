@@ -29,6 +29,9 @@ dependencies = [
     "qodalis-cli-server-plugin-databases>=1.0.0b29",
 ]
 
+[project.entry-points."qodalis_cli.plugins"]
+filesystem-sqlite = "qodalis_cli_filesystem_sqlite.plugin:create_plugin"
+
 [project.urls]
 Homepage = "https://github.com/qodalis-solutions/cli-server-python"
 Repository = "https://github.com/qodalis-solutions/cli-server-python"

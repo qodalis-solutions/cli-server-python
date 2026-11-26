@@ -24,6 +24,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 
+[project.entry-points."qodalis_cli.plugins"]
+filesystem = "qodalis_cli_filesystem.plugin:create_plugin"
+
 [project.urls]
 Homepage = "https://github.com/qodalis-solutions/cli-server-python"
 Repository = "https://github.com/qodalis-solutions/cli-server-python"
