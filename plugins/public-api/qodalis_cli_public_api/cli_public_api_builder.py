@@ -353,7 +353,12 @@ class CliPublicApiPlugin:
         app = server.app
         install_guard_error_handler(app)
         if not any(getattr(m, "cls", None) is RateLimitHeadersMiddleware for m in app.user_middleware):
-            app.add_middleware(RateLimitHeadersMiddleware)
+            # Not ``add_middleware``: a plugin installed from the marketplace is mounted after the app started,
+            # which Starlette refuses; the stack is built again on the next request (as the users plugin does)
+            from starlette.middleware import Middleware
+
+            app.user_middleware.insert(0, Middleware(RateLimitHeadersMiddleware))
+            app.middleware_stack = None
 
 
 class CliPublicApiBuilder:
