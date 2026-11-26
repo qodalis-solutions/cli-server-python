@@ -134,6 +134,20 @@ def _number(value: float) -> Union[int, float]:
 _UNSET: Any = object()
 
 
+#: Who decided a setting's value (``CliConfigEntry.origin``): the host's code, a saved setting, or the default.
+CLI_CONFIG_ORIGINS = ("code", "setting", "default")
+
+
+def cli_config_origin_of(source: Optional[str]) -> str:
+    """The origin of an entry that does not state one, from its ``source``: ``default`` -> ``default``, ``code`` and
+    ``environment`` -> ``code``, a store's (``runtime``, ``file``, ``database``) -> ``setting``."""
+    if not source or source == "default":
+        return "default"
+    if source in ("code", "environment"):
+        return "code"
+    return "setting"
+
+
 @dataclass
 class CliConfigEntry:
     """One setting, as a provider describes it.  The server fills the
@@ -164,6 +178,9 @@ class CliConfigEntry:
     editor: Optional[str] = None
     #: Must have a value for its owner to work (a server plugin without it loads as ``needs-configuration``).
     required: bool = False
+    #: Who decided the value: ``code`` (the host's code options, an environment variable), ``setting`` (saved) or
+    #: ``default``; from ``source`` when not given (:func:`cli_config_origin_of`).
+    origin: Optional[str] = None
 
     @staticmethod
     def of(value: Any) -> "CliConfigEntry":
@@ -186,6 +203,7 @@ class CliConfigEntry:
                 validation=CliConfigValidation.of(value.get("validation")),
                 editor=value.get("editor"),
                 required=bool(value.get("required", False)),
+                origin=value.get("origin"),
             )
         raise TypeError(f"invalid config entry: {value!r}")
 
