@@ -122,6 +122,7 @@ class TestReading:
             value=30,
             default=30,
             source="default",
+            origin="default",
             mutable=True,
             requires_restart=False,
             sensitive=False,
@@ -129,6 +130,7 @@ class TestReading:
         )
         assert entry(invoices, "dueDays").validation.to_dict() == {"min": 1, "max": 90}
         assert entry(invoices, "currency").source == "environment"
+        assert entry(invoices, "currency").origin == "code"
         region = entry(invoices, "region")
         assert (region.value, region.mutable, region.requires_restart) == ("eu-1", False, True)
         # A section without a mutable setting has no version

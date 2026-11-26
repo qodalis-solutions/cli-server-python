@@ -302,6 +302,15 @@ class CliServerResult:
             if path not in self.public_paths:
                 self.public_paths.append(path)
 
+        # What other plugins build on, however it was added: the sections of the portal (docs, public-api) and the
+        # users plugin (public-api)
+        services = self.builder.plugin_services
+        section = getattr(plugin, "portal_section", None)
+        if isinstance(section, dict) and isinstance(section.get("kind"), str) and not services.has(f"portal.section.{section['kind']}"):
+            services.set(f"portal.section.{section['kind']}", plugin)
+        if callable(getattr(plugin, "require_host_token", None)) and not services.has("users"):
+            services.set("users", plugin)
+
         # Permissions of the plugin's routes, under its own prefix
         for rule in getattr(plugin, "route_permissions", None) or []:
             self.route_permissions.append(_checked_route_permission(rule, prefix))

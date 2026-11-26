@@ -197,17 +197,17 @@ def test_install_creates_the_plugins_section_with_the_versions_entries_and_their
             "entries": [
                 {
                     "key": "refreshSeconds", "label": "Refresh every", "description": "Seconds between two refreshes",
-                    "type": "number", "value": 30, "default": 30, "source": "default", "mutable": True,
+                    "type": "number", "value": 30, "default": 30, "source": "default", "origin": "default", "mutable": True,
                     "requiresRestart": False, "sensitive": False, "validation": {"min": 5, "max": 3600},
                 },
                 {
                     "key": "columns", "label": "columns", "description": "", "type": "string[]",
-                    "value": ["name", "status"], "default": ["name", "status"], "source": "default", "mutable": True,
+                    "value": ["name", "status"], "default": ["name", "status"], "source": "default", "origin": "default", "mutable": True,
                     "requiresRestart": False, "sensitive": False,
                 },
                 {
                     "key": "mode", "label": "mode", "description": "", "type": "enum", "value": "compact",
-                    "default": "compact", "source": "default", "mutable": True, "requiresRestart": False,
+                    "default": "compact", "source": "default", "origin": "default", "mutable": True, "requiresRestart": False,
                     "sensitive": False, "validation": {"options": ["compact", "full"]},
                 },
             ],
