@@ -91,6 +91,38 @@ class CliConfigRegistry:
         """The store providers use unless the host set one for their id or they have their own (in memory unless set)."""
         return self._default_store if self._default_store is not None else self._memory_store
 
+    def replace_default_store(self, store: ICliConfigStore) -> None:
+        """Replaces the default store once the server started (a config store plugin, ``CLI_PLUGIN_LOAD_ORDER
+        .CONFIG_STORE``): the providers using the default store move to the new one, their values read from it by the
+        next :meth:`ready`; those registered later start there."""
+        if not _is_config_store(store):
+            raise ValueError("invalid config store: it needs read and write")
+        previous = self.default_store
+        self._default_store = store
+        for provider in self._providers:
+            if self._attached.get(provider.id) is previous:
+                self._attached[provider.id] = store
+                if provider not in self._pending:
+                    self._pending.append(provider)
+
+    def move_provider(self, provider_id: str, store: ICliConfigStore) -> None:
+        """Moves a registered provider to ``store`` (as the host's store for its id); its values are loaded from there
+        by the next :meth:`ready`.  The plugins' loader parks the settings of plugins loaded before a config store
+        plugin and moves them once it knows the store."""
+        provider = self.find(provider_id)
+        if provider is None or not _is_store_attachable(provider):
+            return
+        self._stores[provider_id] = store
+        if self._started:
+            self._attached[provider_id] = store
+            if provider not in self._pending:
+                self._pending.append(provider)
+
+    @property
+    def has_default_store(self) -> bool:
+        """True when the host (or a config store plugin) set the default store."""
+        return self._default_store is not None
+
     @property
     def provider_stores(self) -> dict[str, ICliConfigStore]:
         """The stores the host set per provider id (``set_store(store, id)``)."""

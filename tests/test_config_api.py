@@ -150,6 +150,7 @@ class TestConfigApiOpenServer:
             "value": 30,
             "default": 30,
             "source": "default",
+            "origin": "default",
             "mutable": True,
             "requiresRestart": False,
             "sensitive": False,

@@ -31,8 +31,15 @@ class CliInstalledPlugin:
     description: str | None = None
     #: One emoji or an image URL; ``None`` when the package has none.
     icon: str | None = None
-    #: ``marketplace`` for a server plugin installed at runtime; ``None`` for the host's own.
+    #: ``marketplace`` for a server plugin installed at runtime, ``code`` for one the host added through its entry
+    #: (``builder.add_plugin``); ``None`` for the host's own.
     source: str | None = None
+    #: ``needs-configuration`` when its required settings have no value (it registered nothing).
+    status: str | None = None
+    #: Those settings (``section.key``) or the reason.
+    missing: tuple[str, ...] | None = None
+    #: The id of its settings provider (``config get <id>``).
+    settings: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -44,6 +51,12 @@ class CliInstalledPlugin:
         }
         if self.source:
             out["source"] = self.source
+        if self.status:
+            out["status"] = self.status
+        if self.missing:
+            out["missing"] = list(self.missing)
+        if self.settings:
+            out["settings"] = self.settings
         return out
 
     @classmethod

@@ -202,6 +202,7 @@ class TestViews:
             "value": "v",
             "default": None,
             "source": "default",
+            "origin": "default",
             "mutable": False,
             "requiresRestart": False,
             "sensitive": False,

@@ -49,6 +49,27 @@ def _permission_name(entry: Any) -> Any:
     return entry.get("name") if isinstance(entry, Mapping) else getattr(entry, "name", None)
 
 
+#: The service the data explorer plugin's entry sets: rules every source added after it follows.
+DATA_EXPLORER_POLICY_SERVICE = "data-explorer.policy"
+
+
+def apply_data_explorer_policy(options: Any, policy: Any) -> Any:
+    """A source's options under the data explorer's rules (``{force_read_only, max_rows, rate_limit}``)."""
+    if not isinstance(policy, dict):
+        return options
+    from dataclasses import replace as _replace
+
+    changes: dict[str, Any] = {}
+    if policy.get("force_read_only"):
+        changes["read_only"] = True
+    max_rows = policy.get("max_rows")
+    if isinstance(max_rows, int) and max_rows > 0:
+        changes["max_rows"] = min(options.max_rows or max_rows, max_rows)
+    if policy.get("rate_limit") is not None and getattr(options, "rate_limit", None) is None:
+        changes["rate_limit"] = policy["rate_limit"]
+    return _replace(options, **changes) if changes else options
+
+
 class CliBuilder:
     """Fluent builder for registering command processors, modules, and services."""
 
@@ -150,16 +171,32 @@ class CliBuilder:
         where they are kept, and what this process loaded (``CliServerOptions(data_dir=..., server_plugins=...)``)."""
         return self._server_plugins
 
-    def add_plugin(self, entry: Any, options: dict[str, Any] | None = None, name: str | None = None) -> CliBuilder:
-        """Adds a server plugin in code through its marketplace entry (``create_plugin(context)``): it loads at the
-        app's startup in its declared order, its settings in the dashboard as when installed from there, ``options``
-        as their defaults (source ``code``; saved settings override them)::
+    def add_plugin(self, entry: Any, options: dict[str, Any] | None = None) -> CliBuilder:
+        """Adds a server plugin in code through its entry (the module of its ``create_plugin(context)``, or the
+        function): it loads at the app's startup in its declared order, its settings on the dashboard as when installed
+        from there, ``options`` as their defaults (origin ``code``; saved settings override them).  Options that are
+        not settings (a pool, a store, a function) reach the plugin as ``context.options``::
 
-            from qodalis_cli_weather.plugin import create_plugin as weather
+            from qodalis_cli_weather import plugin as weather
             builder.add_plugin(weather, {"defaultLocation": "Paris"})
         """
-        self._server_plugins.add(entry, options, name)
+        self._server_plugins.add(entry, options)
         return self
+
+    @property
+    def plugin_services(self) -> Any:
+        """What plugins share with each other (``context.services``): the users plugin, ..."""
+        return self._server_plugins.services
+
+    def update_installed_plugin(self, plugin_id: str, **changes: Any) -> bool:
+        """Changes fields of a listed plugin (``status``, ``missing``, ``settings``); false when it is not listed."""
+        from dataclasses import replace as _replace
+
+        for i, p in enumerate(self._installed_plugins):
+            if p.id == plugin_id:
+                self._installed_plugins[i] = _replace(p, **changes)
+                return True
+        return False
 
     def use_server_plugins(self, server_plugins: Any) -> CliBuilder:
         """Set by ``create_cli_server`` from its ``data_dir`` and ``server_plugins`` options."""
@@ -290,6 +327,12 @@ class CliBuilder:
         self.config_registry.set_store(store, provider_id)
         return self
 
+    def replace_config_store(self, store: Any) -> CliBuilder:
+        """Replaces the default config store after the server was created (a config store plugin loaded at startup,
+        e.g. config-redis): the providers using the default store move to ``store``."""
+        self.config_registry.replace_default_store(store)
+        return self
+
     def set_config_audit_store(self, store: Any) -> CliBuilder:
         """Write config changes (``config.update``) to this audit log
         (``IAuditStore``).  By default they go to the server's audit log (the
@@ -355,9 +398,10 @@ class CliBuilder:
         provider: IDataExplorerProvider,
         options: DataExplorerProviderOptions,
     ) -> CliBuilder:
-        """Register a data explorer provider with its options."""
+        """Register a data explorer provider with its options (the data explorer plugin's rules applied, when it is
+        loaded: ``data-explorer.policy``)."""
         self._data_explorer_registrations.append(
-            _DataExplorerRegistration(provider, options)
+            _DataExplorerRegistration(provider, apply_data_explorer_policy(options, self.plugin_services.get(DATA_EXPLORER_POLICY_SERVICE)))
         )
         self.add_installed_plugin("qodalis-cli-server-plugin-data-explorer")
         self.add_installed_plugin(provider)
