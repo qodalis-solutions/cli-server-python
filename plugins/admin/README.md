@@ -511,7 +511,7 @@ catalog, group Server). Errors are `{ "error": "..." }`.
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/` | `{ marketplaceUrl, install, platform: "python", serverVersion, enabled }` |
-| GET | `/plugins?query=&page=&pageSize=` | The marketplace's server plugins (asked with `kind=server&platform=python&serverVersion=`), each with `platform` (`{ package, latest, installed, compatible, reason? }`), `otherPlatforms`, `autoInstall`, `needsConfiguration`, `updateAvailable`, `allowed`, `blockedReason` |
+| GET | `/plugins?query=&page=&pageSize=&platform=` | The marketplace's server plugins: `platform` `this` (default: asked with `kind=server&platform=python&serverVersion=`), `all` (`kind=server`, every server plugin), `node`, `python` or `dotnet` (passed on as `platform=`), 400 for anything else; a plugin without a Python package is listed with `platform: null`, `allowed: false`, `blockedReason: "not available for python"`. Each with `platform` (`{ package, latest, installed, compatible, reason? }`), `otherPlatforms`, `autoInstall`, `needsConfiguration`, `updateAvailable`, `allowed`, `blockedReason` |
 | GET | `/plugins/{name}` | One plugin with its platforms and versions (Python versions with `allowed` and `blockedReason`) |
 | GET | `/installed` | The installed plugins: `status` `loaded`, `pending` (runs after a restart), `needs-configuration` (`missing`), `failed` (`error`), `skipped` or `removed` (still running), `loadedVersion` (the version this process runs, also while it waits for its settings), `settings` (its settings provider, `config get <id>`, once it registered one), `updateAvailable` |
 | POST | `/installed` | `{ name, version? }`: 202 with the plugin, `restartRequired` and `needsConfiguration` (its settings to fill in after the restart) |
@@ -744,7 +744,8 @@ weather  qodalis-cli-server-plugin-weather  1.0.0b31  pending restart  2026-11-2
 ```
 
 `admin plugins search <query>` lists the plugin, this server's package, its version, platforms, publisher and whether
-it can be installed (`blocked: <reason>`, or the settings to set after the install); `update <name>[@version]`,
+it can be installed (`blocked: <reason>`, or the settings to set after the install); `--platform this|all|node|python|dotnet`
+lists another platform's plugins (default `this`); `update <name>[@version]`,
 `remove <name>`. Lists take `--json`.
 
 ## License

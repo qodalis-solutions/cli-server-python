@@ -60,6 +60,9 @@ logger = logging.getLogger("qcli-admin")
 SERVER_PLUGIN_PLATFORM = "python"
 #: The platforms a server plugin may have a package for.
 SERVER_PLUGIN_PLATFORMS = ("node", "python", "dotnet")
+#: What ``search`` lists: ``this`` (default) this server's platform, ``all`` every server plugin, or one platform's
+#: (the marketplace's ``platform`` filter).
+SERVER_PLUGIN_PLATFORM_FILTERS = ("this", "all", *SERVER_PLUGIN_PLATFORMS)
 PLUGINS_INSTALL_PERMISSION = CLI_PLUGINS_INSTALL_PERMISSION
 #: The package index wheels and their hashes come from.
 DEFAULT_PYPI_URL = "https://pypi.org"
@@ -252,6 +255,16 @@ def _listed_versions(item: Mapping[str, Any], p: Mapping[str, Any]) -> list[dict
     listed = [v for v in versions if _is_version(v.get("version")) and v.get("status", "listed") == "listed"]
     listed.sort(key=lambda v: _version(v["version"]), reverse=True)  # type: ignore[arg-type, return-value]
     return listed
+
+
+#: The fields of a list item that describe the platform the marketplace was asked for.
+_PLATFORM_VIEW_FIELDS = ("latest", "version", "compatible", "reason", "autoInstall", "autoInstallReason", "autoInstallDerived", "needsConfiguration")
+
+
+def _without_platform_view(item: Mapping[str, Any]) -> dict[str, Any]:
+    """A list item without the marketplace's view of the platform it was asked for (another one's, or none), so this
+    server's annotation comes from its own package only."""
+    return {k: v for k, v in item.items() if k not in _PLATFORM_VIEW_FIELDS}
 
 
 def _auto_install_of(item: Mapping[str, Any], p: Optional[Mapping[str, Any]], v: Optional[Mapping[str, Any]] = None) -> tuple[bool, Optional[str]]:
@@ -620,9 +633,23 @@ class ServerPluginMarketplace:
             qs["serverVersion"] = self.server_version
         return qs
 
-    async def search(self, query: Optional[str] = None, page: Optional[int] = None, page_size: Optional[int] = None) -> dict[str, Any]:
-        """``GET /plugins``: the marketplace's server plugins with a Python package, annotated."""
-        qs = self._platform_query()
+    async def search(
+        self, query: Optional[str] = None, page: Optional[int] = None, page_size: Optional[int] = None, platform: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """``GET /plugins``: the marketplace's server plugins, annotated for this server.
+
+        ``platform``: ``this`` (default) the ones with a Python package, checked against this server's version; ``all``
+        every server plugin; or ``node``, ``python``, ``dotnet``, passed on to the marketplace. Plugins without a Python
+        package are listed but not installable (``not available for python``), also when the marketplace ignores the
+        filter.
+        """
+        wanted = "this" if platform is None or platform == "" else platform
+        if wanted not in SERVER_PLUGIN_PLATFORM_FILTERS:
+            raise DashboardMarketplaceError(400, f"invalid platform: {wanted} ({', '.join(SERVER_PLUGIN_PLATFORM_FILTERS)})")
+        asked = SERVER_PLUGIN_PLATFORM if wanted == "this" else None if wanted == "all" else wanted
+        # The marketplace's view of an item (latest, compatible, reason, autoInstall) is this server's only when it was asked for this platform
+        own_view = asked == SERVER_PLUGIN_PLATFORM
+        qs = self._platform_query() if own_view else {"kind": CLI_SERVER_PLUGIN_KIND, **({"platform": asked} if asked else {})}
         if query and query.strip():
             qs["query"] = query.strip()[:200]
         if page is not None:
@@ -636,7 +663,7 @@ class ServerPluginMarketplace:
         items = [i for i in everything if isinstance(i, dict) and is_valid_server_plugin_name(i.get("name")) and i.get("kind") == "server"]
         filtered = len(items) == len(everything)
         return {
-            "items": [{**item, **self._annotate(item)} for item in items],
+            "items": [{**item, **self._annotate(item if own_view else _without_platform_view(item))} for item in items],
             "total": body["total"] if filtered and isinstance(body.get("total"), int) else len(items),
             "page": body["page"] if isinstance(body.get("page"), int) else (page or 1),
             "pageSize": body["pageSize"] if isinstance(body.get("pageSize"), int) else (page_size or len(items)),

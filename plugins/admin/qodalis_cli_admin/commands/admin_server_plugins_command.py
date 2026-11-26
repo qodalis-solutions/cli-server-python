@@ -22,6 +22,7 @@ from ..services.dashboard_marketplace import DashboardMarketplaceActor, Dashboar
 from ..services.server_plugin_marketplace import (
     PLUGINS_INSTALL_PERMISSION,
     SERVER_PLUGIN_PLATFORM,
+    SERVER_PLUGIN_PLATFORM_FILTERS,
     ServerPluginMarketplace,
 )
 
@@ -92,8 +93,16 @@ class AdminServerPluginsSearchProcessor(CliCommandProcessor):
     command = "search"
     description = "Searches the marketplace's server plugins: this server's package, version, platforms, whether it can be installed"
     accepts_value = True
-    parameters = [_JSON]
-    examples = [CliCommandExample("admin plugins search jobs", "Server plugins about jobs")]
+    parameters = [
+        CliCommandParameterDescriptor(
+            "platform", f"Whose plugins: {', '.join(SERVER_PLUGIN_PLATFORM_FILTERS)} (default this: the ones for this server)", False, "string",
+        ),
+        _JSON,
+    ]
+    examples = [
+        CliCommandExample("admin plugins search jobs", "Server plugins about jobs"),
+        CliCommandExample("admin plugins search --platform=all", "Every server plugin, also the ones for other platforms"),
+    ]
 
     def __init__(self, marketplace: ServerPluginMarketplace) -> None:
         self._marketplace = marketplace
@@ -101,7 +110,8 @@ class AdminServerPluginsSearchProcessor(CliCommandProcessor):
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
         async def run() -> str:
             query = " ".join(get_positionals(command))
-            result = await self._marketplace.search(query, page_size=50)
+            platform = (command.args or {}).get("platform")
+            result = await self._marketplace.search(query, page_size=50, platform=None if platform is None else str(platform))
             if _flag(command, "json"):
                 return _json(result)
             items = result["items"]

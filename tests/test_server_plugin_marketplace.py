@@ -175,6 +175,109 @@ def test_info_search_and_details_are_annotated_for_python(start):
     assert host.get("/plugins/nope").status_code == 404
 
 
+def _seed_platforms(host: Any) -> None:
+    """hello (Node and Python), nodeonly, dotnetonly (no Python package) and jobs (Python only)."""
+    host.net.platform_filter = True
+    host.net.publish(versions=["1.1.0", "1.2.0"], platforms=["node", "python", "dotnet"])
+    host.net.publish("nodeonly", platforms=["node"])
+    host.net.publish("dotnetonly", platforms=["dotnet"])
+    host.net.publish("jobs", package="qodalis-cli-server-plugin-jobs", platforms=["python"])
+
+
+def _list(host: Any, platform: Optional[str] = None) -> tuple[Any, dict[str, list[str]], dict[str, Any]]:
+    res = host.client.get(f"{BASE}/plugins", params={} if platform is None else {"platform": platform}, headers=host.auth())
+    query = parse_qs(urlsplit(host.net.calls[-1]).query, keep_blank_values=True)
+    return res, query, {i["name"]: i for i in (res.json().get("items") or [])} if res.status_code == 200 else {}
+
+
+_NOT_FOR_PYTHON = {"platform": None, "allowed": False, "blockedReason": "not available for python"}
+
+
+def _has(item: dict[str, Any], expected: dict[str, Any]) -> bool:
+    return all(item.get(k) == v for k, v in expected.items())
+
+
+def test_platform_this_the_default_lists_this_platform_with_this_server_version(start):
+    host = start()
+    _seed_platforms(host)
+    for platform in (None, "this", ""):
+        res, query, items = _list(host, platform)
+        assert res.status_code == 200
+        assert query == {"kind": ["server"], "platform": ["python"], "serverVersion": [SERVER_VERSION]}
+        assert sorted(items) == ["hello", "jobs"] and res.json()["total"] == 2
+        assert items["hello"]["platform"] == {"package": HELLO_PACKAGE, "latest": "1.2.0", "installed": None, "compatible": True}
+
+
+def test_platform_all_has_no_filter_and_lists_other_platforms_plugins_not_installable(start):
+    host = start()
+    _seed_platforms(host)
+    res, query, items = _list(host, "all")
+    assert res.status_code == 200
+    assert query == {"kind": ["server"]}
+    assert sorted(items) == ["dotnetonly", "hello", "jobs", "nodeonly"] and res.json()["total"] == 4
+    assert _has(items["nodeonly"], {**_NOT_FOR_PYTHON, "otherPlatforms": ["node"], "installed": None, "updateAvailable": False})
+    assert _has(items["dotnetonly"], _NOT_FOR_PYTHON)
+    assert items["hello"]["platform"] == {"package": HELLO_PACKAGE, "latest": "1.2.0", "installed": None, "compatible": True}
+    assert items["hello"]["otherPlatforms"] == ["node", "dotnet"] and items["hello"]["allowed"] is True
+
+
+def test_platform_node_python_dotnet_are_passed_on_and_the_annotation_stays_this_servers(start):
+    host = start()
+    _seed_platforms(host)
+    res, query, items = _list(host, "python")
+    assert query == {"kind": ["server"], "platform": ["python"], "serverVersion": [SERVER_VERSION]}
+    assert sorted(items) == ["hello", "jobs"]
+    res, query, items = _list(host, "node")
+    assert res.status_code == 200
+    assert query == {"kind": ["server"], "platform": ["node"]}
+    assert sorted(items) == ["hello", "nodeonly"] and res.json()["total"] == 2
+    assert _has(items["nodeonly"], _NOT_FOR_PYTHON)
+    assert items["hello"]["platform"]["package"] == HELLO_PACKAGE and items["hello"]["allowed"] is True
+    res, query, items = _list(host, "dotnet")
+    assert query == {"kind": ["server"], "platform": ["dotnet"]}
+    assert sorted(items) == ["dotnetonly", "hello"]
+    assert _has(items["dotnetonly"], _NOT_FOR_PYTHON)
+
+
+def test_an_older_marketplace_ignoring_the_filter_other_platforms_plugins_are_not_installable(start):
+    host = start()
+    _seed_platforms(host)
+    host.net.platform_filter = False
+    _, _, items = _list(host, "this")
+    assert sorted(items) == ["dotnetonly", "hello", "jobs", "nodeonly"]
+    assert _has(items["nodeonly"], _NOT_FOR_PYTHON)
+    _, _, items = _list(host, "node")
+    # Node's view (not available for node) is not this server's: jobs keeps its Python package
+    assert (items["jobs"]["compatible"], items["jobs"]["reason"]) == (False, "not available for node")
+    assert items["jobs"]["platform"]["package"] == "qodalis-cli-server-plugin-jobs" and items["jobs"]["platform"]["compatible"] is True
+    assert items["jobs"].get("blockedReason") != "not available for node"
+    assert _has(items["dotnetonly"], _NOT_FOR_PYTHON)
+
+
+def test_any_other_platform_is_400_asked_of_no_marketplace(start):
+    host = start()
+    _seed_platforms(host)
+    for platform in ("java", "NODE", "this,all"):
+        res = host.client.get(f"{BASE}/plugins", params={"platform": platform}, headers=host.auth())
+        assert (res.status_code, res.json()) == (400, {"error": f"invalid platform: {platform} (this, all, node, python, dotnet)"})
+    twice = host.client.get(f"{BASE}/plugins?platform=all&platform=node", headers=host.auth())
+    assert (twice.status_code, twice.json()) == (400, {"error": "invalid platform: all,node (this, all, node, python, dotnet)"})
+    assert host.net.calls == []
+
+
+def test_admin_plugins_search_platform(start):
+    host = start(anonymous_admin=True)
+    _seed_platforms(host)
+    out = host.run("admin plugins search --platform all").text
+    assert any(line.startswith("nodeonly") and "(not for python)" in line and line.rstrip().endswith("blocked: not available for python") for line in out.splitlines())
+    assert "platform" not in parse_qs(urlsplit(host.net.calls[-1]).query)
+    out = host.run("admin plugins search --platform dotnet").text
+    assert "dotnetonly" in out and "nodeonly" not in out
+    assert parse_qs(urlsplit(host.net.calls[-1]).query)["platform"] == ["dotnet"]
+    assert "nodeonly" not in host.run("admin plugins search --platform this").text
+    assert host.run("admin plugins search --platform java").text == "Error: invalid platform: java (this, all, node, python, dotnet)"
+
+
 def test_an_unreachable_marketplace_is_502(start):
     host = start()
     host.net.marketplace_down = True
