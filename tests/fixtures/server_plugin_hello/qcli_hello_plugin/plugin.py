@@ -3,6 +3,7 @@ server's own (never installed with the plugin)."""
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import qodalis_cli_server_abstractions as abstractions
@@ -31,6 +32,9 @@ async def create_plugin(context: Any) -> Any:
         CliConfigSettingDefinition(key="greeting", label="Greeting", type="string", default="Hello"),
         CliConfigSettingDefinition(key="times", type="number", default=1, validation=CliConfigValidation(min=1, max=5)),
     ])
+
+    if os.environ.get("QCLI_HELLO_NEEDS_CONFIGURATION"):  # the tests of a plugin waiting for its settings
+        return context.needs_configuration(["settings.apiKey"])
 
     def value(key: str) -> Any:
         return settings.value("settings", key)
