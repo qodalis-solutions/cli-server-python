@@ -62,6 +62,20 @@ def missing_processor_permissions(ctx: AuthContextLike | None, *processors: Any)
     return missing
 
 
+#: The ``CliServerOptions`` field letting callers who are not signed in install, update and remove plugins, change
+#: settings and restart a server without sign-in (``plugins:install``, ``dashboard:install``, ``config:write``,
+#: ``server:restart``).
+ANONYMOUS_ADMIN_OPTION = "allow_anonymous_admin"
+
+#: The refusal of those changes to a caller who is not signed in (as on Node).
+ANONYMOUS_ADMIN_REFUSAL = f"sign-in required: protect the server (users plugin) or set {ANONYMOUS_ADMIN_OPTION}=True"
+
+
+def anonymous_admin_refused(permission: str) -> str:
+    """The 403 text of a change needing ``permission`` refused to a caller who is not signed in."""
+    return f"{ANONYMOUS_ADMIN_REFUSAL} ({permission})"
+
+
 # ---------------------------------------------------------------------------
 # Origins
 # ---------------------------------------------------------------------------

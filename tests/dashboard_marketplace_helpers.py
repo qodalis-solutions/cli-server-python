@@ -172,11 +172,12 @@ class Host:
     def __init__(
         self, tmp_path: Any, *, net: Optional[FakeNet] = None, dir: Optional[str] = None, install: Optional[str] = None,
         configure: Any = None, users: Optional[dict[str, list[str]]] = None, config: Any = None,
+        anonymous_admin: bool = False,
     ) -> None:
         self.net = net or FakeNet()
         self.dir = dir or str(tmp_path / f"plugins-{id(self)}")
         os.makedirs(self.dir, exist_ok=True)
-        self.result = create_cli_server(CliServerOptions(config=config) if config is not None else None)
+        self.result = create_cli_server(CliServerOptions(config=config, allow_anonymous_admin=anonymous_admin))
         self.audit: list[Any] = []
         self.events: list[Any] = []
         if users is None:

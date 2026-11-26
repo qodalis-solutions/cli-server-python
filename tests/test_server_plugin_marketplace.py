@@ -44,12 +44,14 @@ class Host:
     def __init__(
         self, data_dir: str, *, net: Optional[FakeServerNet] = None, install: Optional[str] = None,
         users: Optional[dict[str, list[str]]] = None, server_plugins: Any = None, lifespan: bool = False,
-        trusted: Optional[list[str]] = None,
+        trusted: Optional[list[str]] = None, anonymous_admin: bool = False,
     ) -> None:
         self.net = net or FakeServerNet()
         self.pip = FakePip()
         self.data_dir = data_dir
-        self.result = create_cli_server(CliServerOptions(data_dir=data_dir, server_plugins=server_plugins))
+        self.result = create_cli_server(CliServerOptions(
+            data_dir=data_dir, server_plugins=server_plugins, allow_anonymous_admin=anonymous_admin,
+        ))
         self.audit: list[Any] = []
         self.events: list[Any] = []
         if users is None:
@@ -410,8 +412,22 @@ def test_changes_need_plugins_install(start):
     assert host.remove("hello", "viewer").status_code == 403
 
 
-def test_admin_plugins_search_installed_install_update_remove(start):
+REFUSED_ANONYMOUS = "Error: sign-in required: protect the server (users plugin) or set allow_anonymous_admin=True (plugins:install)"
+
+
+def test_admin_plugins_install_update_remove_refused_to_anonymous_callers_reads_allowed(start):
     host = start()
+    host.net.publish(versions=["1.1.0", "1.2.0"])
+    assert host.run("admin plugins install hello@1.1.0").text == REFUSED_ANONYMOUS
+    assert host.pip.calls == []
+    assert host.run("admin plugins update hello").text == REFUSED_ANONYMOUS
+    assert host.run("admin plugins remove hello").text == REFUSED_ANONYMOUS
+    assert "installable" in host.run("admin plugins search hello").text
+    assert host.run("admin plugins installed").text.startswith("No server plugins installed")
+
+
+def test_admin_plugins_search_installed_install_update_remove(start):
+    host = start(anonymous_admin=True)
     host.net.publish(versions=["1.1.0", "1.2.0"])
     search = host.run("admin plugins search hello").text
     assert "hello" in search and HELLO_PACKAGE in search and "installable" in search

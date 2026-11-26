@@ -44,10 +44,10 @@ def _actor() -> DashboardMarketplaceActor:
     try:
         from qodalis_cli import get_cli_caller  # the server package, optional here
     except ImportError:  # pragma: no cover
-        return DashboardMarketplaceActor(user_name="anonymous")
+        return DashboardMarketplaceActor(user_name="anonymous", anonymous=True)
     caller = get_cli_caller()
     if caller is None:
-        return DashboardMarketplaceActor(user_name="anonymous")
+        return DashboardMarketplaceActor(user_name="anonymous", anonymous=True)
     return DashboardMarketplaceActor(user_name=caller.user_name, user_id=caller.user_id)
 
 

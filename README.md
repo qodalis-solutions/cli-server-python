@@ -902,7 +902,7 @@ server.restart.on_shutdown("pool", pool.close)  # your own clean-up, in registra
 - The action runs at the end of the server's own lifespan: clean-up a host does after it (its own lifespan wrapper)
   belongs in `on_shutdown` so it also runs before a restart.
 - **Sign-in**: on a server without an auth provider protecting it, restarting is refused (403) unless
-  `allow_anonymous=True`.
+  `allow_anonymous=True` or the server's `allow_anonymous_admin=True`.
 - **Tests**: `CliServerRestartOptions(runtime={...})` replaces what the process does (`exit`, `exec`, `env`, `exists`,
   `read_file`, `executable`, `argv`, `cwd`, `find_server`), so a test never exits or execs.
 
@@ -1051,6 +1051,25 @@ async def rates(): ...
 ```
 
 On a route without a guard, `qodalis_cli.security.get_auth_context(request).is_host_token` tells the two kinds of token apart. Details, the manager's rules and errors: [plugins/users/README.md](plugins/users/README.md#host-tokens).
+
+## Installs and Config Changes Need Sign-in
+
+On a server no auth provider protects (no users plugin), commands run without a caller. Such an anonymous caller is
+refused what installs code or changes the server's configuration, through `POST /api/v1/qcli/execute`, the shell and
+the MCP endpoint alike:
+
+| Permission | Commands and tools |
+|---|---|
+| `plugins:install` | `admin plugins install\|update\|remove` |
+| `dashboard:install` | `admin dashboard install\|update\|remove` |
+| `config:write` | `config set\|reset`, the `config_set` MCP tool |
+| `server:restart` | `admin restart`, `POST /api/v1/qcli/server/restart` |
+
+The answer is `sign-in required: protect the server (users plugin) or set allow_anonymous_admin=True (<permission>)`
+(403). Reads stay open (`config list|get`, `config_list`, `config_get`, `admin plugins search|installed`,
+`admin dashboard search|info`), secrets stay masked. A server nobody else can reach (local development) may opt in with
+`CliServerOptions(allow_anonymous_admin=True)`; it logs a startup WARNING. `restart.allow_anonymous` still allows
+restarting alone. The admin plugin's own routes are not affected: its dashboard signs in.
 
 ## Remote Shell Security
 

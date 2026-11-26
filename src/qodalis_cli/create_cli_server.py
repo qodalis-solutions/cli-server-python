@@ -151,6 +151,13 @@ class CliServerOptions:
     #: Server plugins installed at runtime from the marketplace (the admin plugin installs them): loaded at the app's
     #: startup from ``<data_dir>/server-plugins`` (``dir`` to keep them elsewhere); ``False`` loads none.
     server_plugins: CliServerPluginsOptions | dict[str, Any] | bool | None = None
+    #: Let callers who are not signed in install, update and remove plugins (``plugins:install``: ``admin plugins
+    #: install|update|remove``; ``dashboard:install``: ``admin dashboard install|update|remove``), change settings
+    #: (``config:write``: ``config set|reset``, the ``config_set`` MCP tool) and restart (``server:restart``) a server
+    #: no auth provider protects.  Default false: refused with "sign-in required: protect the server (users plugin)
+    #: or set allow_anonymous_admin=True", since anyone who reaches the server could run code on it.  Reads stay
+    #: open, secrets masked.  Only for a server nobody else can reach; a WARNING is logged at startup when set.
+    allow_anonymous_admin: bool = False
     configure: Callable[[CliBuilder], None] | None = None
 
 
@@ -507,6 +514,14 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     registry = CliCommandRegistry()
     builder = CliBuilder(registry)
+    builder.anonymous_admin_allowed = lambda: bool(opts.allow_anonymous_admin) or (
+        _requires_authentication(server_ref[0]) if server_ref else False
+    )
+    if opts.allow_anonymous_admin:
+        logger.warning(
+            "WARNING: allow_anonymous_admin is on: on a server without sign-in, anyone who can reach it can install "
+            "plugins (code that runs in the server), change its configuration and restart it.",
+        )
     if opts.config is not None and opts.config.store is not None:
         builder.set_config_store(opts.config.store)
     for provider_id, store in ((opts.config.stores or {}) if opts.config is not None else {}).items():
@@ -528,6 +543,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         audit=lambda: builder.audit_sink,
         is_protected=lambda: _requires_authentication(server_ref[0]) if server_ref else False,
         close_sockets=close_sockets,
+        allow_anonymous_admin=lambda: bool(opts.allow_anonymous_admin),
     ))
     # In-flight requests, which a restart's graceful shutdown waits for (outermost)
     app.add_middleware(CliRestartRequestTracker, restart=restart)

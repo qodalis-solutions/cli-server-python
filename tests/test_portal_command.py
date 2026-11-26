@@ -78,7 +78,10 @@ def start(
     protected: bool = False,
 ) -> Iterator[Srv]:
     """A server with the portal (stand-in site), optionally the docs (3 pages) and public-api sections."""
-    options = CliServerOptions(configure=(lambda b: b.set_config_store(store)) if store is not None else None)
+    options = CliServerOptions(
+        configure=(lambda b: b.set_config_store(store)) if store is not None else None,
+        allow_anonymous_admin=True,  # config set from the terminal of an open server
+    )
     result = create_cli_server(options)
     if protected:
         protect(result)

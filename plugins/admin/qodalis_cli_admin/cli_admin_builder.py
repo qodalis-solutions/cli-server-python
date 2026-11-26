@@ -289,6 +289,11 @@ class CliAdminBuilder:
         log_buffer = LogRingBuffer(broadcast_fn=deps.broadcast_fn, event_bus=deps.event_bus)
         log_buffer.install_handler()
         module_registry = ModuleRegistry(deps.builder)
+
+        def anonymous_admin_allowed() -> bool:
+            """The server's ``allow_anonymous_admin`` (or a protected server); false for a builder without it."""
+            check = getattr(deps.builder, "anonymous_admin_allowed", None)
+            return bool(check()) if callable(check) else False
         if users_plugin is not None:
             auth_dep = create_users_auth_dependency(users_plugin)
             allow = getattr(users_plugin, "allow_anonymous", None)
@@ -365,6 +370,7 @@ class CliAdminBuilder:
                 publish=publish,
                 publish_config_changed=publish_config_changed,
                 config_ready=config_ready,
+                anonymous_allowed=anonymous_admin_allowed,
             ))
             marketplace.load()
             router.include_router(
@@ -395,6 +401,7 @@ class CliAdminBuilder:
                 restart=getattr(deps.builder, "restart", None),
                 audit=lambda: getattr(deps.builder, "audit_sink", None),
                 publish=publish_server,
+                anonymous_allowed=anonymous_admin_allowed,
             ))
             router.include_router(
                 create_server_marketplace_router(server_marketplace, auth_dep), prefix="/server/marketplace",

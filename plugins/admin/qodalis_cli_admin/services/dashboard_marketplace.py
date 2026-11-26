@@ -118,6 +118,17 @@ class DashboardMarketplaceActor:
 
     user_name: str
     user_id: Optional[str] = None
+    #: A caller who is not signed in (a command on a server without sign-in): changes are refused unless the
+    #: server allows it (``allow_anonymous_admin``).
+    anonymous: bool = False
+
+
+def require_signed_in(actor: DashboardMarketplaceActor, allowed: Callable[[], bool], permission: str) -> None:
+    """403 when ``actor`` is not signed in and the server does not let such callers change it (as on Node)."""
+    if actor.anonymous and not allowed():
+        raise DashboardMarketplaceError(
+            403, f"sign-in required: protect the server (users plugin) or set allow_anonymous_admin=True ({permission})",
+        )
 
 
 @dataclass
@@ -170,6 +181,9 @@ class DashboardMarketplaceDeps:
     #: Resolves once the config providers have their stores (``builder.config.ready``): awaited before the settings
     #: are read or written, so they go to the store the server resolved for ``dashboard-plugins``.
     config_ready: Optional[Callable[[], Awaitable[None]]] = None
+    #: Whether callers who are not signed in may install, update and remove (the server's ``allow_anonymous_admin``,
+    #: or a protected server); default false.
+    anonymous_allowed: Callable[[], bool] = lambda: False
 
 
 def is_valid_dashboard_plugin_name(name: Any) -> bool:
@@ -563,6 +577,7 @@ class DashboardMarketplace:
         values of its settings in ``config`` (``{ key: value }``, checked against the version's settings before
         anything is downloaded: 400 ``validation failed`` with per-key ``errors``).  The installed plugin; ``warnings``
         when the marketplace's settings of the version are invalid (it is installed without settings)."""
+        require_signed_in(actor, self._deps.anonymous_allowed, DASHBOARD_INSTALL_PERMISSION)
         async with self._lock():
             if not is_valid_dashboard_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid package name")
@@ -612,6 +627,7 @@ class DashboardMarketplace:
         values whose key the new version still has and whose value it still accepts are kept, the others deleted
         (``configDropped``).  Returns ``{ plugin, changed, previousVersion, configDropped, warnings? }``; ``changed``
         is false when it already is that version (the given values are applied all the same)."""
+        require_signed_in(actor, self._deps.anonymous_allowed, DASHBOARD_INSTALL_PERMISSION)
         async with self._lock():
             if not is_valid_dashboard_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid package name")
@@ -673,6 +689,7 @@ class DashboardMarketplace:
 
     async def remove_plugin(self, name: Any, actor: DashboardMarketplaceActor) -> dict[str, Any]:
         """``DELETE /installed/{name}``: unregisters the page, deletes its files and its settings."""
+        require_signed_in(actor, self._deps.anonymous_allowed, DASHBOARD_INSTALL_PERMISSION)
         async with self._lock():
             if not is_valid_dashboard_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid package name")

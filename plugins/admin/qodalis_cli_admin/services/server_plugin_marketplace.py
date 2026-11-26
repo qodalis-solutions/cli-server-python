@@ -51,6 +51,7 @@ from .dashboard_marketplace import (
     MarketplaceFetch,
     MarketplaceResponse,
     default_marketplace_fetch,
+    require_signed_in,
 )
 
 logger = logging.getLogger("qcli-admin")
@@ -152,6 +153,9 @@ class ServerPluginMarketplaceDeps:
     restart: Any = None
     audit: Callable[[], Any] = lambda: None
     publish: Optional[Callable[[str, dict[str, Any]], Awaitable[None]]] = None
+    #: Whether callers who are not signed in may install, update and remove (the server's ``allow_anonymous_admin``,
+    #: or a protected server); default false.
+    anonymous_allowed: Callable[[], bool] = lambda: False
 
 
 def is_valid_server_plugin_name(name: Any) -> bool:
@@ -741,6 +745,7 @@ class ServerPluginMarketplace:
 
     async def install_plugin(self, name: Any, version: Any, actor: DashboardMarketplaceActor) -> dict[str, Any]:
         """``POST /installed``: installs the Python package of ``name`` (the newest compatible version, or ``version``)."""
+        require_signed_in(actor, self._deps.anonymous_allowed, PLUGINS_INSTALL_PERMISSION)
         async with self._lock():
             plugin, own, target = await self._prepare(name, version)
             existing = self._record_of(plugin["name"])
@@ -759,6 +764,7 @@ class ServerPluginMarketplace:
     async def update_plugin(self, name: Any, version: Any, actor: DashboardMarketplaceActor) -> dict[str, Any]:
         """``PUT /installed/{name}``: updates to ``version`` (default: the newest compatible); ``changed: False`` when
         it already is."""
+        require_signed_in(actor, self._deps.anonymous_allowed, PLUGINS_INSTALL_PERMISSION)
         async with self._lock():
             if not is_valid_server_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid plugin name")
@@ -792,6 +798,7 @@ class ServerPluginMarketplace:
 
     async def remove_plugin(self, name: Any, actor: DashboardMarketplaceActor) -> dict[str, Any]:
         """``DELETE /installed/{name}``: removes the package (its dependencies stay); it runs until a restart."""
+        require_signed_in(actor, self._deps.anonymous_allowed, PLUGINS_INSTALL_PERMISSION)
         async with self._lock():
             if not is_valid_server_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid plugin name")

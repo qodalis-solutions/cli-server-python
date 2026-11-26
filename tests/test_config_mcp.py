@@ -68,9 +68,26 @@ class Rpc:
 
 @pytest.fixture(scope="module")
 def cli():
-    result = create_cli_server(CliServerOptions(mcp=True, configure=lambda b: b.add_config_provider(app_provider())))
+    result = create_cli_server(CliServerOptions(
+        mcp=True, configure=lambda b: b.add_config_provider(app_provider()), allow_anonymous_admin=True,
+    ))
     with TestClient(result.app) as client:
         yield Rpc(client)
+
+
+class TestConfigMcpOpenServerWithoutAnonymousAdmin:
+    def test_config_set_is_refused_reads_stay_allowed(self):
+        result = create_cli_server(CliServerOptions(mcp=True, configure=lambda b: b.add_config_provider(app_provider())))
+        with TestClient(result.app) as client:
+            cli = Rpc(client)
+            refused = cli.call("config_set", {"provider": "app", "section": "main", "changes": {"limit": 8}})
+            assert refused["result"]["isError"] is True
+            assert refused["result"]["structuredContent"]["error"] == (
+                "sign-in required: protect the server (users plugin) or set allow_anonymous_admin=True (config:write)"
+            )
+            entry = cli.call("config_get", {"provider": "app", "section": "main", "key": "limit"})
+            assert entry["result"]["structuredContent"]["entry"]["value"] == 5
+
 
 
 class TestConfigMcpOpenServer:
