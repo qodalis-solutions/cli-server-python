@@ -32,6 +32,7 @@ from .server_plugin_helpers import (
     make_wheel,
     read_installed,
     sha256_hex,
+    write_dist,
 )
 
 BASE = f"{V1}/server/marketplace"
@@ -433,6 +434,118 @@ def test_pinned_dependencies_install_hash_checked_without_resolving(start):
         f"qcli-test-transitive==2.0.0 --hash=sha256:{hex_digest}\n"
     )
     assert not [f for f in os.listdir(host.dir) if f.startswith(".requirements")]
+
+
+def sri(data: bytes) -> str:
+    return "sha256-" + base64.b64encode(hashlib.sha256(data).digest()).decode()
+
+
+def test_a_pin_of_a_binary_package_passes_every_wheel_hash_to_pip(start):
+    """A release without a universal wheel (asyncpg, pymssql): the marketplace pins the sha256 of each of its wheels
+    (``hashes``) and pip picks the one of this platform."""
+    host = start()
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=DEPS), dependencies=[
+        {"id": "qcli-test-missing-dep", "version": "1.4.0", "integrity": sri(b"linux"), "range": ">=1.0",
+         "hashes": [sri(b"linux"), sri(b"mac"), sri(b"win")]},
+    ])
+    assert host.install({"name": "hello"}).status_code == 202, host.pip.calls
+    hexes = " ".join(f"--hash=sha256:{hashlib.sha256(b).hexdigest()}" for b in (b"linux", b"mac", b"win"))
+    assert host.pip.requirements == f"qcli-test-missing-dep==1.4.0 {hexes}\n"
+
+
+def test_a_malformed_wheel_hash_is_refused(start):
+    host = start()
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=DEPS), dependencies=[
+        {"id": "qcli-test-missing-dep", "version": "1.4.0", "integrity": sri(b"a"), "range": "*", "hashes": [sri(b"a"), "md5-x"]},
+    ])
+    res = host.install({"name": "hello"})
+    assert res.status_code == 502 and res.json()["error"] == "invalid marketplace record: a wheel hash of the dependency qcli-test-missing-dep"
+    assert host.pip.calls == []
+
+
+def test_one_package_pinned_twice_is_installed_once(start):
+    host = start()
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=DEPS), dependencies=[
+        {"id": "qcli-test-missing-dep", "version": "1.4.0", "integrity": sri(b"a"), "range": ">=1.0"},
+        {"id": "QCLI_Test_Missing_Dep", "version": "1.4.0", "integrity": sri(b"a"), "range": ">=1.2"},
+    ])
+    assert host.install({"name": "hello"}).status_code == 202, host.pip.calls
+    assert host.pip.requirements == f"qcli-test-missing-dep==1.4.0 --hash=sha256:{hashlib.sha256(b'a').hexdigest()}\n"
+
+
+def test_one_package_pinned_at_two_versions_is_refused(start):
+    other = start()
+    other.net.publish(wheel=lambda v: make_wheel(v, requires=DEPS), dependencies=[
+        {"id": "qcli-test-missing-dep", "version": "1.4.0", "integrity": sri(b"a"), "range": ">=1.0"},
+        {"id": "qcli-test-missing-dep", "version": "1.1.0", "integrity": sri(b"b"), "range": "<1.2"},
+    ])
+    res = other.install({"name": "hello"})
+    assert (res.status_code, res.json()) == (400, {"error": (
+        "conflicting dependency: the marketplace pins qcli-test-missing-dep at 1.4.0 and 1.1.0 (one version per package)"
+    )})
+    assert other.pip.calls == []
+
+
+@pytest.mark.parametrize("pins", [None, [{"id": "qcli-test-other", "version": "1.0.0", "integrity": sri(b"o"), "range": "*"}]])
+def test_a_server_plugin_it_needs_is_named_to_install_first(start, pins):
+    """As ``filesystem-sqlite`` needs ``qodalis-cli-server-plugin-databases``, which the marketplace never pins (a
+    plugin of its own): the error says to install it first, not "untrusted dependency"."""
+    host = start(trusted=["*"])
+    requires = ["qodalis-cli-server>=1.0.0b7", "qodalis-cli-server-plugin-qcli-test-absent>=1.0.0b30"]
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=requires), **({"dependencies": pins} if pins else {}))
+    res = host.install({"name": "hello"})
+    assert (res.status_code, res.json()) == (400, {"error": (
+        "needs the server plugin qcli-test-absent (qodalis-cli-server-plugin-qcli-test-absent>=1.0.0b30): install it first, "
+        "then this one"
+    )})
+    assert host.pip.calls == []
+
+
+def _dists(directory: str, module: str) -> list[str]:
+    return sorted(d for d in os.listdir(directory) if d.startswith(f"{module}-") and d.endswith(".dist-info"))
+
+
+def test_a_dependency_there_at_a_version_out_of_the_pins_range_is_replaced_not_doubled(start):
+    """filesystem-s3 brought boto3 1.26, aws pins boto3 1.34 (>=1.34): pip's environment is flat, so the old one is
+    uninstalled and the new one moved in (before: both ``.dist-info`` stayed and aws ran on boto3 1.26's files)."""
+    host = start()
+    write_dist(host.dir, "qcli-test-dep", "1.0")
+    host.pip.exact_versions = True
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=["qcli-test-dep>=1.0"]), dependencies=[
+        {"id": "qcli-test-dep", "version": "2.0", "integrity": sri(b"d"), "range": ">=2"},
+    ])
+    assert host.install({"name": "hello"}).status_code == 202, host.pip.calls
+    assert _dists(host.dir, "qcli_test_dep") == ["qcli_test_dep-2.0.dist-info"]
+    with open(os.path.join(host.dir, "qcli_test_dep", "__init__.py")) as f:
+        assert f.read() == "VERSION = '2.0'\n"
+
+
+def test_a_dependency_there_meeting_the_pins_range_is_kept(start):
+    host = start()
+    write_dist(host.dir, "qcli-test-dep", "1.5")
+    host.pip.exact_versions = True
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=["qcli-test-dep>=1.0"]), dependencies=[
+        {"id": "qcli-test-dep", "version": "2.0", "integrity": sri(b"d"), "range": ">=1.2"},
+    ])
+    assert host.install({"name": "hello"}).status_code == 202, host.pip.calls
+    assert _dists(host.dir, "qcli_test_dep") == ["qcli_test_dep-1.5.dist-info"]
+    assert len(host.pip.calls) == 1  # the wheel only
+
+
+def test_replacing_a_dependency_another_installed_plugin_needs_is_refused(start):
+    host = start()
+    write_dist(host.dir, "qcli-test-dep", "1.0")
+    write_dist(host.dir, "qcli-test-other-plugin", "3.0", requires=["qcli-test-dep<2"])
+    host.pip.exact_versions = True
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=["qcli-test-dep>=1.0"]), dependencies=[
+        {"id": "qcli-test-dep", "version": "2.0", "integrity": sri(b"d"), "range": ">=2"},
+    ])
+    res = host.install({"name": "hello"})
+    assert (res.status_code, res.json()) == (400, {"error": (
+        f"conflicting dependency: qcli-test-other-plugin 3.0 (installed) needs qcli-test-dep<2, {HELLO_PACKAGE} needs "
+        "qcli-test-dep 2.0"
+    )})
+    assert host.pip.calls == [] and _dists(host.dir, "qcli_test_dep") == ["qcli_test_dep-1.0.dist-info"]
 
 
 def test_a_dependency_the_marketplace_did_not_pin_is_refused(start):

@@ -122,6 +122,21 @@ def response(status: int, body: Any) -> MarketplaceResponse:
     return MarketplaceResponse(status, data, {"content-length": str(len(data))})
 
 
+def write_dist(directory: str, name: str, version: str, requires: Optional[list[str]] = None) -> None:
+    """A distribution as ``pip install --target`` leaves it: its module (``VERSION``) and ``.dist-info``."""
+    module = name.replace("-", "_").lower()
+    os.makedirs(os.path.join(directory, module), exist_ok=True)
+    with open(os.path.join(directory, module, "__init__.py"), "w") as f:
+        f.write(f"VERSION = {version!r}\n")
+    info = os.path.join(directory, f"{module}-{version}.dist-info")
+    os.makedirs(info, exist_ok=True)
+    meta = f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n" + "".join(f"Requires-Dist: {r}\n" for r in requires or [])
+    with open(os.path.join(info, "METADATA"), "w") as f:
+        f.write(meta)
+    with open(os.path.join(info, "RECORD"), "w") as f:
+        f.write(f"{module}/__init__.py,,\n{module}-{version}.dist-info/METADATA,,\n{module}-{version}.dist-info/RECORD,,\n")
+
+
 class FakePip:
     """``pip install --target <dir> --no-deps <wheel>`` unzips the wheel there; other installs are recorded (and
     leave a ``.dist-info`` per requirement)."""
@@ -133,6 +148,8 @@ class FakePip:
         self.requirements: Optional[str] = None
         #: Extra distributions a dependency install brings (``name``), as pip resolving a tree would.
         self.brings: list[str] = []
+        #: Install each pinned requirement at its version (``name==1.2``) with a module saying it, instead of 9.9.9.
+        self.exact_versions = False
 
     async def __call__(self, args: list[str]) -> PipRunResult:
         self.calls.append(list(args))
@@ -151,6 +168,12 @@ class FakePip:
             with open(path, encoding="utf-8") as f:
                 self.requirements = f.read()
             reqs = [line.split(" ")[0].replace("==", ">=") for line in self.requirements.splitlines() if line.strip()]
+        if self.exact_versions and "-r" in args:
+            for line in self.requirements.splitlines():
+                if line.strip():
+                    name, version = line.split(" ")[0].split("==")
+                    write_dist(target, name, version)
+            return PipRunResult(0, "", "")
         for req in reqs:
             dist = req.split(">")[0].split("=")[0].split("<")[0].split("[")[0].strip().replace("-", "_")
             os.makedirs(os.path.join(target, f"{dist}-9.9.9.dist-info"), exist_ok=True)

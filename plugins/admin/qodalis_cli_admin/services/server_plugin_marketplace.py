@@ -492,21 +492,61 @@ def _integrity_hex(integrity: Any) -> Optional[str]:
         return None
 
 
-def pinned_dependencies(target: Any) -> Optional[list[dict[str, str]]]:
-    """The dependencies the marketplace pinned for a version (``dependencies: [{ id, version, integrity, range }]``,
-    sha256 integrity), or ``None`` when it pins none.  Raises 502 for a malformed pin."""
+#: The packages of the official server plugins: never pinned (each is a marketplace plugin of its own).
+_SERVER_PLUGIN_PREFIX = "qodalis-cli-server-plugin-"
+
+
+def _refuse_missing_server_plugins(missing: list[str]) -> None:
+    """A server plugin the plugin needs (``filesystem-sqlite`` needs ``databases``) is installed on its own, from the
+    marketplace: says which, rather than "untrusted dependency"."""
+    for text in missing:
+        name = canonicalize_name(Requirement(text).name)
+        if name.startswith(_SERVER_PLUGIN_PREFIX):
+            raise DashboardMarketplaceError(
+                400, f"needs the server plugin {name[len(_SERVER_PLUGIN_PREFIX):]} ({text}): install it first, then this one",
+            )
+
+
+def pinned_dependencies(target: Any) -> Optional[list[dict[str, Any]]]:
+    """The dependencies the marketplace pinned for a version (``dependencies: [{ id, version, integrity, range,
+    hashes? }]``, sha256 in SRI form; ``hashes``: every wheel of a release without a universal one, pip picking this
+    platform's), or ``None`` when it pins none.  One pin per package (pip installs one version of each): the same
+    package pinned again at the same version adds its hashes, at another version is refused.  Raises 502 for a
+    malformed pin."""
     raw = target.get("dependencies") if isinstance(target, Mapping) else None
     if not isinstance(raw, list) or not raw:
         return None
-    pins: list[dict[str, str]] = []
+    pins: dict[str, dict[str, Any]] = {}
     for d in raw:
         if not isinstance(d, Mapping) or not _is_package(d.get("id")) or not _is_version(d.get("version")):
             raise DashboardMarketplaceError(502, "invalid marketplace record: dependencies")
         digest = _integrity_hex(d.get("integrity"))
         if digest is None:
             raise DashboardMarketplaceError(502, f"invalid marketplace record: no sha256 for the dependency {d.get('id')}")
-        pins.append({"id": str(d["id"]), "version": str(d["version"]), "sha256": digest})
-    return pins
+        hashes = [digest]
+        listed = d.get("hashes")
+        if listed is not None:
+            if not isinstance(listed, list) or not listed:
+                raise DashboardMarketplaceError(502, f"invalid marketplace record: a wheel hash of the dependency {d['id']}")
+            for item in listed:
+                h = _integrity_hex(item)
+                if h is None:
+                    raise DashboardMarketplaceError(502, f"invalid marketplace record: a wheel hash of the dependency {d['id']}")
+                if h not in hashes:
+                    hashes.append(h)
+        key = canonicalize_name(str(d["id"]))
+        version = str(d["version"])
+        known = pins.get(key)
+        if known is None:
+            pins[key] = {"id": str(d["id"]), "version": version, "sha256": digest, "hashes": hashes,
+                         "range": d["range"] if isinstance(d.get("range"), str) else "*"}
+        elif known["version"] == version:
+            known["hashes"] += [h for h in hashes if h not in known["hashes"]]
+        else:
+            raise DashboardMarketplaceError(
+                400, f"conflicting dependency: the marketplace pins {known['id']} at {known['version']} and {version} (one version per package)",
+            )
+    return list(pins.values())
 
 
 def _dist_info_dirs(directory: str, package: str) -> list[str]:
@@ -1106,6 +1146,8 @@ class ServerPluginMarketplace:
         plan = self._dependency_plan(info.requires, target, directory)
         if plan.get("trusted"):
             plan = {"pinned": await self._resolve_trusted(plan["trusted"], package, directory)}
+        if plan.get("pinned"):
+            plan["pinned"] = _reconcile_with_directory(plan["pinned"], directory, package)
 
         # Verified: pip installs the wheel (kept) and the missing dependencies into a staging directory
         filename = os.path.basename(str(wheel["filename"]))
@@ -1122,7 +1164,10 @@ class ServerPluginMarketplace:
             if current is not None:
                 await asyncio.to_thread(uninstall_from, directory, current["package"])
                 self._remove_wheel(current)
-            await asyncio.to_thread(_move_into, staging, directory, package)
+            replaced = [p["id"] for p in plan.get("pinned") or [] if p.get("replace")]
+            for name in replaced:
+                await asyncio.to_thread(uninstall_from, directory, name)
+            await asyncio.to_thread(_move_into, staging, directory, package, replaced)
         except BaseException:
             if current is None or current.get("file") != filename:
                 try:
@@ -1154,6 +1199,7 @@ class ServerPluginMarketplace:
         """What pip installs besides the wheel: ``{"pinned": [...]}`` (exact versions with their sha256),
         ``{"trusted": [...]}`` (requirements the host allows) or nothing."""
         missing = missing_requirements(requires, directory)
+        _refuse_missing_server_plugins(missing)
         pins = pinned_dependencies(target)
         if pins is not None:
             # Every pin the server lacks (they are the whole tree: installed with --no-deps)
@@ -1372,14 +1418,60 @@ def _drop_host_packages(staging: str, directory: str, package: str) -> None:
             uninstall_from(staging, name)
 
 
-def _move_into(staging: str, directory: str, package: str) -> None:
-    """Moves what pip installed in ``staging`` into the plugins directory: the plugin's files replace any left over;
-    a dependency already there is kept (another plugin may use it)."""
+def _reconcile_with_directory(pins: list[dict[str, Any]], directory: str, package: str) -> list[dict[str, Any]]:
+    """The pins to install, given what the plugins directory has (one version of each package, as pip's flat
+    environment): a package there at the pinned version, or at one meeting the pin's range, is kept; one at a version
+    that does not is replaced (``replace``: uninstalled, then the pinned version moved in), unless another package
+    there needs a version the pin does not meet, which is refused (it would break that plugin)."""
+    out: list[dict[str, Any]] = []
+    replace: dict[str, dict[str, Any]] = {}
+    for pin in pins:
+        have = _dir_version(pin["id"], directory)
+        if have is None:
+            out.append(pin)
+            continue
+        if have == pin["version"]:
+            continue
+        try:
+            spec = SpecifierSet("" if pin.get("range") in (None, "*") else str(pin["range"])) if "range" in pin else None
+        except InvalidSpecifier:
+            spec = None
+        if spec is not None and spec.contains(have, prereleases=True):
+            continue  # the version there meets it
+        replace[canonicalize_name(pin["id"])] = pin
+        out.append({**pin, "replace": True})
+    if replace and os.path.isdir(directory):
+        for dist in metadata.distributions(path=[directory]):
+            owner = canonicalize_name(dist.metadata["Name"] or "")
+            if owner in replace or owner == canonicalize_name(package):
+                continue
+            for text in dist.requires or []:
+                try:
+                    req = Requirement(text)
+                except InvalidRequirement:
+                    continue
+                if req.marker is not None and not req.marker.evaluate({"extra": ""}):
+                    continue
+                pin = replace.get(canonicalize_name(req.name))
+                if pin is not None and req.specifier and not req.specifier.contains(pin["version"], prereleases=True):
+                    raise DashboardMarketplaceError(400, (
+                        f"conflicting dependency: {dist.metadata['Name']} {dist.version} (installed) needs "
+                        f"{req.name}{req.specifier}, {package} needs {pin['id']} {pin['version']}"
+                    ))
+    return out
+
+
+def _move_into(staging: str, directory: str, package: str, replaced: Optional[list[str]] = None) -> None:
+    """Moves what pip installed in ``staging`` into the plugins directory: the plugin's files (and those of the
+    dependencies it replaces at another version, ``replaced``) replace any left over; any other dependency already
+    there is kept (another plugin may use it)."""
     if not os.path.isdir(staging):
         raise DashboardMarketplaceError(502, "pip installed nothing")
     own_infos = {os.path.basename(p) for p in _dist_info_dirs(staging, package)}
     if not own_infos:
         raise DashboardMarketplaceError(502, f"pip did not install {package}")
+    for name in replaced or []:
+        own_infos |= {os.path.basename(p) for p in _dist_info_dirs(staging, name)}
     own_top: set[str] = set()
     for info in own_infos:
         record = os.path.join(staging, info, "RECORD")
