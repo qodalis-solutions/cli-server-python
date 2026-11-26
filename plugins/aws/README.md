@@ -163,6 +163,28 @@ $ aws s3 rm s3://reports/2026-11.csv      (signed in with aws:read only)
 forbidden: missing permission aws:write
 ```
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install aws`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_aws import plugin as aws
+
+builder.add_plugin(aws, {...})
+```
+
+Entry point `aws = "qodalis_cli_aws.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 50. Its settings
+(provider `aws`, section `settings`; `config set aws.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `region` | string |  | e.g. eu-north-1; empty: the default chain |
+| `profile` | string |  | A profile of the shared AWS config; empty: none |
+| `accessKeyId` | secret |  | Empty: the AWS default credential chain |
+| `secretAccessKey` | secret |  | Secret access key |
+
 ## License
 
 MIT

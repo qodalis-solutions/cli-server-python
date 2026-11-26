@@ -478,6 +478,28 @@ command (`config get users`).
 | `link approve <code> [--yes]`, `link deny <code>` | signed in | Approves or denies another terminal's link request (as the dashboard does) |
 | `last [user]`, `audit`, `audit clear` | `audit:read`, `audit:clear` | Sign-in history and the audit log (the [audit plugin](../audit/README.md)) |
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install users`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_users import plugin as users
+
+builder.add_plugin(users, {...})
+```
+
+Entry point `users = "qodalis_cli_users.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 10. Its settings
+(provider `users-plugin`, section `settings`; `config set users-plugin.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `defaultAdminPassword` | secret |  | The seeded root user's password; empty: a random one, logged once |
+| `protectServer` | boolean | `true` | Every route and socket needs a sign-in |
+| `allowNonExpiringTokens` | boolean | `false` | API tokens may be created without an expiry date |
+| `linkApprovalUrl` | string |  | Where users approve a terminal's link request; empty: the dashboard's |
+
 ## License
 
 MIT

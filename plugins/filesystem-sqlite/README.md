@@ -66,6 +66,27 @@ result.mount_plugin(databases)
 None of its own: the storage is reached through the [filesystem plugin](../filesystem/README.md#terminal-commands)
 (`scp` in the web CLI).
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install filesystem-sqlite`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_filesystem_sqlite import plugin as filesystem_sqlite
+
+builder.add_plugin(filesystem_sqlite, {...})
+```
+
+Entry point `filesystem-sqlite = "qodalis_cli_filesystem_sqlite.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 50. Its settings
+(provider `filesystem-sqlite`, section `settings`; `config set filesystem-sqlite.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `dbPath` | string | `"files.db"` | The SQLite file (relative paths from the plugin's data directory; :memory: for none) |
+| `tablePrefix` | string | `"Qcli"` | Prepended to the table name (default Qcli) |
+| `readOnly` | boolean | `false` | Uploads, new folders and deletes are refused |
+
 ## License
 
 MIT

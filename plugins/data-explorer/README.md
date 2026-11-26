@@ -133,6 +133,28 @@ opens a console on a source (`data-explorer [--server <name>]`, `data:query` on 
 `\templates`, `\use`, `\schema`, `\history`, `\help` and `\quit`. With the MCP endpoint on, AI clients get the `data_*`
 tools.
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install data-explorer`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_data_explorer import plugin as data_explorer
+
+builder.add_plugin(data_explorer, {...})
+```
+
+Entry point `data-explorer = "qodalis_cli_data_explorer.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 30. Its settings
+(provider `data-explorer`, section `settings`; `config set data-explorer.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `forceReadOnly` | boolean | `false` | Every source may only read, whatever its own setting |
+| `maxRows` | number | `0` | The most rows any source returns; 0: each source its own |
+| `rateLimitQueries` | number | `0` | Per caller and source, for sources without their own limit; 0: none |
+| `rateLimitWindowSeconds` | number | `60` | Window (seconds) |
+
 ## License
 
 MIT

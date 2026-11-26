@@ -41,6 +41,25 @@ The location can also be passed as the command value (e.g., `weather Paris`).
 The commands are listed under [Commands](#commands); they need no permission beyond `commands:execute` on a protected
 server.
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install weather`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_weather import plugin as weather
+
+builder.add_plugin(weather, {...})
+```
+
+Entry point `weather = "qodalis_cli_weather.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 50. Its settings
+(provider `weather`, section `settings`; `config set weather.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `defaultLocation` | string | `"London"` | The place when a command names none |
+
 ## License
 
 MIT

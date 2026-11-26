@@ -176,6 +176,27 @@ $ config reset portal.branding.logoUrl
 The theme's colour tokens (`set_theme({"dark": ..., "light": ...})`) stay in code: 21 tokens per scheme would make a
 long settings page, and a wrong colour is easier to catch in review.
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install portal`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_portal import plugin as portal
+
+builder.add_plugin(portal, {...})
+```
+
+Entry point `portal = "qodalis_cli_portal.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 60. Its settings
+(provider `portal-plugin`, section `settings`; `config set portal-plugin.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `path` | string | `"/qcli/portal"` | Where the portal is served (/ for the root) |
+| `name` | string | `"Documentation"` | Name |
+| `logoUrl` | string |  | An http(s) URL or a root-relative path; empty: none |
+
 ## License
 
 MIT

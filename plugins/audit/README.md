@@ -99,6 +99,25 @@ reads the log through `GET/DELETE /api/v1/qcli/audit`.
 | `last [user]` | `audit:read` | Sign-in history (logins, logouts, failures) |
 | `audit clear` | `audit:clear` | Clears the audit log (asks first) |
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install audit`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_audit import plugin as audit
+
+builder.add_plugin(audit, {...})
+```
+
+Entry point `audit = "qodalis_cli_audit.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 50. Its settings
+(provider `audit`, section `settings`; `config set audit.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `maxEntries` | number | `1000` | The oldest are dropped beyond it |
+
 ## License
 
 MIT

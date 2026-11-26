@@ -94,6 +94,27 @@ installed, else a small in-test fake running the write script's logic). Set `QCL
 None of its own: the settings are read and changed with the server's [`config` command](../../README.md#permissions-audit-events-mcp-terminal)
 (`config list`, `config get`, `config set`, `config reset`).
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install config-redis`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_config_redis import plugin as config_redis
+
+builder.add_plugin(config_redis, {...})
+```
+
+Entry point `config-redis = "qodalis_cli_config_redis.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 20. Its settings
+(provider `config-redis`, section `settings`; `config set config-redis.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `url` | secret (required) |  | redis://[:password@]host:6379/0 (rediss:// for TLS); kept as a secret, never returned |
+| `keyPrefix` | string | `"qcli:config:"` | Prepended to every key: <prefix><provider>:<section> |
+| `ttlSeconds` | number | `0` | A section expires this long after its last change; 0: never |
+
 ## License
 
 MIT

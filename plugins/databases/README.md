@@ -189,6 +189,29 @@ Started             Dir  Status    Count Trigger
 2026-11-25 10:00:00 up   succeeded     2 startup
 ```
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install databases`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_databases import plugin as databases
+
+builder.add_plugin(databases, {...})
+```
+
+Entry point `databases = "qodalis_cli_databases.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 30. Its settings
+(provider `databases`, section `settings`; `config set databases.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `name` | string | `"main"` | The database in the API, the terminal and the dashboard |
+| `dialect` | enum | `"postgres"` | Dialect |
+| `connectionString` | secret (required) |  | A connection string (postgresql://, mysql://, mssql://user:password@host:1433/db), or the SQLite file (relative: the plugin data folder); kept as a secret |
+| `migrationsFolder` | string |  | NNNN_name.up.sql / .down.sql files (relative: the plugin data folder); empty: none |
+| `applyOnStartup` | boolean | `false` | Pending migrations run when the server starts |
+
 ## License
 
 MIT

@@ -83,6 +83,26 @@ protected server) through [`@qodalis/cli-scp`](https://www.npmjs.com/package/@qo
 The `ls`, `cat`, `cd`, ... commands of `@qodalis/cli-files` work on the browser's own file system, not the server's.
 The upload limit and the allowed paths are settings too: `config get filesystem` (core `config` command).
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install filesystem`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_filesystem import plugin as filesystem
+
+builder.add_plugin(filesystem, {...})
+```
+
+Entry point `filesystem = "qodalis_cli_filesystem.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 50. Its settings
+(provider `filesystem-os`, section `settings`; `config set filesystem-os.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `roots` | string[] (required) | `[]` | Absolute paths served (and everything below them); none: the filesystem API serves nothing |
+| `readOnly` | boolean | `true` | Only list, read and download: uploads, new folders and deletes are refused |
+
 ## License
 
 MIT
