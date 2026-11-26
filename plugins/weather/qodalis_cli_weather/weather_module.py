@@ -7,7 +7,7 @@ import asyncio
 import urllib.parse
 import urllib.request
 import json
-from typing import Sequence
+from typing import Callable, Sequence, Union
 
 from qodalis_cli import (
     CliCommandParameterDescriptor,
@@ -21,14 +21,26 @@ from qodalis_cli import (
 from qodalis_cli_server_abstractions import CliCommandExample
 
 
-def _get_location(command: CliProcessCommand) -> str:
-    """Extract the location from command args or value, defaulting to London."""
+#: The place when a command names none (``WeatherModule(default_location=...)``, the plugin's setting).
+DEFAULT_WEATHER_LOCATION = "London"
+
+#: A place, or a function giving it on every command (a setting read live).
+WeatherLocation = Union[str, Callable[[], str]]
+
+
+def _resolve(default: WeatherLocation) -> str:
+    value = default() if callable(default) else default
+    return str(value).strip() if value is not None and str(value).strip() else DEFAULT_WEATHER_LOCATION
+
+
+def _get_location(command: CliProcessCommand, default: WeatherLocation = DEFAULT_WEATHER_LOCATION) -> str:
+    """Extract the location from command args or value, else the default place."""
     if "location" in command.args:
         return str(command.args["location"])
     location = get_positional_text(command)
     if location:
         return location
-    return "London"
+    return _resolve(default)
 
 
 def _fetch_weather_data(location: str) -> dict:
@@ -95,6 +107,9 @@ _location_param = CliCommandParameterDescriptor(
 class _WeatherCurrentProcessor(CliCommandProcessor):
     """Processor for the ``weather current`` sub-command."""
 
+    def __init__(self, default: WeatherLocation = DEFAULT_WEATHER_LOCATION) -> None:
+        self._default = default
+
     @property
     def command(self) -> str:
         return "current"
@@ -114,11 +129,14 @@ class _WeatherCurrentProcessor(CliCommandProcessor):
         return [_location_param]
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
-        return _format_current(_get_location(command))
+        return _format_current(_get_location(command, self._default))
 
 
 class _WeatherForecastProcessor(CliCommandProcessor):
     """Processor for the ``weather forecast`` sub-command."""
+
+    def __init__(self, default: WeatherLocation = DEFAULT_WEATHER_LOCATION) -> None:
+        self._default = default
 
     @property
     def command(self) -> str:
@@ -143,11 +161,15 @@ class _WeatherForecastProcessor(CliCommandProcessor):
         return [_location_param]
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
-        return _format_forecast(_get_location(command))
+        return _format_forecast(_get_location(command, self._default))
 
 
 class _CliWeatherCommandProcessor(CliCommandProcessor):
     """Root processor for the ``weather`` command with sub-commands."""
+
+    def __init__(self, default: WeatherLocation = DEFAULT_WEATHER_LOCATION) -> None:
+        self._default = default
+        self._subs: list[ICliCommandProcessor] = [_WeatherCurrentProcessor(default), _WeatherForecastProcessor(default)]
 
     @property
     def command(self) -> str:
@@ -175,7 +197,8 @@ class _CliWeatherCommandProcessor(CliCommandProcessor):
     @property
     def documentation(self) -> str:
         return (
-            "Weather from wttr.in, fetched by the server. Give the place as the value or with --location; the default is London."
+            "Weather from wttr.in, fetched by the server. Give the place as the value or with --location; the default is "
+            f"{_resolve(self._default)} (the plugin's setting defaultLocation)."
         )
 
     @property
@@ -184,14 +207,18 @@ class _CliWeatherCommandProcessor(CliCommandProcessor):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
-        return [_WeatherCurrentProcessor(), _WeatherForecastProcessor()]
+        return self._subs
 
     async def handle_async(self, command: CliProcessCommand, cancellation_event: asyncio.Event | None = None) -> str:
-        return _format_current(_get_location(command))
+        return _format_current(_get_location(command, self._default))
 
 
 class WeatherModule(CliModule):
-    """CLI module that registers the weather command and its sub-commands."""
+    """CLI module that registers the weather command and its sub-commands.  ``default_location``: the place when a
+    command names none (a text, or a function read on every command; default London)."""
+
+    def __init__(self, default_location: WeatherLocation = DEFAULT_WEATHER_LOCATION) -> None:
+        self._processor = _CliWeatherCommandProcessor(default_location)
 
     @property
     def name(self) -> str:
@@ -211,4 +238,4 @@ class WeatherModule(CliModule):
 
     @property
     def processors(self) -> list[ICliCommandProcessor]:
-        return [_CliWeatherCommandProcessor()]
+        return [self._processor]
