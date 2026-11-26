@@ -180,6 +180,7 @@ class FakeServerNet:
         verified: bool = True, platforms: Optional[list[str]] = None, server_range: Optional[str] = ">=1.0.0b7",
         wheel: Optional[Any] = None, marketplace_integrity: Any = "same", auto_install: Optional[bool] = None,
         needs_configuration: Optional[list[str]] = None, dependencies: Optional[list[dict[str, Any]]] = None,
+        marketplace_files: Any = "same",
     ) -> None:
         """A plugin with a Python package (and others listed); each version's wheel on PyPI (``wheel(version)``)."""
         versions = versions or [HELLO_VERSION]
@@ -205,6 +206,11 @@ class FakeServerNet:
                 record: dict[str, Any] = {"version": v, "platform": p, "status": "listed", "serverRange": server_range}
                 if p == "python":
                     record["integrity"] = sri(data) if marketplace_integrity == "same" else marketplace_integrity
+                    # As the marketplace: every file of the PyPI release with its hash (``None``: an older one, without)
+                    if marketplace_files == "same":
+                        record["files"] = [{"path": filename, "integrity": record["integrity"], "size": len(data)}]
+                    elif marketplace_files is not None:
+                        record["files"] = marketplace_files
                     if auto_install is not None:
                         record["autoInstall"] = auto_install
                         if not auto_install:

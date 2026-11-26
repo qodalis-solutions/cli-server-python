@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import sys
 from typing import Any, Optional
 
 from urllib.parse import parse_qs, urlsplit
@@ -19,6 +20,8 @@ from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder, DashboardMarketpl
 
 from .command_helpers import V1, add_users, protect, run_command
 from .server_plugin_helpers import (
+    FILES,
+    HELLO_MODULE,
     HELLO_PACKAGE,
     MARKET,
     PYPI,
@@ -28,6 +31,7 @@ from .server_plugin_helpers import (
     forget_fixture_modules,
     make_wheel,
     read_installed,
+    sha256_hex,
 )
 
 BASE = f"{V1}/server/marketplace"
@@ -297,6 +301,63 @@ def test_a_failed_check_stores_nothing(start, change, status, message):
     assert (res.status_code, res.json()) == (status, {"error": message})
     assert host.pip.calls == [] and host.pending() == []
     assert not os.path.exists(os.path.join(host.dir, "installed.json"))
+
+
+def _no_wheel_installed(host: Any) -> None:
+    assert host.pip.calls == [] and host.pending() == []
+    assert not os.path.exists(os.path.join(host.dir, "installed.json"))
+
+
+def test_the_wheel_is_the_one_the_marketplace_lists_with_its_hash(start):
+    host = start()
+    host.net.publish(versions=["1.2.0"])
+    # PyPI also has a wheel the marketplace does not list, first and as fitting: never chosen
+    release = host.net.releases[(HELLO_PACKAGE, "1.2.0")]
+    other = make_wheel("1.2.0", requires=[])
+    release["urls"].insert(0, {
+        "filename": f"{HELLO_MODULE}-1.2.0-py2.py3-none-any.whl", "url": f"{FILES}/unlisted.whl",
+        "packagetype": "bdist_wheel", "digests": {"sha256": sha256_hex(other)},
+    })
+    host.net.files[f"{FILES}/unlisted.whl"] = other
+    res = host.install({"name": "hello"})
+    assert res.status_code == 202, res.text
+    assert f"{FILES}/unlisted.whl" not in host.net.calls
+    assert host.pip.calls[0][-1].endswith(f"{HELLO_MODULE}-1.2.0-py3-none-any.whl")
+
+
+def test_a_wheel_the_marketplace_does_not_list_is_refused_never_pypis_hash_alone(start):
+    host = start()
+    host.net.publish(versions=["1.2.0"], marketplace_files=[
+        {"path": f"{HELLO_MODULE}-1.2.0.tar.gz", "integrity": "sha256-" + "B" * 43 + "="},
+    ])
+    res = host.install({"name": "hello"})
+    assert (res.status_code, res.json()) == (
+        502, {"error": f"the marketplace lists no wheel of {HELLO_PACKAGE}==1.2.0 for this Python "
+                       f"({sys.version_info.major}.{sys.version_info.minor})"},
+    )
+    _no_wheel_installed(host)
+
+
+def test_the_marketplace_and_pypi_disagreeing_on_the_listed_file_is_refused(start):
+    host = start()
+    host.net.publish(versions=["1.2.0"], marketplace_files=[
+        {"path": f"{HELLO_MODULE}-1.2.0-py3-none-any.whl", "integrity": "sha256-" + "C" * 43 + "="},
+    ])
+    res = host.install({"name": "hello"})
+    assert (res.status_code, res.json()) == (502, {"error": "integrity mismatch: the marketplace and PyPI disagree"})
+    _no_wheel_installed(host)
+
+
+def test_without_files_the_marketplace_integrity_must_name_a_pypi_wheel(start):
+    host = start()
+    host.net.publish(versions=["1.2.0"], marketplace_files=None)
+    assert host.install({"name": "hello"}).status_code == 202  # an older marketplace: its integrity of the wheel
+
+    bare = start("bare")
+    bare.net.publish(versions=["1.2.0"], marketplace_files=None, marketplace_integrity=None)
+    res = bare.install({"name": "hello"})
+    assert (res.status_code, res.json()) == (502, {"error": f"the marketplace has no sha256 of {HELLO_PACKAGE}==1.2.0"})
+    _no_wheel_installed(bare)
 
 
 def test_a_wheel_that_does_not_match_pypis_hash_is_refused(start):
