@@ -29,6 +29,9 @@ dependencies = [
     "fastapi>=0.100.0",
 ]
 
+[project.entry-points."qodalis_cli.plugins"]
+jobs = "qodalis_cli_jobs.plugin:create_plugin"
+
 [project.urls]
 Homepage = "https://github.com/qodalis-solutions/cli-server-python"
 Repository = "https://github.com/qodalis-solutions/cli-server-python"

@@ -14,6 +14,10 @@ from .processors.aws_command_processor import AwsCommandProcessor
 class AwsModule(CliModule):
     """AWS cloud resource management module."""
 
+    def __init__(self) -> None:
+        # One processor (and config service) per module: the plugin's settings configure it
+        self._processors: list[ICliCommandProcessor] = [AwsCommandProcessor()]
+
     @property
     def name(self) -> str:
         """Returns the module name."""
@@ -42,4 +46,4 @@ class AwsModule(CliModule):
     @property
     def processors(self) -> Sequence[ICliCommandProcessor]:
         """Returns the command processors provided by this module."""
-        return [AwsCommandProcessor()]
+        return self._processors

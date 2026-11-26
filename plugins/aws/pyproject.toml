@@ -31,6 +31,9 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio", "moto[all]>=5.0.0"]
 
+[project.entry-points."qodalis_cli.plugins"]
+aws = "qodalis_cli_aws.plugin:create_plugin"
+
 [project.urls]
 Homepage = "https://github.com/qodalis-solutions/cli-server-python"
 Repository = "https://github.com/qodalis-solutions/cli-server-python"
