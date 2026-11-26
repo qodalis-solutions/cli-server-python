@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-aws"
-version = "1.0.0b34"
+version = "1.0.0b35"
 description = "AWS cloud resource management plugin for Qodalis CLI servers"
 readme = "README.md"
 license = "MIT"

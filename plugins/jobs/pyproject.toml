@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-jobs"
-version = "1.0.0b34"
+version = "1.0.0b35"
 description = "Background job scheduler plugin for Qodalis CLI servers"
 readme = "README.md"
 license = "MIT"

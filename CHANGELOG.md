@@ -4,6 +4,10 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## 1.0.0b35
+
+- No changes in the Python packages: every server package moves to the version of the Node and .NET releases (the .NET database driver packages, the admin plugin's typed MCP tools on Node).
+
 ## 1.0.0b34
 
 - The admin plugin embeds dashboard 1.0.0-beta.32: notification bell and page, Plugins → Updates, rendered plugin readmes, a link to the marketplace site.
