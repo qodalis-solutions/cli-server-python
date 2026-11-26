@@ -152,6 +152,13 @@ def _parse_command_args(query: str) -> list[str]:
     return parts
 
 
+async def _close(client: Any) -> None:
+    """Closes a client: ``aclose`` (redis 5.0.1+), else ``close`` (redis 4.x/5.0.0, deprecated later)."""
+    close = getattr(client, "aclose", None) or getattr(client, "close", None)
+    if close is not None:
+        await close()
+
+
 class RedisDataExplorerProvider(IDataExplorerProvider):
     """Executes Redis commands against a Redis server."""
 
@@ -213,7 +220,7 @@ class RedisDataExplorerProvider(IDataExplorerProvider):
             )
         finally:
             if client is not None:
-                await client.aclose()
+                await _close(client)
 
     async def get_schema_async(
         self, options: DataExplorerProviderOptions
@@ -294,4 +301,4 @@ class RedisDataExplorerProvider(IDataExplorerProvider):
             return DataExplorerSchemaResult(source=options.name, tables=tables)
         finally:
             if client is not None:
-                await client.aclose()
+                await _close(client)
