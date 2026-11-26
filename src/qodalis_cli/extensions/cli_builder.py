@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
 from qodalis_cli_server_abstractions import (
     DataExplorerProviderOptions,
@@ -97,8 +97,13 @@ class CliBuilder:
         #: marks the settings with ``requires_restart``.
         self.restart = CliServerRestart()
         self._server_plugins: Any = CliServerPlugins(DEFAULT_DATA_DIR, False)
+        #: Whether callers who are not signed in may install, update and remove plugins and change settings (the
+        #: ``config`` command, ``config_set``, ``admin plugins install``, ``admin dashboard install``): false by
+        #: default; ``create_cli_server`` sets it to ``allow_anonymous_admin`` or a protected server.
+        self.anonymous_admin_allowed: Callable[[], bool] = lambda: False
         self.config = CliConfigService(
             self.config_registry, audit=self._config_audit_sink, restart=lambda: self.restart,
+            anonymous_writes=lambda: self.anonymous_admin_allowed(),
         )
 
     def add_permissions(

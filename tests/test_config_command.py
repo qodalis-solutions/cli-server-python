@@ -108,9 +108,21 @@ class Runner:
 
 @pytest.fixture(scope="module")
 def cli():
-    result = create_cli_server(CliServerOptions(configure=lambda b: b.add_config_provider(app_provider())))
+    result = create_cli_server(CliServerOptions(
+        configure=lambda b: b.add_config_provider(app_provider()), allow_anonymous_admin=True,
+    ))
     with TestClient(result.app) as client:
         yield Runner(client, result)
+
+
+def test_an_open_server_without_allow_anonymous_admin_refuses_set_and_reset_and_still_reads():
+    result = create_cli_server(CliServerOptions(configure=lambda b: b.add_config_provider(app_provider())))
+    with TestClient(result.app) as client:
+        cli = Runner(client, result)
+        refusal = "Error: sign-in required: protect the server (users plugin) or set allow_anonymous_admin=True (config:write)"
+        assert cli.text("config set app.main.limit 7") == refusal
+        assert cli.text("config reset app.main.limit") == refusal
+        assert "5" in cli.text("config get app.main.limit")
 
 
 class TestConfigCommandOpenServer:
@@ -324,3 +336,13 @@ class TestConfigCommandProtectedServer:
         assert entry.properties["via"] == "terminal"
         assert entry.properties["changes"] == [{"key": "apiKey", "old": None, "new": "***"}]
         assert "terminal-secret" not in json.dumps([vars(e) for e in entries], default=str)
+
+
+def test_allow_anonymous_admin_logs_a_warning_at_startup(caplog):
+    with caplog.at_level("WARNING", logger="qodalis_cli.create_cli_server"):
+        create_cli_server(CliServerOptions(allow_anonymous_admin=True))
+    assert any("allow_anonymous_admin is on" in r.getMessage() for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="qodalis_cli.create_cli_server"):
+        create_cli_server()
+    assert not any("allow_anonymous_admin" in r.getMessage() for r in caplog.records)

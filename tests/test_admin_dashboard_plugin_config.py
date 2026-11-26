@@ -548,7 +548,7 @@ def test_the_providers_store_the_hosts_store_for_dashboard_plugins_else_the_defa
 def test_config_set_validated_by_the_existing_command_versions_audit_and_config_changed(start):
     net = FakeNet()
     publish_tickets(net)
-    h = start(net=net)
+    h = start(net=net, anonymous_admin=True)
     assert h.post({"name": TICKETS}).status_code == 201
     events = config_events(h)
 
@@ -670,7 +670,7 @@ def test_install_config_applied_per_key_errors_listed_a_bad_config_refused(start
     net = FakeNet()
     publish_tickets(net)
     net.publish("@acme/cli-dashboard-secret", [{"version": "1.0.0", "config": {"entries": [{"key": "token", "type": "secret"}]}}])
-    h = start(net=net)
+    h = start(net=net, anonymous_admin=True)
 
     def run(line: str) -> str:
         return h.run(line).text
@@ -703,7 +703,7 @@ def test_info_the_page_files_and_settings_with_their_values_defaults_and_rules(s
     net = FakeNet()
     publish_tickets(net)
     net.publish("@acme/cli-dashboard-plain", [{"version": "1.0.0", "css": None}])
-    h = start(net=net)
+    h = start(net=net, anonymous_admin=True)
 
     def run(line: str) -> str:
         return h.run(line).text
@@ -743,7 +743,7 @@ def test_info_the_page_files_and_settings_with_their_values_defaults_and_rules(s
 def test_update_config_and_the_settings_it_drops_reported(start):
     net = FakeNet()
     publish_tickets(net, [{"version": "1.0.0", "config": SETTINGS_V1}])
-    h = start(net=net)
+    h = start(net=net, anonymous_admin=True)
 
     def run(line: str) -> str:
         return h.run(line).text

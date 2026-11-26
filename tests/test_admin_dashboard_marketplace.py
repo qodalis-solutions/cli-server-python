@@ -653,7 +653,7 @@ def test_command_list_search_install_name_at_version_update_remove(start):
     net.publish(TICKETS, [{"version": "1.0.0"}, {"version": "1.1.0"}], title="Tickets",
                 server_packages={"python": "acme-cli-server-plugin-tickets"})
     net.publish("@other/cli-dashboard-crm", [{"version": "0.1.0"}], verified=False)
-    h = start(net=net)
+    h = start(net=net, anonymous_admin=True)
 
     def run(line: str) -> str:
         return h.run(line).text
@@ -697,9 +697,21 @@ def test_command_list_search_install_name_at_version_update_remove(start):
     ]
 
 
+def test_command_install_update_remove_refused_to_anonymous_callers_reads_allowed(start):
+    net = FakeNet()
+    net.publish(TICKETS, [{"version": "1.0.0"}], title="Tickets")
+    h = start(net=net)
+    refused = "Error: sign-in required: protect the server (users plugin) or set allow_anonymous_admin=True (dashboard:install)"
+    assert h.run(f"admin dashboard install {TICKETS}").text == refused
+    assert h.run(f"admin dashboard update {TICKETS}").text == refused
+    assert h.run(f"admin dashboard remove {TICKETS}").text == refused
+    assert TICKETS in h.run("admin dashboard search").text
+    assert h.get(f"{BASE}/installed").json() == []
+
+
 def test_command_reports_an_unreachable_marketplace(start):
     net = FakeNet()
     net.marketplace_down = True
-    h = start(net=net)
+    h = start(net=net, anonymous_admin=True)
     assert h.run("admin dashboard search").text == "Error: marketplace unreachable"
     assert h.run(f"admin dashboard install {TICKETS}").text == "Error: marketplace unreachable"

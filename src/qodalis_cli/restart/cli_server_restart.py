@@ -177,6 +177,8 @@ class CliServerRestartServices:
     is_protected: Optional[Callable[[], bool]] = None
     #: Closes the WebSockets (events, logs, shell) with a code and reason.
     close_sockets: Optional[Callable[[int, str], Awaitable[None]]] = None
+    #: The server's ``allow_anonymous_admin``: lets callers who are not signed in restart it, as ``allow_anonymous``.
+    allow_anonymous_admin: Optional[Callable[[], bool]] = None
 
 
 def detect_supervisor(runtime: Any) -> Optional[str]:
@@ -331,9 +333,11 @@ class CliServerRestart(ICliServerRestart):
         if mode is None:
             raise CliServerRestartError(409, RESTART_NOT_SUPPORTED)
         protected = bool(self._services.is_protected()) if self._services.is_protected is not None else False
-        if request.actor is None and not protected and not self._options.allow_anonymous:
+        anonymous_admin = bool(self._services.allow_anonymous_admin()) if self._services.allow_anonymous_admin else False
+        if request.actor is None and not protected and not self._options.allow_anonymous and not anonymous_admin:
             raise CliServerRestartError(
-                403, "restart needs sign-in: protect the server (users plugin) or set restart.allow_anonymous",
+                403, "restart needs sign-in: protect the server (users plugin) or set restart.allow_anonymous "
+                "(or allow_anonymous_admin)",
             )
         if self._restarting:
             raise CliServerRestartError(409, "restart already in progress")

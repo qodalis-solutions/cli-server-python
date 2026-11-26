@@ -10,7 +10,7 @@ from typing import Any, Iterator
 
 from fastapi.testclient import TestClient
 
-from qodalis_cli import create_cli_server
+from qodalis_cli import CliServerOptions, create_cli_server
 from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder
 
 from .command_helpers import ROOT_PASS, V1, login, protect, run_command
@@ -20,7 +20,7 @@ MARKER = "test:marker"
 
 @contextmanager
 def start(protected: bool) -> Iterator[tuple[TestClient, Any, Any, str]]:
-    result = create_cli_server()
+    result = create_cli_server(CliServerOptions(allow_anonymous_admin=True))  # config set from an open terminal
     users = protect(result) if protected else None
     builder = CliAdminBuilder().set_credentials("admin", "adminpass").set_jwt_secret("secret-for-the-config-socket-test")
     if users is not None:

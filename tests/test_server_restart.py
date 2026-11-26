@@ -279,6 +279,17 @@ async def test_refuses_with_403_on_a_server_without_sign_in_unless_allow_anonymo
     assert fake.calls == []
 
 
+async def test_allow_anonymous_admin_lets_an_anonymous_caller_restart_too():
+    fake = FakeRuntime()
+    cli = create_cli_server(CliServerOptions(
+        restart=CliServerRestartOptions(runtime=fake.runtime(), mode="exit"), allow_anonymous_admin=True,
+    ))
+    async with client(cli) as c:
+        assert (await c.post(URL)).status_code == 202
+        await cli.restart.completion
+    assert fake.calls != []
+
+
 # --------------------------------------------------------------------------- protected server
 
 

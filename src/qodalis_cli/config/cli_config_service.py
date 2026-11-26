@@ -36,6 +36,7 @@ from qodalis_cli_server_abstractions.config import (
 from qodalis_cli_server_abstractions.config.config_types import CliConfigValidation
 from qodalis_cli_server_abstractions.events import CliEventAudience
 
+from ..security import anonymous_admin_refused
 from .cli_config_registry import CliConfigRegistry, _order
 
 logger = logging.getLogger("qodalis_cli.config")
@@ -131,6 +132,10 @@ def _audit_value(view: Optional[dict[str, Any]], raw: Any, side: str) -> Any:
     return clone_cli_config_value(current)
 
 
+#: Where requests of callers come from (the HTTP API always has a signed-in caller).
+_CALLER_VIAS = ("terminal", "mcp")
+
+
 class CliConfigService(ICliConfigService):
     """The server's config providers, read and changed with permissions,
     validation, conflicts, secrets masked, audit (``config.update``) and
@@ -144,8 +149,13 @@ class CliConfigService(ICliConfigService):
         audit: Optional[Callable[[], Optional[CliConfigAuditSink]]] = None,
         event_bus: Optional[Callable[[], Any]] = None,
         restart: Optional[Callable[[], Any]] = None,
+        anonymous_writes: Optional[Callable[[], bool]] = None,
     ) -> None:
         self.registry = registry
+        #: Whether a caller who is not signed in (no caller, through the ``config`` command or the ``config_set`` MCP
+        #: tool) may change settings; ``None``: allowed.  The server's builder passes ``allow_anonymous_admin`` (or a
+        #: protected server).  The host's own code (another ``via``) is not affected.
+        self._anonymous_writes = anonymous_writes
         self._audit = audit
         self._event_bus = event_bus
         #: The restart service: a change to a ``requiresRestart`` entry is marked pending
@@ -244,6 +254,11 @@ class CliConfigService(ICliConfigService):
         context: CliConfigContext,
     ) -> dict[str, Any]:
         self._require_permission(context, CliConfigPermissions.WRITE)
+        if (
+            context.caller is None and context.via in _CALLER_VIAS
+            and self._anonymous_writes is not None and not self._anonymous_writes()
+        ):
+            raise CliConfigError(403, anonymous_admin_refused(CliConfigPermissions.WRITE))
         await self.ready()
         provider = self._provider(provider_id, context)
         if not is_cli_config_writer(provider):
