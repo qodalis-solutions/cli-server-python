@@ -14,6 +14,7 @@ from .errors import (
 )
 from .i_file_storage_provider import IFileStorageProvider
 from .models import FileEntry, FileStat
+from .read_only import ReadOnlyFileStorage, read_only_file_storage
 
 __all__ = [
     "FileEntry",
@@ -24,4 +25,6 @@ __all__ = [
     "FileStorageNotFoundError",
     "FileStoragePermissionError",
     "IFileStorageProvider",
+    "ReadOnlyFileStorage",
+    "read_only_file_storage",
 ]
