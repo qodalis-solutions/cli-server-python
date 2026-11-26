@@ -692,7 +692,11 @@ class ServerPluginMarketplace:
             existing = self._record_of(plugin["name"])
             if existing is not None:
                 raise DashboardMarketplaceError(409, f"already installed: {plugin['name']}@{existing['version']}")
-            record = await self._install_package(plugin, own, target, actor, None)
+            bundled = self._bundled(own["package"])
+            record = (
+                self._bundled_record(plugin, own, bundled, actor) if bundled is not None
+                else await self._install_package(plugin, own, target, actor, None)
+            )
             self._plugins.save([*(r for r in self._plugins.records() if r["name"] != record["name"]), record])
             restart_required = self._sync_restart(record["name"], f"Install {record['name']} {record['version']}")
             await self._changed("install", record, actor)
@@ -707,6 +711,10 @@ class ServerPluginMarketplace:
             current = self._record_of(name)
             if current is None:
                 raise DashboardMarketplaceError(404, f"not installed: {name}")
+            if current.get("bundled") is True:
+                raise DashboardMarketplaceError(
+                    409, f"{current['package']} comes with the server: it is updated with the server, not from here",
+                )
             plugin, own, target = await self._prepare(name, version)
             if canonicalize_name(own["package"]) != canonicalize_name(current["package"]):
                 raise DashboardMarketplaceError(
@@ -738,8 +746,9 @@ class ServerPluginMarketplace:
             current = self._record_of(name)
             if current is None:
                 raise DashboardMarketplaceError(404, f"not installed: {name}")
-            await asyncio.to_thread(uninstall_from, self._plugins.dir, current["package"])
-            self._remove_wheel(current)
+            if current.get("bundled") is not True:
+                await asyncio.to_thread(uninstall_from, self._plugins.dir, current["package"])
+                self._remove_wheel(current)
             self._plugins.save([r for r in self._plugins.records() if r["name"] != current["name"]])
             restart_required = self._sync_restart(current["name"], f"Remove {current['name']} {current['version']}")
             await self._changed("remove", current, actor)
@@ -796,9 +805,36 @@ class ServerPluginMarketplace:
         for p in self._deps.installed_plugins():
             if canonicalize_name(str(getattr(p, "id", ""))) == wanted and getattr(p, "source", None) != "marketplace":
                 raise DashboardMarketplaceError(409, f"already installed by the host: {own['package']}")
-        if _host_version(own["package"], self._plugins.dir) is not None:
-            raise DashboardMarketplaceError(409, f"already installed by the host: {own['package']}")
         return plugin, own, target
+
+    def _bundled(self, package: str) -> Any:
+        """The package as the server's environment has it (it comes with the server, e.g. the filesystem plugin), or
+        ``None``."""
+        paths = [p for p in sys.path if os.path.abspath(p or ".") != self._plugins.dir]
+        return next(iter(metadata.distributions(name=package, path=paths)), None)
+
+    def _bundled_record(
+        self, plugin: Mapping[str, Any], own: Mapping[str, Any], dist: Any, actor: DashboardMarketplaceActor,
+    ) -> dict[str, Any]:
+        """A package already in the server's environment is enabled, not downloaded: its entry point is checked and
+        it is recorded with ``bundled`` (its version the environment's)."""
+        if not list(dist.entry_points.select(group=CLI_SERVER_PLUGIN_ENTRY_GROUP)):
+            raise DashboardMarketplaceError(
+                400, f"not a server plugin package: {own['package']} (no {CLI_SERVER_PLUGIN_ENTRY_GROUP} entry point)",
+            )
+        title = next((t for t in (plugin.get("title"), plugin.get("name")) if isinstance(t, str) and t.strip()), plugin["name"])
+        record: dict[str, Any] = {
+            "name": plugin["name"], "package": own["package"], "version": dist.version, "integrity": "",
+            "bundled": True, "title": title.strip()[:60],
+        }
+        if isinstance(plugin.get("icon"), str):
+            record["icon"] = plugin["icon"]
+        description = plugin.get("description") if isinstance(plugin.get("description"), str) else dist.metadata.get("Summary")
+        if isinstance(description, str) and description:
+            record["description"] = description[:500]
+        record["installedAt"] = _now_iso()
+        record["installedBy"] = actor.user_name
+        return record
 
     async def _install_package(
         self, plugin: Mapping[str, Any], own: Mapping[str, Any], target: Mapping[str, Any],
