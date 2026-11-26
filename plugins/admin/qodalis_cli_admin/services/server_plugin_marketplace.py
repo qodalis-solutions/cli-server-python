@@ -506,6 +506,29 @@ def _dist_info_dirs(directory: str, package: str) -> list[str]:
     return out
 
 
+def _remove_bytecode(source: str) -> None:
+    """The bytecode Python wrote for a module (``__pycache__/<module>.<tag>.pyc``), which ``RECORD`` does not list."""
+    cache = os.path.join(os.path.dirname(source), "__pycache__")
+    stem = os.path.splitext(os.path.basename(source))[0] + "."
+    try:
+        names = os.listdir(cache)
+    except OSError:
+        return
+    for name in names:
+        if name.startswith(stem) and name.endswith(".pyc"):
+            try:
+                os.remove(os.path.join(cache, name))
+            except OSError:
+                pass
+
+
+def _remove_if_empty(path: str) -> None:
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+
+
 def uninstall_from(directory: str, package: str) -> list[str]:
     """Removes a distribution installed with ``pip install --target``: the files its ``RECORD`` lists (inside
     ``directory`` only), the directories left empty and its ``.dist-info``.  Its dependencies stay."""
@@ -526,17 +549,16 @@ def uninstall_from(directory: str, package: str) -> list[str]:
                     if os.path.isfile(path) or os.path.islink(path):
                         os.remove(path)
                         removed.append(rel)
+                    if path.endswith(".py"):
+                        _remove_bytecode(path)
                     parent = os.path.dirname(path)
                     while parent.startswith(root + os.sep):
                         dirs.add(parent)
                         parent = os.path.dirname(parent)
         for d in sorted(dirs, key=len, reverse=True):
-            if os.path.isdir(d) and d.endswith("__pycache__"):
-                shutil.rmtree(d, ignore_errors=True)
-            try:
-                os.rmdir(d)
-            except OSError:
-                pass
+            # Its __pycache__ (bytecode written at runtime, never in RECORD): gone once its modules' files are
+            _remove_if_empty(os.path.join(d, "__pycache__"))
+            _remove_if_empty(d)
         shutil.rmtree(info, ignore_errors=True)
     return removed
 

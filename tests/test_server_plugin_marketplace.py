@@ -515,6 +515,28 @@ def test_update_replaces_the_files_and_remove_deletes_them_clearing_the_restart(
     assert host.remove("hello").status_code == 404
 
 
+def test_remove_deletes_the_bytecode_python_wrote_for_its_modules(start):
+    host = start()
+    host.net.publish()
+    assert host.install({"name": "hello"}).status_code == 202
+    package = os.path.join(host.dir, HELLO_MODULE)
+    modules = [n[:-3] for n in os.listdir(package) if n.endswith(".py")]
+    cache = os.path.join(package, "__pycache__")
+    os.makedirs(cache)
+    for m in modules:  # as an import writes them (RECORD never lists them)
+        for tag in ("cpython-314", "cpython-314.opt-1"):
+            with open(os.path.join(cache, f"{m}.{tag}.pyc"), "wb") as f:
+                f.write(b"pyc")
+    # A directory shared with another package keeps that package's bytecode
+    shared_cache = os.path.join(host.dir, "__pycache__")
+    os.makedirs(shared_cache)
+    with open(os.path.join(shared_cache, "other_module.cpython-314.pyc"), "wb") as f:
+        f.write(b"pyc")
+    assert host.remove("hello").status_code == 202
+    assert not os.path.exists(package)
+    assert os.listdir(shared_cache) == ["other_module.cpython-314.pyc"]
+
+
 def test_removing_a_loaded_plugin_keeps_it_running_until_a_restart(start, tmp_path):
     first = start()
     first.net.publish()
