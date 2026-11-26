@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "qodalis-cli-server-plugin-databases"
 version = "1.0.0b33"
 description = "Databases for Qodalis CLI servers — stats (size, connections, load, largest tables) and versioned schema migrations of PostgreSQL, MySQL, SQL Server and SQLite, with history, API, terminal and MCP"
-readme = { text = "", content-type = "text/plain" }
+readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [

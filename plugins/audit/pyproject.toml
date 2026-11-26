@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "qodalis-cli-server-plugin-audit"
 version = "1.0.0b33"
 description = "Audit log plugin for Qodalis CLI servers — who did what, to whom and when, and its API"
-readme = { text = "", content-type = "text/plain" }
+readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [

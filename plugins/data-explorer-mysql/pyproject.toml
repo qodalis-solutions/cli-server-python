@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "qodalis-cli-server-plugin-data-explorer-mysql"
 version = "1.0.0b33"
 description = "MySQL Data Explorer provider plugin for Qodalis CLI servers"
-readme = { text = "", content-type = "text/plain" }
+readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
