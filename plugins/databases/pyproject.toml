@@ -33,6 +33,9 @@ postgres = ["asyncpg>=0.29.0"]
 mysql = ["aiomysql>=0.2.0"]
 mssql = ["pymssql>=2.3.0"]
 
+[project.entry-points."qodalis_cli.plugins"]
+databases = "qodalis_cli_databases.plugin:create_plugin"
+
 [project.urls]
 Homepage = "https://github.com/qodalis-solutions/cli-server-python"
 Repository = "https://github.com/qodalis-solutions/cli-server-python"
