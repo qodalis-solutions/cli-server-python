@@ -145,6 +145,8 @@ class DashboardMarketplaceOptions:
     download: Optional[MarketplaceFetch] = None
     #: Server plugins: the server's version (default: the installed ``qodalis-cli-server``'s).
     server_version: Optional[str] = None
+    #: Server plugins: the dependencies a plugin may bring when the marketplace pins none (names, or ``prefix*``).
+    trusted_dependencies: Optional[list[str]] = None
 
 
 @dataclass

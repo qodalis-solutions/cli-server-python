@@ -388,6 +388,7 @@ class CliAdminBuilder:
             server_marketplace = ServerPluginMarketplace(ServerPluginMarketplaceOptions(
                 url=m.url, install=m.install, fetch=m.fetch, download=m.download, timeout=m.timeout,
                 pypi_url=m.pypi_url, pip=m.pip, server_version=m.server_version,
+                trusted_dependencies=m.trusted_dependencies,
             ), ServerPluginMarketplaceDeps(
                 plugins=server_plugins,
                 installed_plugins=lambda: list(getattr(deps.builder, "installed_plugins", None) or []),
