@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-docs"
-version = "1.0.0b33"
+version = "1.0.0b34"
 description = "Docs plugin for Qodalis CLI servers — markdown guides from folders or code, with front matter and variables, served as JSON for the portal"
 readme = "README.md"
 license = "MIT"

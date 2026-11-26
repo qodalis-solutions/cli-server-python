@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-data-explorer-mysql"
-version = "1.0.0b33"
+version = "1.0.0b34"
 description = "MySQL Data Explorer provider plugin for Qodalis CLI servers"
 readme = "README.md"
 license = "MIT"
@@ -26,6 +26,8 @@ classifiers = [
 dependencies = [
     "qodalis-cli-server-abstractions",
     "aiomysql>=0.2.0",
+    # PyMySQL needs it for MySQL 8's default caching_sha2_password sign-in
+    "cryptography>=42",
 ]
 
 [project.entry-points."qodalis_cli.plugins"]
