@@ -50,6 +50,31 @@ Directories are virtual: `mkdir` creates a zero-byte object with a trailing `/` 
 None of its own: the storage is reached through the [filesystem plugin](../filesystem/README.md#terminal-commands)
 (`scp` in the web CLI).
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install filesystem-s3`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_filesystem_s3 import plugin as filesystem_s3
+
+builder.add_plugin(filesystem_s3, {...})
+```
+
+Entry point `filesystem-s3 = "qodalis_cli_filesystem_s3.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 50. Its settings
+(provider `filesystem-s3`, section `settings`; `config set filesystem-s3.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `bucket` | string (required) |  | Bucket |
+| `region` | string | `"us-east-1"` | Region |
+| `prefix` | string |  | Prepended to every path |
+| `endpoint` | string |  | An S3-compatible service (MinIO); empty: AWS |
+| `accessKeyId` | secret |  | Empty: the AWS default credential chain |
+| `secretAccessKey` | secret |  | Secret access key |
+| `readOnly` | boolean | `true` | Uploads, new folders and deletes are refused |
+
 ## License
 
 MIT

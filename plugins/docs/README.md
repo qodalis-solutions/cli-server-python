@@ -117,6 +117,28 @@ $ docs read auth
 Send `Authorization: Bearer <token>` with every request.
 ```
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install docs`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_docs import plugin as docs
+
+builder.add_plugin(docs, {...})
+```
+
+Entry point `docs = "qodalis_cli_docs.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 50. Its settings
+(provider `docs`, section `settings`; `config set docs.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `folder` | string | `"pages"` | The Markdown files (relative paths from the plugin's data directory) |
+| `basePath` | string | `"/qcli/docs"` | Where the guides are served |
+| `title` | string | `"Guides"` | Title |
+| `name` | string | `"Documentation"` | Name |
+
 ## License
 
 MIT

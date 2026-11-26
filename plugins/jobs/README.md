@@ -298,6 +298,23 @@ changes.
 
 History retention is also a setting: `config get jobs` / `config set jobs.history.<key> <value>` (core `config` command).
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install jobs`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_jobs import plugin as jobs
+
+builder.add_plugin(jobs, {...})
+```
+
+Entry point `jobs = "qodalis_cli_jobs.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 50. Its settings
+(provider `jobs`, section `settings`; `config set jobs.settings.<key> <value>`, then a restart):
+
+No settings of its own.
+
 ## License
 
 MIT

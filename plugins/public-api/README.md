@@ -222,6 +222,31 @@ Day         website  ci-bot  Total
 Total             5      10     15
 ```
 
+## Install from the dashboard
+
+Installable at runtime from the server marketplace (the dashboard's Plugins → Marketplace, or
+`admin plugins install public-api`; it loads at the next start), or in code through the same entry, its options the
+defaults of the settings below (a saved setting overrides them):
+
+```python
+from qodalis_cli_public_api import plugin as public_api
+
+builder.add_plugin(public_api, {...})
+```
+
+Entry point `public-api = "qodalis_cli_public_api.plugin:create_plugin"` (group `qodalis_cli.plugins`), load order 50. Its settings
+(provider `public-api`, section `settings`; `config set public-api.settings.<key> <value>`, then a restart):
+
+| Setting | Type | Default | |
+|---|---|---|---|
+| `basePath` | string | `"/qcli/api"` | Where the OpenAPI document and Swagger UI are served |
+| `title` | string | `"API reference"` | Title |
+| `openApiFile` | string |  | A JSON file (relative paths from the plugin's data directory); empty: an empty document |
+| `serverUrl` | string |  | The document's servers URL; empty: the request's |
+| `requestsPerDay` | number | `0` | Per account; 0: unlimited |
+| `requestsPerMinute` | number | `0` | Per account; 0: unlimited |
+| `usageRetentionDays` | number | `31` | Usage kept (days) |
+
 ## License
 
 MIT
