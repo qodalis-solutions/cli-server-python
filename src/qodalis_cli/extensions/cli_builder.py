@@ -418,6 +418,12 @@ class CliBuilder:
         return list(self._data_explorer_registrations)
 
     @property
+    def data_explorer_enabled(self) -> bool:
+        """True when the data explorer is served: a source was added, or its plugin (``data-explorer``) is loaded,
+        which serves its API (no sources yet) so the dashboard's page does not take it for missing."""
+        return bool(self._data_explorer_registrations) or self.plugin_services.has(DATA_EXPLORER_POLICY_SERVICE)
+
+    @property
     def registry(self) -> CliCommandRegistry:
         """Return the underlying command registry."""
         return self._registry
