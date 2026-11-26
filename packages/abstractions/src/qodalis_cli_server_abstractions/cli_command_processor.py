@@ -20,6 +20,15 @@ class CliCommandExample:
     description: str | None = None
 
 
+class CliCommandRefusal(str):
+    """The text of a command refused to its caller (``sign-in required: ...``, ``forbidden: missing permission ...``).
+
+    A processor returns it from ``handle_async`` in place of a plain string: the executor answers it with exit
+    code 1 and the error style, as Node's refusals, while the text stays the same."""
+
+    __slots__ = ()
+
+
 def command_matches(processor: Any, name: str) -> bool:
     """Whether ``name`` is the processor's command or one of its aliases
     (ignoring case)."""

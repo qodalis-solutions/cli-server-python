@@ -715,10 +715,12 @@ def test_command_install_update_remove_refused_to_anonymous_callers_reads_allowe
     net.publish(TICKETS, [{"version": "1.0.0"}], title="Tickets")
     h = start(net=net)
     refused = "Error: sign-in required: protect the server (users plugin) or set allow_anonymous_admin=True (dashboard:install)"
-    assert h.run(f"admin dashboard install {TICKETS}").text == refused
-    assert h.run(f"admin dashboard update {TICKETS}").text == refused
-    assert h.run(f"admin dashboard remove {TICKETS}").text == refused
-    assert TICKETS in h.run("admin dashboard search").text
+    for line in (f"admin dashboard install {TICKETS}", f"admin dashboard update {TICKETS}", f"admin dashboard remove {TICKETS}"):
+        res = h.run(line)
+        assert (res.text, res.exit_code) == (refused, 1)  # exit code 1, as on Node
+        assert res.body["outputs"][0]["style"] == "error"
+    search = h.run("admin dashboard search")
+    assert TICKETS in search.text and search.exit_code == 0
     assert h.get(f"{BASE}/installed").json() == []
 
 

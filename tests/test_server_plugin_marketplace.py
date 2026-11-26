@@ -603,10 +603,10 @@ REFUSED_ANONYMOUS = "Error: sign-in required: protect the server (users plugin) 
 def test_admin_plugins_install_update_remove_refused_to_anonymous_callers_reads_allowed(start):
     host = start()
     host.net.publish(versions=["1.1.0", "1.2.0"])
-    assert host.run("admin plugins install hello@1.1.0").text == REFUSED_ANONYMOUS
+    for line in ("admin plugins install hello@1.1.0", "admin plugins update hello", "admin plugins remove hello"):
+        res = host.run(line)
+        assert (res.text, res.exit_code) == (REFUSED_ANONYMOUS, 1)  # exit code 1, as on Node
     assert host.pip.calls == []
-    assert host.run("admin plugins update hello").text == REFUSED_ANONYMOUS
-    assert host.run("admin plugins remove hello").text == REFUSED_ANONYMOUS
     assert "installable" in host.run("admin plugins search hello").text
     assert host.run("admin plugins installed").text.startswith("No server plugins installed")
 
@@ -623,4 +623,5 @@ def test_admin_plugins_search_installed_install_update_remove(start):
     assert host.run("admin plugins update hello").text.startswith("Updated hello from 1.1.0 to 1.2.0.")
     assert host.run("admin plugins update hello").text == "hello is already at 1.2.0."
     assert host.run("admin plugins remove hello").text.startswith(f"Removed hello ({HELLO_PACKAGE}==1.2.0).")
-    assert host.run("admin plugins install nope").text == "Error: plugin not found: nope"
+    not_found = host.run("admin plugins install nope")
+    assert (not_found.text, not_found.exit_code) == ("Error: plugin not found: nope", 0)  # only refusals exit with 1

@@ -10,6 +10,7 @@ from qodalis_cli_server_abstractions import (
     CliCommandExample,
     CliCommandParameterDescriptor,
     CliCommandProcessor,
+    CliCommandRefusal,
     CliProcessCommand,
     ICliCommandProcessor,
     get_positionals,
@@ -81,7 +82,9 @@ def _error_text(exc: BaseException) -> str:
         version = f" (current version {exc.version})" if exc.version is not None else ""
         lines = [f"Error: {exc.message}{version}"]
         lines.extend(f"  {key}: {message}" for key, message in (exc.errors or {}).items())
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        # Sign-in required / missing permission: exit code 1, as on Node
+        return CliCommandRefusal(text) if exc.status == 403 else text
     return f"Error: {exc}"
 
 

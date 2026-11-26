@@ -9,6 +9,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Sequence
 
+from qodalis_cli_server_abstractions import CliCommandRefusal
 from qodalis_cli_server_abstractions.events import CliEventAudience, ICliEventBus
 
 from ..abstractions import CliProcessCommand, ICliCommandProcessor, ICliProcessorFilter
@@ -249,6 +250,12 @@ class CliCommandExecutorService(ICliCommandExecutorService):
                 logger.info("Command completed (structured): %s", full_command)
                 return apply_response_limits(structured, self.max_table_rows)
             result = await processor.handle_async(command, cancellation_event)
+            if isinstance(result, CliCommandRefusal):
+                logger.warning("Command refused: %s (%s)", full_command, result)
+                return CliServerResponse(
+                    exitCode=1,
+                    outputs=[CliServerTextOutput(value=str(result), style="error")],
+                )
             logger.info("Command completed: %s", full_command)
             return CliServerResponse(
                 exitCode=0,

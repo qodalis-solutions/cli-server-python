@@ -544,7 +544,8 @@ def test_admin_restart_status_needs_only_admin_access_restarting_needs_server_re
     fake = FakeRuntime()
     h = admin_host(fake, {"viewer": ["admin:access", "commands:execute"]}, mode="exit")
     assert "No changes are waiting for a restart." in h.run("admin restart status", "viewer").text
-    assert h.run("admin restart --yes", "viewer").text == "Error: forbidden: missing permission server:restart"
+    refused = h.run("admin restart --yes", "viewer")
+    assert (refused.text, refused.exit_code) == ("Error: forbidden: missing permission server:restart", 1)
     assert fake.calls == []
 
 
