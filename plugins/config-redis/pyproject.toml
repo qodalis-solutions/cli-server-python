@@ -31,6 +31,9 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0", "pytest-asyncio>=0.21", "httpx>=0.24"]
 
+[project.entry-points."qodalis_cli.plugins"]
+config-redis = "qodalis_cli_config_redis.plugin:create_plugin"
+
 [project.urls]
 Homepage = "https://github.com/qodalis-solutions/cli-server-python"
 Repository = "https://github.com/qodalis-solutions/cli-server-python"

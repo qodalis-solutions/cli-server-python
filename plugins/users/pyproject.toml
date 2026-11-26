@@ -28,6 +28,9 @@ dependencies = [
     "fastapi>=0.100.0",
 ]
 
+[project.entry-points."qodalis_cli.plugins"]
+users = "qodalis_cli_users.plugin:create_plugin"
+
 [project.urls]
 Homepage = "https://github.com/qodalis-solutions/cli-server-python"
 Repository = "https://github.com/qodalis-solutions/cli-server-python"
