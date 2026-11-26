@@ -235,14 +235,82 @@ def test_without_pins_a_dependency_the_host_does_not_trust_is_refused(start):
 def test_without_pins_trusted_dependencies_install_never_the_servers_packages(start, trusted):
     host = start(trusted=trusted)
     host.net.publish(wheel=lambda v: make_wheel(v, requires=DEPS))
-    # pip resolving the tree brings a package the server has: dropped, it never shadows the server's
-    host.pip.brings = ["fastapi", "qcli_test_transitive"]
+    host.net.add_pypi("qcli-test-missing-dep", "0.9")
+    sha = host.net.add_pypi("qcli-test-missing-dep", "1.3", requires=["fastapi>=0.1", "colorama; sys_platform == 'never'"])
+    host.net.add_pypi("qcli-test-missing-dep", "2.0", wheel=False)  # newest, no wheel: skipped
+    # pip never resolves: whatever it might bring is dropped anyway, it never shadows the server's
+    host.pip.brings = ["fastapi"]
     assert host.install({"name": "hello"}).status_code == 202
     deps = host.pip.calls[1]
-    assert deps[:2] == ["install", "--target"] and "--no-deps" not in deps and "--require-hashes" not in deps
-    assert [a for a in deps if not a.startswith("-") and a != ":all:"][2:] == ["qcli-test-missing-dep>=1.0"]
+    assert deps[:2] == ["install", "--target"] and "--no-deps" in deps and "--require-hashes" in deps
+    assert deps[deps.index("--only-binary") + 1] == ":all:"
+    assert host.pip.requirements == f"qcli-test-missing-dep==1.3 --hash=sha256:{sha}\n"
     infos = sorted(d for d in os.listdir(host.dir) if d.endswith(".dist-info"))
-    assert infos == ["qcli_hello_plugin-1.2.0.dist-info", "qcli_test_missing_dep-9.9.9.dist-info", "qcli_test_transitive-9.9.9.dist-info"]
+    assert infos == ["qcli_hello_plugin-1.2.0.dist-info", "qcli_test_missing_dep-9.9.9.dist-info"]
+
+
+def test_without_pins_every_transitive_dependency_is_resolved_trusted_and_hash_pinned(start):
+    host = start(trusted=["qcli-test-*"])
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=["qcli-test-a>=1"]))
+    a = host.net.add_pypi("qcli-test-a", "1.0", requires=["qcli-test-b[fast]<3", "fastapi"])
+    b = host.net.add_pypi("qcli-test-b", "2.5", requires=["qcli-test-c; extra == 'fast'", "qcli-test-d; extra == 'slow'"])
+    c = host.net.add_pypi("qcli-test-c", "0.1")
+    host.net.add_pypi("qcli-test-b", "3.0")
+    assert host.install({"name": "hello"}).status_code == 202, host.pip.calls
+    assert host.pip.requirements == (
+        f"qcli-test-a==1.0 --hash=sha256:{a}\n"
+        f"qcli-test-b==2.5 --hash=sha256:{b}\n"
+        f"qcli-test-c==0.1 --hash=sha256:{c}\n"
+    )
+    assert "--no-deps" in host.pip.calls[1]
+
+
+def test_without_pins_an_untrusted_transitive_dependency_is_refused(start):
+    host = start(trusted=["qcli-test-a"])
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=["qcli-test-a"]))
+    host.net.add_pypi("qcli-test-a", "1.0", requires=["evil-package>=1"])
+    host.net.add_pypi("evil-package", "1.0")
+    res = host.install({"name": "hello"})
+    assert (res.status_code, res.json()) == (400, {"error": (
+        "untrusted dependency: evil-package (needed by qcli-test-a; the marketplace pins none and the server does not "
+        "trust it)"
+    )})
+    assert host.pip.calls == [] and not os.path.exists(os.path.join(host.dir, "installed.json"))
+
+
+@pytest.mark.parametrize("wheel_requires,pypi_requires", [
+    (["qcli-test-a @ https://evil.test/qcli_test_a-1.0-py3-none-any.whl"], None),
+    (["qcli-test-a"], ["qcli-test-b @ git+https://evil.test/b.git"]),
+])
+def test_a_direct_url_requirement_is_refused_even_trusted(start, wheel_requires, pypi_requires):
+    host = start(trusted=["*"])
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=wheel_requires))
+    host.net.add_pypi("qcli-test-a", "1.0", requires=pypi_requires)
+    res = host.install({"name": "hello"})
+    assert res.status_code == 400
+    assert res.json()["error"].startswith("direct-URL dependency refused: qcli-test-")
+    assert host.pip.calls == [] and not os.path.exists(os.path.join(host.dir, "installed.json"))
+
+
+def test_a_direct_url_requirement_is_refused_with_pins_too(start):
+    host = start()
+    digest = "sha256-" + base64.b64encode(hashlib.sha256(b"dep").digest()).decode()
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=["qcli-test-a @ https://evil.test/a.whl"]), dependencies=[
+        {"id": "qcli-test-a", "version": "1.0", "integrity": digest, "range": "*"},
+    ])
+    res = host.install({"name": "hello"})
+    assert res.json() == {"error": f"direct-URL dependency refused: qcli-test-a (needed by {HELLO_PACKAGE})"}
+    assert host.pip.calls == []
+
+
+def test_without_pins_conflicting_requirements_are_refused(start):
+    host = start(trusted=["qcli-test-*"])
+    host.net.publish(wheel=lambda v: make_wheel(v, requires=["qcli-test-a", "qcli-test-b"]))
+    host.net.add_pypi("qcli-test-a", "1.0", requires=["qcli-test-b<2"])
+    host.net.add_pypi("qcli-test-b", "2.0")
+    res = host.install({"name": "hello"})
+    assert (res.status_code, res.json()) == (400, {"error": "conflicting dependency: qcli-test-a needs qcli-test-b<2, 2.0 is chosen"})
+    assert host.pip.calls == []
 
 
 def test_pinned_dependencies_install_hash_checked_without_resolving(start):
