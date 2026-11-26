@@ -110,7 +110,12 @@ class AdminServerPluginsSearchProcessor(CliCommandProcessor):
             rows = []
             for p in items:
                 platform = p.get("platform") or None
-                if platform and platform.get("installed"):
+                code = p.get("installed") if isinstance(p.get("installed"), dict) and p["installed"].get("source") == "code" else None
+                if code:
+                    status = "added in code" + (f" {code['version']}" if code.get("version") else "")
+                    if p.get("updateAvailable"):
+                        status += ", newer version in the marketplace"
+                elif platform and platform.get("installed"):
                     v = platform["installed"]
                     status = f"installed {v}, update available" if p.get("updateAvailable") else f"installed {v}"
                 elif p.get("allowed"):

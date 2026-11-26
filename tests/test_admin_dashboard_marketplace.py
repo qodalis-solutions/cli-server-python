@@ -278,7 +278,7 @@ def test_installs_the_newest_fitting_version_stored_registered_live_and_served(s
 
     # GET /installed, the list item now annotated
     assert h.get(f"{BASE}/installed").json() == [{**body, "updateAvailable": False}]
-    assert h.get(f"{BASE}/plugins").json()["items"][0]["installed"] == {"version": "1.1.0"}
+    assert h.get(f"{BASE}/plugins").json()["items"][0]["installed"] == {"version": "1.1.0", "source": "marketplace"}
 
 
 def test_installs_a_given_version_and_refuses_unknown_unlisted_invalid_and_too_new_versions(start):
@@ -380,6 +380,39 @@ def test_reads_the_files_from_the_version_record_when_the_details_leave_them_out
     assert os.listdir(os.path.join(h.dir, "@acme+cli-dashboard-tickets", "1.0.0")) == ["extension.js"]
 
 
+def test_a_page_added_in_code_is_installed_with_source_code_and_install_is_refused(start):
+    net = FakeNet()
+    net.publish(JOBS, [{"version": "1.0.0"}, {"version": "1.1.0"}])
+    net.publish("@qodalis/cli-dashboard-module-users", [{"version": "1.1.0"}])
+    net.publish(TICKETS, [{"version": "2.0.0"}])
+    net.publish("@acme/cli-dashboard-billing", [{"version": "1.0.0"}], extension_id="billing")
+
+    def configure(r: Any) -> None:
+        r.builder.add_dashboard_extension(
+            {"id": "jobs", "title": "Jobs", "entry": "/qcli/modules/jobs/extension.js", "package": JOBS, "version": "1.0.0"},
+        )
+        # no package: an official module's page by its id
+        r.builder.add_dashboard_extension({"id": "users", "title": "Users", "entry": "/qcli/modules/users/extension.js"})
+        # a third-party page without a package is not matched by its id
+        r.builder.add_dashboard_extension({"id": "billing", "title": "Billing", "entry": "/x/billing.js"})
+
+    h = start(net=net, configure=configure)
+    items = {i["name"]: i for i in h.get(f"{BASE}/plugins").json()["items"]}
+    assert items[JOBS]["installed"] == {"version": "1.0.0", "source": "code"} and items[JOBS]["updateAvailable"] is True
+    users = items["@qodalis/cli-dashboard-module-users"]
+    assert users["installed"] == {"version": None, "source": "code"} and users["updateAvailable"] is False
+    assert items[TICKETS]["installed"] is None and items["@acme/cli-dashboard-billing"]["installed"] is None
+    assert h.get(f"{BASE}/plugins/{JOBS}").json()["installed"] == {"version": "1.0.0", "source": "code"}
+    res = h.post({"name": JOBS})
+    assert res.status_code == 409
+    assert res.json() == {"error": f"already added in code: {JOBS}@1.0.0"}
+    assert os.listdir(h.dir) == []
+    # not a marketplace install: nothing to update or remove here
+    assert h.put(JOBS, {}).status_code == 404
+    assert h.delete(JOBS).status_code == 404
+    assert "added in code 1.0.0, newer version in the marketplace" in h.run("admin dashboard search").text
+
+
 def test_an_id_taken_by_another_extension_is_a_409(start):
     net = FakeNet()
     net.publish(JOBS, [{"version": "1.0.0"}])
@@ -389,7 +422,8 @@ def test_an_id_taken_by_another_extension_is_a_409(start):
     ))
     res = h.post({"name": JOBS})
     assert res.status_code == 409
-    assert res.json() == {"error": "dashboard extension already registered: jobs"}
+    # jobs is the official module's page: added in code
+    assert res.json() == {"error": f"already added in code: {JOBS}"}
     assert os.listdir(h.dir) == []
     # the extension's own id; a second package with that id clashes with the first
     assert h.post({"name": "@acme/cli-dashboard-billing"}).json()["id"] == "billing"
@@ -425,7 +459,7 @@ def test_updates_to_the_newest_version_same_page_id_old_version_deleted(start):
     net.publish(TICKETS, [{"version": "1.0.0"}, {"version": "1.2.0"}])
     assert h.get(f"{BASE}/installed").json()[0]["updateAvailable"] is True
     item = h.get(f"{BASE}/plugins").json()["items"][0]
-    assert (item["installed"], item["updateAvailable"]) == ({"version": "1.0.0"}, True)
+    assert (item["installed"], item["updateAvailable"]) == ({"version": "1.0.0", "source": "marketplace"}, True)
 
     res = h.put(quote(TICKETS, safe=""), {})
     assert res.status_code == 200

@@ -253,3 +253,27 @@ class TestPluginPages:
         for page in (JOBS_DASHBOARD_PAGE, AUDIT_DASHBOARD_PAGE, TOKENS_DASHBOARD_PAGE, USERS_DASHBOARD_PAGE, ACCOUNT_DASHBOARD_PAGE,
                      FILESYSTEM_PAGE, DATA_EXPLORER_PAGE):
             CliDashboardExtension.of({**page, "entry": "/x.js"}).validated()
+
+
+def test_the_package_and_version_of_a_build_come_from_its_banner_or_npm_package_the_extension_wins(tmp_path):
+    from qodalis_cli_server_abstractions.dashboard_modules import dashboard_module_identity
+
+    banner = tmp_path / "banner"
+    banner.mkdir()
+    (banner / "extension.js").write_text("/*! @qodalis/cli-dashboard-module-jobs 1.0.0-beta.29 */\nexport default {};")
+    page = dashboard_module_page(str(banner), "/qcli/modules/jobs", {"id": "jobs", "title": "Jobs"})
+    assert (page.extension["package"], page.extension["version"]) == ("@qodalis/cli-dashboard-module-jobs", "1.0.0-beta.29")
+    ext = CliDashboardExtension.of(page.extension).validated().to_dict()
+    assert ext["package"] == "@qodalis/cli-dashboard-module-jobs"
+    assert dashboard_module_page(str(banner), "/qcli/modules/jobs", {"id": "jobs", "title": "Jobs", "version": "9.9.9"}).extension["version"] == "9.9.9"
+    pkg = tmp_path / "pkg"
+    (pkg / "dist").mkdir(parents=True)
+    (pkg / "dist" / "extension.js").write_text("export default {};")
+    (pkg / "package.json").write_text('{"name": "@qodalis/cli-dashboard-module-audit", "version": "1.0.0-beta.28"}')
+    assert dashboard_module_identity(str(pkg / "dist")) == {"package": "@qodalis/cli-dashboard-module-audit", "version": "1.0.0-beta.28"}
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "extension.js").write_text("export default {};")
+    assert "package" not in dashboard_module_page(str(plain), "/qcli/modules/p", {"id": "p", "title": "P"}).extension
+    with pytest.raises(ValueError, match="package must be an npm package name"):
+        CliDashboardExtension.of({"id": "x", "title": "X", "entry": "/x.js", "package": "Not A Package"}).validated()

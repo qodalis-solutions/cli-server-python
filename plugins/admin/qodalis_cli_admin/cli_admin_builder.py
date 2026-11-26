@@ -363,6 +363,10 @@ class CliAdminBuilder:
 
             marketplace = DashboardMarketplace(self._marketplace, DashboardMarketplaceDeps(
                 extension_ids=lambda: [e.id for e in getattr(deps.builder, "dashboard_extensions", None) or []],
+                extensions=lambda: [
+                    e.to_dict() if hasattr(e, "to_dict") else dict(e)
+                    for e in getattr(deps.builder, "dashboard_extensions", None) or []
+                ],
                 add_extension=add_extension,
                 remove_extension=remove_extension,
                 server_plugins=lambda: [p.id for p in getattr(deps.builder, "installed_plugins", None) or []],
