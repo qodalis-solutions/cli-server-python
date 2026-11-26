@@ -4,6 +4,16 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## Unreleased
+
+- **The data explorer installed without a source no longer reads as missing.** Its API (`/api/qcli/data-explorer/*`) and dashboard page were served only once a source was added, so with the `data-explorer` plugin alone `GET /sources` was FastAPI's 404 and the dashboard's Data explorer page said "This page needs the server plugin Data explorer… not installed". The API (an empty list of sources), the `data_*` MCP tools and the page are now served as soon as the plugin is loaded (`CliBuilder.data_explorer_enabled`).
+- **public-api loads from the marketplace on a host that mounts the users plugin in code** (as production hosts do). It failed with "Cannot add middleware after an application has started": its `X-RateLimit-*` middleware is added to the running app's stack, which is built again on the next request.
+- Server marketplace: **a dependency pinned at a wheel per platform** (asyncpg, pymssql, pymongo): the pin's `hashes` (every wheel's sha256, SRI form) all go to `pip --require-hashes`, which picks this platform's; `integrity` alone as before. One pin per package: the same package pinned twice at one version is installed once, at two versions refused (`conflicting dependency: the marketplace pins …`).
+- Server marketplace: **a dependency already in the plugins folder at another version is replaced, not doubled.** Installing `aws` (boto3 1.34) after `filesystem-s3` (boto3 1.26) left both `.dist-info` and aws running boto3 1.26's files. A package there meeting the pin's range is kept; one that does not is uninstalled and the pinned version moved in, unless another installed package needs a version the pin does not meet (400 `conflicting dependency: <package> <version> (installed) needs …`).
+- Server marketplace: a plugin needing another server plugin that is not installed (`filesystem-sqlite` needs `databases`) answers 400 `needs the server plugin databases (…): install it first, then this one` instead of "untrusted dependency".
+- filesystem (server disk): **a folder above the roots lists the folders leading to them** (`ls /` with the root `/srv/files` answers `srv`), so the dashboard's Files page, which opens at `/`, no longer shows "Access denied: /"; a folder above no root and files outside the roots stay refused.
+- data-explorer-redis: needs `redis>=5.0.1` and closes its client with `close()` where `aclose()` is missing; with redis 5.0.0 every query answered "'Redis' object has no attribute 'aclose'".
+
 ## 1.0.0b33
 
 - The admin plugin embeds dashboard 1.0.0-beta.31: a failed install, update or remove shows the server's message, error texts never show an HTML page, a page whose server plugin is missing says so, and installing a dashboard plugin offers its missing server plugin.
