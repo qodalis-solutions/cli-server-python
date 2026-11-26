@@ -137,6 +137,9 @@ class ServerPluginMarketplaceOptions:
     pip: Optional[PipRunner] = None
     #: The server's version (default: the installed ``qodalis-cli-server``'s).
     server_version: Optional[str] = None
+    #: Dependencies a plugin may bring when the marketplace pins none (names, or prefixes ``acme-*``); without a pin
+    #: or a match the install is refused ("untrusted dependency").
+    trusted_dependencies: Optional[list[str]] = None
 
 
 @dataclass
@@ -362,11 +365,60 @@ def missing_requirements(requires: list[str], plugins_dir: str) -> list[str]:
         name = canonicalize_name(req.name)
         if name in SERVER_CORE_PACKAGES:
             continue
-        have = _host_version(req.name, plugins_dir) or _dir_version(req.name, plugins_dir)
+        host = _host_version(req.name, plugins_dir)
+        if host is not None:
+            # Never installed beside (or shadowing) the server's own copy
+            if req.specifier and not req.specifier.contains(host, prereleases=True):
+                raise DashboardMarketplaceError(400, f"incompatible dependency: needs {req.name}{req.specifier}, the server has {host}")
+            continue
+        have = _dir_version(req.name, plugins_dir)
         if have is not None and (not req.specifier or req.specifier.contains(have, prereleases=True)):
             continue
         out.append(str(req))
     return out
+
+
+def is_trusted_dependency(name: str, trusted: list[str]) -> bool:
+    """Whether the host's ``trusted_dependencies`` allows a package: a name (``httpx``) or a prefix (``qodalis-*``),
+    compared normalized."""
+    wanted = canonicalize_name(name)
+    for pattern in trusted:
+        if not isinstance(pattern, str) or not pattern.strip():
+            continue
+        text = pattern.strip()
+        if text.endswith("*"):
+            if wanted.startswith(canonicalize_name(text[:-1]) if text[:-1] else ""):
+                return True
+        elif canonicalize_name(text) == wanted:
+            return True
+    return False
+
+
+def _integrity_hex(integrity: Any) -> Optional[str]:
+    """``sha256-<base64>`` -> its hex digest; ``None`` for anything else."""
+    if not isinstance(integrity, str) or not _SHA256.fullmatch(integrity):
+        return None
+    try:
+        return base64.b64decode(integrity[len("sha256-"):]).hex()
+    except ValueError:
+        return None
+
+
+def pinned_dependencies(target: Any) -> Optional[list[dict[str, str]]]:
+    """The dependencies the marketplace pinned for a version (``dependencies: [{ id, version, integrity, range }]``,
+    sha256 integrity), or ``None`` when it pins none.  Raises 502 for a malformed pin."""
+    raw = target.get("dependencies") if isinstance(target, Mapping) else None
+    if not isinstance(raw, list) or not raw:
+        return None
+    pins: list[dict[str, str]] = []
+    for d in raw:
+        if not isinstance(d, Mapping) or not _is_package(d.get("id")) or not _is_version(d.get("version")):
+            raise DashboardMarketplaceError(502, "invalid marketplace record: dependencies")
+        digest = _integrity_hex(d.get("integrity"))
+        if digest is None:
+            raise DashboardMarketplaceError(502, f"invalid marketplace record: no sha256 for the dependency {d.get('id')}")
+        pins.append({"id": str(d["id"]), "version": str(d["version"]), "sha256": digest})
+    return pins
 
 
 def _dist_info_dirs(directory: str, package: str) -> list[str]:
@@ -442,6 +494,7 @@ class ServerPluginMarketplace:
         self._pip: PipRunner = options.pip or default_pip_runner
         self._timeout = options.timeout
         self._server_version = options.server_version
+        self.trusted_dependencies = [t for t in options.trusted_dependencies or [] if isinstance(t, str) and t.strip()]
         self._deps = deps
         self._locks: dict[int, asyncio.Lock] = {}
 
@@ -544,7 +597,8 @@ class ServerPluginMarketplace:
         }
         if auto_reason:
             out["autoInstallReason"] = auto_reason
-        needs = _needs_configuration_of(item, own)
+        listed_own = _listed_versions(item, own) if own is not None and _platform_versions(item, own) is not None else []
+        needs = _needs_configuration_of(item, own) or (_needs_configuration_of({}, None, listed_own[0]) if listed_own else [])
         if needs:
             out["needsConfiguration"] = needs
         latest = platform.get("latest") if platform else None
@@ -884,8 +938,12 @@ class ServerPluginMarketplace:
                     400, f"incompatible: {package}=={version} needs {req.name}{req.specifier} (this server has {server})",
                 )
 
-        # Verified: pip installs the wheel (kept) and the missing dependencies into a staging directory
+        # Its dependencies: pinned by the marketplace (hash-checked), else only those the host trusts; never a
+        # package of the server's environment.  Decided before anything is stored.
         directory = self._plugins.dir
+        plan = self._dependency_plan(info.requires, target, directory)
+
+        # Verified: pip installs the wheel (kept) and the missing dependencies into a staging directory
         filename = os.path.basename(str(wheel["filename"]))
         wheels = os.path.join(directory, "wheels")
         os.makedirs(wheels, exist_ok=True)
@@ -895,9 +953,8 @@ class ServerPluginMarketplace:
         staging = os.path.join(directory, f".staging-{secrets.token_hex(4)}")
         try:
             await self._run_pip(["install", "--target", staging, "--no-deps", *self._pip_flags(), wheel_path], "pip install")
-            deps = missing_requirements(info.requires, directory)
-            if deps:
-                await self._run_pip(["install", "--target", staging, *self._pip_flags(), *deps], "pip install of its dependencies")
+            await self._install_dependencies(plan, staging)
+            await asyncio.to_thread(_drop_host_packages, staging, directory, package)
             if current is not None:
                 await asyncio.to_thread(uninstall_from, directory, current["package"])
                 self._remove_wheel(current)
@@ -928,6 +985,48 @@ class ServerPluginMarketplace:
         record["installedAt"] = _now_iso()
         record["installedBy"] = actor.user_name
         return record
+
+    def _dependency_plan(self, requires: list[str], target: Mapping[str, Any], directory: str) -> dict[str, Any]:
+        """What pip installs besides the wheel: ``{"pinned": [...]}`` (exact versions with their sha256),
+        ``{"trusted": [...]}`` (requirements the host allows) or nothing."""
+        missing = missing_requirements(requires, directory)
+        pins = pinned_dependencies(target)
+        if pins is not None:
+            # Every pin the server lacks (they are the whole tree: installed with --no-deps)
+            wanted = [
+                p for p in pins
+                if canonicalize_name(p["id"]) not in SERVER_CORE_PACKAGES and _host_version(p["id"], directory) is None
+                and _dir_version(p["id"], directory) != p["version"]
+            ]
+            pinned = {canonicalize_name(p["id"]) for p in pins}
+            for text in missing:
+                if canonicalize_name(Requirement(text).name) not in pinned:
+                    raise DashboardMarketplaceError(400, f"untrusted dependency: {Requirement(text).name} (not pinned by the marketplace)")
+            return {"pinned": wanted}
+        untrusted = [Requirement(t).name for t in missing if not is_trusted_dependency(Requirement(t).name, self.trusted_dependencies)]
+        if untrusted:
+            raise DashboardMarketplaceError(400, f"untrusted dependency: {', '.join(untrusted)} (the marketplace pins none and the server does not trust it)")
+        return {"trusted": missing}
+
+    async def _install_dependencies(self, plan: dict[str, Any], staging: str) -> None:
+        if plan.get("pinned"):
+            os.makedirs(staging, exist_ok=True)
+            requirements = os.path.join(staging, "..", f".requirements-{secrets.token_hex(4)}.txt")
+            with open(requirements, "w", encoding="utf-8") as f:
+                for p in plan["pinned"]:
+                    f.write(f"{p['id']}=={p['version']} --hash=sha256:{p['sha256']}\n")
+            try:
+                await self._run_pip(
+                    ["install", "--target", staging, "--require-hashes", "--no-deps", *self._pip_flags(), "-r", requirements],
+                    "pip install of its dependencies",
+                )
+            finally:
+                try:
+                    os.remove(requirements)
+                except OSError:
+                    pass
+        elif plan.get("trusted"):
+            await self._run_pip(["install", "--target", staging, *self._pip_flags(), *plan["trusted"]], "pip install of its dependencies")
 
     def _pip_flags(self) -> list[str]:
         return ["--disable-pip-version-check", "--no-input", "--no-compile", "--only-binary", ":all:", "--quiet"]
@@ -1009,6 +1108,21 @@ class ServerPluginMarketplace:
                 logger.error("publishing %s failed: %s", SERVER_PLUGINS_CHANGED_EVENT, exc)
 
 
+def _drop_host_packages(staging: str, directory: str, package: str) -> None:
+    """Removes from the staging directory every distribution the server's environment has (pip may bring them as
+    dependencies of a dependency): a plugin never shadows the server's packages."""
+    if not os.path.isdir(staging):
+        return
+    for entry in os.listdir(staging):
+        if not entry.endswith(".dist-info"):
+            continue
+        name = entry[: -len(".dist-info")].rsplit("-", 1)[0]
+        if canonicalize_name(name) == canonicalize_name(package):
+            continue
+        if canonicalize_name(name) in SERVER_CORE_PACKAGES or _host_version(name, directory) is not None:
+            uninstall_from(staging, name)
+
+
 def _move_into(staging: str, directory: str, package: str) -> None:
     """Moves what pip installed in ``staging`` into the plugins directory: the plugin's files replace any left over;
     a dependency already there is kept (another plugin may use it)."""
@@ -1071,7 +1185,9 @@ __all__ = [
     "ServerPluginMarketplaceOptions",
     "compare_server_plugin_versions",
     "default_pip_runner",
+    "is_trusted_dependency",
     "missing_requirements",
+    "pinned_dependencies",
     "read_wheel",
     "satisfies_server_range",
     "sha256_integrity",
