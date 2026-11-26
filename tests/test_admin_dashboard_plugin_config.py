@@ -233,7 +233,7 @@ def test_a_plugin_without_settings_gets_no_section_and_its_config_is_empty(start
     assert values_of(h) == {"values": {}, "version": None}
     assert "config" not in saved_plugins(h)[0]
     # the settings were looked up in the version record: the details had none
-    assert f"{MARKET}/api/v1/qcli/marketplace/plugins/{quote(TICKETS, safe='')}/versions/1.0.0" in net.calls
+    assert f"{MARKET}/api/v1/qcli/marketplace/plugins/{quote(TICKETS, safe='')}/versions/1.0.0?kind=dashboard" in net.calls
 
 
 def test_get_installed_config_404_not_installed_400_invalid_name_401_signed_out(start):
