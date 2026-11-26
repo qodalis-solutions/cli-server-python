@@ -2,9 +2,40 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
+
+ANONYMOUS_ADMIN_WARNING = (
+    "WARNING: allow_anonymous_admin is on: on a server without sign-in, anyone who can reach it can install "
+    "plugins (code that runs in the server), change its configuration and restart it."
+)
+
+
+def _has_console_handler(target: logging.Logger, level: int) -> bool:
+    """Whether a stream handler (console or file) up ``target``'s hierarchy would write a record of ``level``.
+
+    The server's own handlers (log socket, admin log buffer) are not streams, so they do not count."""
+    if not target.isEnabledFor(level):
+        return False
+    current: logging.Logger | None = target
+    while current is not None:
+        if any(isinstance(h, logging.StreamHandler) and h.level <= level for h in current.handlers):
+            return True
+        current = current.parent if current.propagate else None
+    return False
+
+
+def log_startup_warning(message: str, target: logging.Logger | None = None) -> None:
+    """Log a startup WARNING and, when logging is not configured to write it anywhere, print it to stderr.
+
+    As Node's ``console.warn``: a host that never configures logging still sees it, and the record still
+    reaches the server's log socket and the admin plugin's log buffer."""
+    target = target or logger
+    target.warning(message)
+    if not _has_console_handler(target, logging.WARNING):
+        print(message, file=sys.stderr, flush=True)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -468,6 +499,9 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         shell_session_manager.log_startup()
+        if opts.allow_anonymous_admin:
+            # At startup, as the other startup warnings: the admin plugin's log buffer is installed by then
+            log_startup_warning(ANONYMOUS_ADMIN_WARNING)
         if server_ref:
             # Server plugins installed at runtime, after the host's own mounts
             await server_ref[0].builder.server_plugins.ready()
@@ -517,11 +551,6 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     builder.anonymous_admin_allowed = lambda: bool(opts.allow_anonymous_admin) or (
         _requires_authentication(server_ref[0]) if server_ref else False
     )
-    if opts.allow_anonymous_admin:
-        logger.warning(
-            "WARNING: allow_anonymous_admin is on: on a server without sign-in, anyone who can reach it can install "
-            "plugins (code that runs in the server), change its configuration and restart it.",
-        )
     if opts.config is not None and opts.config.store is not None:
         builder.set_config_store(opts.config.store)
     for provider_id, store in ((opts.config.stores or {}) if opts.config is not None else {}).items():
