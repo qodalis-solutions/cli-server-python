@@ -51,7 +51,8 @@ class CliConfigSettingDefinition:
     #: attached, and after every change.
     apply: Optional[Callable[[CliConfigValue], None]] = None
     #: Must have a value (stored, or a default) for the owner to work: a server plugin without it loads as
-    #: ``needs-configuration`` (see :meth:`CliStoredConfigProvider.missing`).
+    #: ``needs-configuration`` (see :meth:`CliStoredConfigProvider.missing_required`); unlike
+    #: ``validation.required`` the value may still be reset.
     required: bool = False
 
     def __post_init__(self) -> None:
@@ -201,15 +202,29 @@ class CliStoredConfigProvider(ICliConfigProvider, ICliConfigWriter):
             return clone_cli_config_value(stored[key])
         return None
 
-    def missing(self) -> list[str]:
-        """The required settings without a value (``section.key``; an empty string or list counts as none)."""
+    def origin(self, section_id: str, key: str) -> Optional[str]:
+        """Who decided a setting's effective value: ``setting`` (stored), ``code`` (its default comes from the host's
+        code or environment), else ``default``; ``None`` for an unknown key."""
+        section = self._section(section_id)
+        setting = next((s for s in section.settings if s.key == key), None) if section else None
+        cached = self._cache.get(section_id)
+        stored = key in cached.values if cached is not None else False
+        if setting is None:
+            return "setting" if section is not None and section.allow_custom_keys and stored else None
+        if setting.mutable and stored:
+            return "setting"
+        return "code" if setting.source in ("code", "environment") else "default"
+
+    def missing_required(self) -> list[str]:
+        """The settings marked ``required`` (or ``validation.required``) whose effective value is empty (``None``,
+        blank text or ``[]``), as ``<section>.<key>``: what a plugin needs before it can run (``needs-configuration``)."""
         out: list[str] = []
         for section in self._sections:
             for setting in section.settings:
-                if not setting.required:
+                if not setting.required and not (setting.validation is not None and setting.validation.required):
                     continue
                 value = self.value(section.id, setting.key)
-                if value is None or value == "" or value == []:
+                if value is None or (isinstance(value, str) and not value.strip()) or value == []:
                     out.append(f"{section.id}.{setting.key}")
         return out
 
@@ -237,6 +252,7 @@ class CliStoredConfigProvider(ICliConfigProvider, ICliConfigWriter):
                     default=None if sensitive else clone_cli_config_value(setting.default),
                     is_set=(value is not None and value != "") if sensitive else None,
                     source=source if overridden else (setting.source or "default"),
+                    origin="setting" if overridden else "code" if setting.source in ("code", "environment") else "default",
                     mutable=setting.mutable,
                     requires_restart=setting.requires_restart,
                     sensitive=sensitive,
@@ -255,6 +271,7 @@ class CliStoredConfigProvider(ICliConfigProvider, ICliConfigWriter):
                         value=clone_cli_config_value(value),
                         default=None,
                         source=source,
+                        origin="setting",
                         mutable=True,
                     ))
             writable = section.allow_custom_keys or any(s.mutable for s in section.settings)

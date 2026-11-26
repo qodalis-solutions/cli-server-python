@@ -18,20 +18,21 @@ and the function takes a :class:`CliPluginContext` (sync or async)::
 It returns a plugin result the server mounts (anything with ``prefix`` and ``router``, like the official plugins'
 builders give), a module (``name`` and ``processors``), or ``None`` when it registered everything on the builder.
 
-The same entry serves a plugin added in code: ``builder.add_plugin(create_plugin, options={"defaultLocation": "Paris"})``
-runs it at startup with ``context.options``; ``context.settings`` then takes those options as the defaults (source
-``code``) and saved settings override them, so the dashboard shows the same settings either way.
+The same entry serves a plugin added in code: ``builder.add_plugin(entry, options)`` calls ``create_plugin`` with
+``context.options`` (the code's values: the defaults of its settings, origin ``code``; a saved setting overrides
+them) and ``context.source`` ``code``.  Both install paths show the same settings on the dashboard's Config page.
+The entry module names its plugin (``plugin = CliPluginEntryInfo(id="weather", package="qodalis-cli-server-plugin-
+weather")``) and may set ``order`` (:data:`CLI_PLUGIN_LOAD_ORDER`) to load before or after the others.
 
-A setting marked ``required`` without a value makes ``context.settings`` raise :class:`CliPluginNeedsConfiguration`:
-the plugin is listed as ``needs-configuration`` (its settings registered, so they can be filled in) and loads at the
-next start.  Plugins load in their declared order (:func:`cli_server_plugin`): authentication first, then config
-stores, then cores (data explorer), plugins, and the sources of a core last.
+A plugin whose required settings (``required=True``) have no value returns
+``context.needs_configuration(provider.missing_required())``: it registers nothing, its state is
+``needs-configuration``, and it runs once they are saved and the server restarts.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, Protocol
 
 #: The entry point group of server plugins installed at runtime.
 CLI_SERVER_PLUGIN_ENTRY_GROUP = "qodalis_cli.plugins"
@@ -50,41 +51,51 @@ CLI_SERVER_PLUGIN_FAILED = "failed"
 CLI_SERVER_PLUGIN_SKIPPED = "skipped"
 CLI_SERVER_PLUGIN_NEEDS_CONFIGURATION = "needs-configuration"
 
-#: Load order (lower first): authentication (the users plugin's middleware), config stores, cores other plugins
-#: extend (data explorer), plugins, then sources of a core.
-CLI_PLUGIN_ORDER_AUTH = 10
-CLI_PLUGIN_ORDER_CONFIG_STORE = 20
-CLI_PLUGIN_ORDER_CORE = 30
-CLI_PLUGIN_ORDER_DEFAULT = 50
-CLI_PLUGIN_ORDER_SOURCE = 70
+
+class CLI_PLUGIN_LOAD_ORDER:  # noqa: N801 - a constant namespace, as on Node and .NET
+    """When an entry loads (its module's ``order``, lower first; code-added and installed plugins sorted together,
+    code first on a tie): ``AUTH`` (the sign-in: users; its stores at ``AUTH - 5``), ``CONFIG_STORE`` (config stores:
+    the server's default store is replaced and the providers already using it move to the new one), ``CORE`` (the
+    databases, the data explorer before its sources), ``DEFAULT``, ``SOURCE`` (data explorer sources)."""
+
+    AUTH = 10
+    CONFIG_STORE = 20
+    CORE = 30
+    DEFAULT = 50
+    SOURCE = 70
+
+
+@dataclass
+class CliPluginEntryInfo:
+    """The plugin an entry belongs to (``plugin = CliPluginEntryInfo(...)`` in the entry's module), for
+    ``builder.add_plugin`` (the marketplace's record says it for an installed one)."""
+
+    #: The marketplace entry's id (``users``): the default id of its settings provider.
+    id: str
+    #: The PyPI distribution.
+    package: str
+    version: Optional[str] = None
+    title: Optional[str] = None
+    icon: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ICliPluginServices(Protocol):
+    """What plugins share with each other: the users plugin (``users``), the public API, ..."""
+
+    def get(self, name: str) -> Any: ...
+
+    def set(self, name: str, value: Any) -> None: ...
+
+    def has(self, name: str) -> bool: ...
 
 
 class CliPluginNeedsConfiguration(Exception):
-    """Raised by ``context.settings`` (or a plugin) when required settings have no value."""
+    """Raised by an entry instead of returning ``context.needs_configuration(missing)``: the same state."""
 
-    def __init__(self, missing: list[str], message: Optional[str] = None) -> None:
-        self.missing = list(missing)
+    def __init__(self, missing: list[str] | str, message: Optional[str] = None) -> None:
+        self.missing = [missing] if isinstance(missing, str) else list(missing)
         super().__init__(message or f"needs configuration: {', '.join(self.missing)}")
-
-
-def cli_server_plugin(order: int = CLI_PLUGIN_ORDER_DEFAULT) -> Callable[[Any], Any]:
-    """Declares a ``create_plugin``'s load order::
-
-        @cli_server_plugin(order=CLI_PLUGIN_ORDER_SOURCE)
-        async def create_plugin(context): ...
-    """
-
-    def mark(fn: Any) -> Any:
-        fn.qcli_plugin_order = order
-        return fn
-
-    return mark
-
-
-def cli_server_plugin_order(entry: Any) -> int:
-    """An entry's declared load order (default :data:`CLI_PLUGIN_ORDER_DEFAULT`)."""
-    order = getattr(entry, "qcli_plugin_order", CLI_PLUGIN_ORDER_DEFAULT)
-    return order if isinstance(order, int) else CLI_PLUGIN_ORDER_DEFAULT
 
 
 @dataclass
@@ -115,14 +126,23 @@ class CliPluginContext:
     #: ``await context.settings(title=..., settings=[...] | sections=[...], id=..., description=..., store=...)``:
     #: registers the plugin's settings as a ``CliStoredConfigProvider`` (default id: the plugin's id, one section
     #: ``settings``) and returns it once its stored values are loaded: read them with ``provider.value(section, key)``.
-    #: The code options are the defaults (source ``code``); raises :class:`CliPluginNeedsConfiguration` when a
-    #: ``required`` setting has no value (``check=False`` returns the provider anyway).
+    #: A setting whose key is in ``options`` takes that value as its default (origin ``code``).  While the server
+    #: keeps its settings in memory, a plugin's are kept in ``<data dir>/plugin-settings.json`` (they must survive the
+    #: restart they wait for); a store the host set wins.
     settings: Callable[..., Awaitable[Any]]
-    #: The options of a plugin added in code (``builder.add_plugin(entry, options=...)``): ``{key: value}`` for the
-    #: section ``settings``, or ``{section: {key: value}}``; empty for a plugin installed from the marketplace.
+    #: ``return context.needs_configuration(provider.missing_required())``: marks the plugin ``needs-configuration``
+    #: with the settings it still needs (``section.key``, or a reason); what it returns is not registered.
+    needs_configuration: Callable[[Any], None] = lambda missing: None
+    #: The options the host added the plugin with (``builder.add_plugin(entry, options)``; empty from the
+    #: marketplace).  Values that are not settings (a pool, a store, a function) are read from here directly.
     options: dict[str, Any] = field(default_factory=dict)
     #: ``marketplace`` or ``code``.
     source: str = "marketplace"
+    #: What plugins share (``ICliPluginServices``).
+    services: Any = None
+    #: The plugins' settings file (``<data dir>/plugin-settings.json``, a ``JsonFileConfigStore``): for settings that
+    #: must not live in the server's config store (the config-redis plugin's own URL).
+    settings_file: Any = None
 
 
 #: ``create_plugin(context)``: sync or async, returns a plugin result, a module or ``None``.
@@ -141,27 +161,29 @@ class CliServerPluginState:
     error: Optional[str] = None
     #: ``marketplace`` or ``code``.
     source: str = "marketplace"
+    #: ``needs-configuration``: the settings it needs (``section.key``) or the reason.
     missing: Optional[list[str]] = None
+    #: The id of its settings provider, when it registered one.
+    settings: Optional[str] = None
+    order: int = 50
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "name": self.name, "package": self.package, "version": self.version, "status": self.status,
-            "source": self.source,
+            "source": self.source, "order": self.order,
         }
         if self.error:
             out["error"] = self.error
         if self.missing:
             out["missing"] = list(self.missing)
+        if self.settings:
+            out["settings"] = self.settings
         return out
 
 
 __all__ = [
     "CLI_PLUGINS_INSTALL_PERMISSION",
-    "CLI_PLUGIN_ORDER_AUTH",
-    "CLI_PLUGIN_ORDER_CONFIG_STORE",
-    "CLI_PLUGIN_ORDER_CORE",
-    "CLI_PLUGIN_ORDER_DEFAULT",
-    "CLI_PLUGIN_ORDER_SOURCE",
+    "CLI_PLUGIN_LOAD_ORDER",
     "CLI_SERVER_PLUGINS_DIR",
     "CLI_SERVER_PLUGINS_FILE",
     "CLI_SERVER_PLUGIN_ENTRY_GROUP",
@@ -171,9 +193,9 @@ __all__ = [
     "CLI_SERVER_PLUGIN_NEEDS_CONFIGURATION",
     "CLI_SERVER_PLUGIN_SKIPPED",
     "CliPluginContext",
-    "CliPluginNeedsConfiguration",
-    "cli_server_plugin",
-    "cli_server_plugin_order",
     "CliPluginEntry",
+    "CliPluginEntryInfo",
+    "CliPluginNeedsConfiguration",
     "CliServerPluginState",
+    "ICliPluginServices",
 ]
