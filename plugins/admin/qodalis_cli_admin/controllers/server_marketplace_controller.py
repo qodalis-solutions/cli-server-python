@@ -3,9 +3,10 @@ installing, updating and removing ``plugins:install``.  Every change takes effec
 ``restartRequired``.
 
 - ``GET /`` — ``{ marketplaceUrl, install, platform: 'python', serverVersion, enabled }``
-- ``GET /plugins?query=&page=&pageSize=`` — the marketplace's server plugins with a Python package, annotated
-  (``platform``, ``otherPlatforms``, ``autoInstall``, ``needsConfiguration``, ``updateAvailable``, ``allowed``,
-  ``blockedReason``)
+- ``GET /plugins?query=&page=&pageSize=&platform=`` — the marketplace's server plugins, annotated (``platform``,
+  ``otherPlatforms``, ``autoInstall``, ``needsConfiguration``, ``updateAvailable``, ``allowed``, ``blockedReason``);
+  ``platform``: ``this`` (default: the ones with a Python package), ``all``, ``node``, ``python`` or ``dotnet`` (400 for
+  anything else). Plugins without a Python package are not installable here.
 - ``GET /plugins/{name}`` — one plugin with its platforms and versions
 - ``GET /installed`` — the installed plugins and how they run (``status``, ``loadedVersion``, ``error``, ``missing``,
   ``updateAvailable``)
@@ -47,8 +48,11 @@ def create_server_marketplace_router(marketplace: ServerPluginMarketplace, auth_
     async def search(request: Request, _user: Any = Depends(auth_dependency)) -> JSONResponse:
         try:
             q = request.query_params
+            # ``platform=all&platform=node`` is ``all,node``: invalid
+            platforms = q.getlist("platform")
             return _json(await marketplace.search(
                 q.get("query"), _int_param(q.get("page"), "page", 1_000_000), _int_param(q.get("pageSize"), "pageSize", 100),
+                ",".join(platforms) if platforms else None,
             ))
         except Exception as exc:  # noqa: BLE001
             return _error(exc)

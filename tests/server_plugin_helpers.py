@@ -174,6 +174,9 @@ class FakeServerNet:
         self.files: dict[str, bytes] = {}
         self.calls: list[str] = []
         self.marketplace_down = False
+        #: As cli-marketplace PR #6: ``platform`` leaves out the plugins without a package for it (off: the older
+        #: marketplace, which lists them all)
+        self.platform_filter = False
 
     def add_pypi(self, name: str, version: str, requires: Optional[list[str]] = None, wheel: bool = True) -> str:
         """A release of a dependency on PyPI (a wheel, or only an sdist): its ``Requires-Dist``; the wheel's sha256."""
@@ -248,9 +251,21 @@ class FakeServerNet:
             path = parts.path[len("/api/v1/qcli/marketplace"):]
             if path == "/plugins":
                 q = parse_qs(parts.query).get("query", [""])[0]
+                platform = parse_qs(parts.query).get("platform", [None])[0]
+
+                def view(p: dict[str, Any]) -> dict[str, Any]:
+                    # The marketplace's view of the platform asked for (none without one)
+                    if not platform:
+                        return {}
+                    own = p["platforms"].get(platform)
+                    if own is None:
+                        return {"latest": None, "version": None, "compatible": False, "reason": f"not available for {platform}"}
+                    return {"latest": own["latest"], "version": own["latest"], "compatible": True}
+
                 items = [
-                    {k: v for k, v in p.items() if k != "versions"}
-                    for p in self.plugins.values() if not q or q in p["name"]
+                    {**{k: v for k, v in p.items() if k != "versions"}, **view(p)}
+                    for p in self.plugins.values()
+                    if (not q or q in p["name"]) and (not platform or not self.platform_filter or platform in p["platforms"])
                 ]
                 return response(200, {"items": items, "total": len(items), "page": 1, "pageSize": 50})
             if path.startswith("/plugins/"):
