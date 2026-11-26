@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qodalis-cli-server-plugin-config-redis"
-version = "1.0.0b32"
+version = "1.0.0b33"
 description = "Redis config store for Qodalis CLI servers: writable settings of the config providers kept in Redis"
 readme = "README.md"
 license = "MIT"
