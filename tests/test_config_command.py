@@ -5,7 +5,9 @@ server.  Port of the Node ``config-command.test.ts``."""
 
 from __future__ import annotations
 
+import io
 import json
+import logging
 import re
 from typing import Any
 
@@ -14,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from qodalis_cli import CliServerOptions, create_cli_server
 from qodalis_cli.config import format_config_value
-from qodalis_cli.create_cli_server import CliServerConfigOptions
+from qodalis_cli.create_cli_server import ANONYMOUS_ADMIN_WARNING, CliServerConfigOptions, log_startup_warning
 from qodalis_cli_server_abstractions.audit import AuditQueryOptions
 from qodalis_cli_server_abstractions.config import (
     CliConfigSectionDefinition,
@@ -26,6 +28,7 @@ from qodalis_cli_server_abstractions.config import (
     cli_config_context,
 )
 from qodalis_cli_server_abstractions.shell_words import split_shell_words
+from qodalis_cli_admin import AdminBuildDeps, CliAdminBuilder
 from qodalis_cli_users import CliUsersBuilder
 
 V1 = "/api/v1/qcli"
@@ -340,9 +343,57 @@ class TestConfigCommandProtectedServer:
 
 def test_allow_anonymous_admin_logs_a_warning_at_startup(caplog):
     with caplog.at_level("WARNING", logger="qodalis_cli.create_cli_server"):
-        create_cli_server(CliServerOptions(allow_anonymous_admin=True))
+        with TestClient(create_cli_server(CliServerOptions(allow_anonymous_admin=True)).app):
+            pass
     assert any("allow_anonymous_admin is on" in r.getMessage() for r in caplog.records)
     caplog.clear()
     with caplog.at_level("WARNING", logger="qodalis_cli.create_cli_server"):
-        create_cli_server()
+        with TestClient(create_cli_server().app):
+            pass
     assert not any("allow_anonymous_admin" in r.getMessage() for r in caplog.records)
+
+
+def _isolated_logger(name: str) -> logging.Logger:
+    target = logging.getLogger(name)
+    target.handlers.clear()
+    target.propagate = False
+    target.setLevel(logging.WARNING)
+    return target
+
+
+def test_startup_warning_goes_to_stderr_when_logging_is_not_configured(capsys):
+    target = _isolated_logger("qcli.test.startup-warning.bare")
+    ring: list[str] = []
+
+    class _Buffer(logging.Handler):  # not a stream: as the log socket and the admin log buffer
+        def emit(self, record: logging.LogRecord) -> None:
+            ring.append(record.getMessage())
+
+    target.addHandler(_Buffer())
+    log_startup_warning(ANONYMOUS_ADMIN_WARNING, target)
+    assert ANONYMOUS_ADMIN_WARNING in capsys.readouterr().err
+    assert ring == [ANONYMOUS_ADMIN_WARNING]
+
+
+def test_startup_warning_not_printed_twice_when_a_console_handler_writes_it(capsys):
+    target = _isolated_logger("qcli.test.startup-warning.configured")
+    stream = io.StringIO()
+    target.addHandler(logging.StreamHandler(stream))
+    log_startup_warning(ANONYMOUS_ADMIN_WARNING, target)
+    assert ANONYMOUS_ADMIN_WARNING not in capsys.readouterr().err
+    assert ANONYMOUS_ADMIN_WARNING in stream.getvalue()
+
+
+def test_allow_anonymous_admin_warning_lands_in_the_admin_log_buffer():
+    result = create_cli_server(CliServerOptions(allow_anonymous_admin=True))
+    admin = CliAdminBuilder().set_credentials("admin", "adminpass").set_jwt_secret("secret-for-the-warning-test").build(
+        AdminBuildDeps(registry=result.registry, event_socket_manager=result.event_socket_manager, builder=result.builder),
+    )
+    result.mount_plugin(admin)
+    try:
+        with TestClient(result.app):
+            pass
+        entries, _ = admin.log_buffer.query(search="allow_anonymous_admin is on")
+        assert entries and entries[0]["level"] in ("WARN", "WARNING")
+    finally:
+        admin.log_buffer.uninstall_handler()
