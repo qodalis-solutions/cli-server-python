@@ -6,6 +6,7 @@ dashboard extension and serve its files at ``/qcli/modules/<id>/``.  The same co
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import base64
 import functools
 import hashlib
@@ -20,13 +21,14 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Mapping, Optional
+from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional
 from urllib.parse import quote, urlencode
 
 from qodalis_cli_server_abstractions.audit import AuditEntry
 from qodalis_cli_server_abstractions.config import validate_cli_config_value
 from qodalis_cli_server_abstractions.dashboard_modules import DASHBOARD_MODULES_PREFIX, dashboard_module_page
 
+from .plugins_folder import DATA_DIR_HINT, plugins_folder_error
 from .dashboard_plugin_config import (
     DASHBOARD_PLUGINS_CONFIG_PROVIDER_ID,
     DashboardPluginConfig,
@@ -142,7 +144,9 @@ class DashboardMarketplaceOptions:
     #: ``verified`` (default): listed versions of verified publishers only; ``listed``: any listed version;
     #: ``off``: browse only.
     install: Optional[str] = None
-    #: Where installed plugins are kept (default ``./qcli-data/dashboard-plugins``, from the working directory).
+    #: Where installed plugins are kept.  The admin plugin defaults it to ``<data_dir>/dashboard-plugins`` (the server's
+    #: ``data_dir``, else ``QCLI_DATA_DIR``, else ``./qcli-data``); a ``DashboardMarketplace`` built directly uses
+    #: ``./qcli-data/dashboard-plugins``.
     dir: Optional[str] = None
     #: The HTTP client for the marketplace and the CDNs (default: the standard library's).
     fetch: Optional[MarketplaceFetch] = None
@@ -189,6 +193,8 @@ class DashboardMarketplaceDeps:
     #: Whether callers who are not signed in may install, update and remove (the server's ``allow_anonymous_admin``,
     #: or a protected server); default false.
     anonymous_allowed: Callable[[], bool] = lambda: False
+    #: What to do when the plugins folder cannot be written (default: set ``data_dir`` or ``QCLI_DATA_DIR``).
+    folder_hint: Optional[str] = None
 
 
 def is_valid_dashboard_plugin_name(name: Any) -> bool:
@@ -599,6 +605,18 @@ class DashboardMarketplace:
             lock = self._locks[loop] = asyncio.Lock()
         return lock
 
+    @contextlib.asynccontextmanager
+    async def _exclusive(self) -> AsyncIterator[None]:
+        """Runs changes one at a time; a file system error on the plugins folder becomes a 500 naming the folder."""
+        async with self._lock():
+            try:
+                yield
+            except OSError as exc:
+                message = plugins_folder_error(exc, self.dir, self._deps.folder_hint or DATA_DIR_HINT)
+                if message is None:
+                    raise
+                raise DashboardMarketplaceError(500, message) from None
+
     async def install_plugin(
         self, name: Any, version: Any, actor: DashboardMarketplaceActor, config: Any = None,
     ) -> dict[str, Any]:
@@ -607,7 +625,7 @@ class DashboardMarketplace:
         anything is downloaded: 400 ``validation failed`` with per-key ``errors``).  The installed plugin; ``warnings``
         when the marketplace's settings of the version are invalid (it is installed without settings)."""
         require_signed_in(actor, self._deps.anonymous_allowed, DASHBOARD_INSTALL_PERMISSION)
-        async with self._lock():
+        async with self._exclusive():
             if not is_valid_dashboard_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid package name")
             if version is not None and not is_valid_dashboard_plugin_version(version):
@@ -661,7 +679,7 @@ class DashboardMarketplace:
         (``configDropped``).  Returns ``{ plugin, changed, previousVersion, configDropped, warnings? }``; ``changed``
         is false when it already is that version (the given values are applied all the same)."""
         require_signed_in(actor, self._deps.anonymous_allowed, DASHBOARD_INSTALL_PERMISSION)
-        async with self._lock():
+        async with self._exclusive():
             if not is_valid_dashboard_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid package name")
             if version is not None and not is_valid_dashboard_plugin_version(version):
@@ -723,7 +741,7 @@ class DashboardMarketplace:
     async def remove_plugin(self, name: Any, actor: DashboardMarketplaceActor) -> dict[str, Any]:
         """``DELETE /installed/{name}``: unregisters the page, deletes its files and its settings."""
         require_signed_in(actor, self._deps.anonymous_allowed, DASHBOARD_INSTALL_PERMISSION)
-        async with self._lock():
+        async with self._exclusive():
             if not is_valid_dashboard_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid package name")
             current = self._record_of(name)

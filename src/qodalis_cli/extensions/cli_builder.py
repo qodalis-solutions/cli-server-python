@@ -24,7 +24,7 @@ from ..permissions import (
 from ..config.cli_config_registry import CliConfigRegistry
 from ..config.cli_config_service import CliConfigService
 from ..restart.cli_server_restart import CliServerRestart
-from ..server_plugins.cli_server_plugins import DEFAULT_DATA_DIR, CliServerPlugins
+from ..server_plugins.cli_server_plugins import CliServerPlugins, resolve_data_dir
 from ..services.cli_command_registry import CliCommandRegistry
 
 if TYPE_CHECKING:
@@ -96,7 +96,7 @@ class CliBuilder:
         #: it: plugins mark theirs with ``restart.mark_required(id, source, description)``; the config service
         #: marks the settings with ``requires_restart``.
         self.restart = CliServerRestart()
-        self._server_plugins: Any = CliServerPlugins(DEFAULT_DATA_DIR, False)
+        self._server_plugins: Any = CliServerPlugins(resolve_data_dir(), False)
         #: Whether callers who are not signed in may install, update and remove plugins and change settings (the
         #: ``config`` command, ``config_set``, ``admin plugins install``, ``admin dashboard install``): false by
         #: default; ``create_cli_server`` sets it to ``allow_anonymous_admin`` or a protected server.

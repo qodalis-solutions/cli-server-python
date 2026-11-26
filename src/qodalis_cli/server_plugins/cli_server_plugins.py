@@ -46,6 +46,13 @@ logger = logging.getLogger("qodalis_cli.server_plugins")
 
 #: The server's data directory unless ``data_dir`` is given: ``./qcli-data`` (from the working directory).
 DEFAULT_DATA_DIR = "qcli-data"
+#: The environment variable that moves the data directory when ``data_dir`` is not given.
+QCLI_DATA_DIR_ENV = "QCLI_DATA_DIR"
+
+
+def resolve_data_dir(data_dir: Optional[str] = None) -> str:
+    """The server's data directory: ``data_dir`` when given, else ``QCLI_DATA_DIR``, else ``./qcli-data``."""
+    return data_dir or os.environ.get(QCLI_DATA_DIR_ENV) or DEFAULT_DATA_DIR
 #: The settings file of the plugins while the server keeps its settings in memory (no default store set).
 CLI_PLUGIN_SETTINGS_FILE = "plugin-settings.json"
 
