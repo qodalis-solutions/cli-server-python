@@ -52,6 +52,8 @@ MARKETPLACE_API_PATH = "/api/v1/qcli/marketplace"
 DASHBOARD_EXTENSIONS_CHANGED_EVENT = "dashboard:extensions-changed"
 DASHBOARD_INSTALL_PERMISSION = "dashboard:install"
 INSTALL_POLICIES = ("verified", "listed", "off")
+#: Every plugin lookup names its kind: the marketplace answers 404 for a plugin of another kind, or none given.
+_KIND_QUERY = "kind=dashboard"
 
 _NPM_NAME = re.compile(r"(?:@[a-z0-9\-~][a-z0-9\-._~]*/)?[a-z0-9\-~][a-z0-9\-._~]*")
 _SEMVER = re.compile(
@@ -527,7 +529,7 @@ class DashboardMarketplace:
     async def _fetch_plugin(self, name: Any) -> dict[str, Any]:
         if not is_valid_dashboard_plugin_name(name):
             raise DashboardMarketplaceError(400, "invalid package name")
-        plugin = await self._get_json(f"/plugins/{quote(name, safe='')}")
+        plugin = await self._get_json(f"/plugins/{quote(name, safe='')}?{_KIND_QUERY}")
         if not isinstance(plugin, dict):
             raise DashboardMarketplaceError(404, f"plugin not found: {name}")
         if plugin.get("name") != name:
@@ -794,7 +796,9 @@ class DashboardMarketplace:
                 raise DashboardMarketplaceError(404, f"no installable version: {name}")
         if not isinstance(target.get("files"), list) or "config" not in target:
             # A details view without files (an older marketplace) or settings: the version record has them
-            record = await self._get_json(f"/plugins/{quote(name, safe='')}/versions/{quote(target['version'], safe='')}")
+            record = await self._get_json(
+                f"/plugins/{quote(name, safe='')}/versions/{quote(target['version'], safe='')}?{_KIND_QUERY}",
+            )
             if not isinstance(record, dict) and not isinstance(target.get("files"), list):
                 raise DashboardMarketplaceError(404, f"version not found: {name}@{target['version']}")
             record = record if isinstance(record, dict) else {}

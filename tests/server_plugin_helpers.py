@@ -234,7 +234,9 @@ class FakeServerNet:
                 return response(200, {"items": items, "total": len(items), "page": 1, "pageSize": 50})
             if path.startswith("/plugins/"):
                 plugin = self.plugins.get(unquote(path[len("/plugins/"):]))
-                return response(200, plugin) if plugin else response(404, {"error": "not found"})
+                # As the marketplace: a lookup names the plugin's kind, else 404
+                kind = parse_qs(parts.query).get("kind", [None])[0]
+                return response(200, plugin) if plugin and kind == plugin["kind"] else response(404, {"error": "not found"})
             return response(404, {"error": "not found"})
         if url.startswith(PYPI):
             parts = url[len(PYPI) + len("/pypi/"):].split("/")

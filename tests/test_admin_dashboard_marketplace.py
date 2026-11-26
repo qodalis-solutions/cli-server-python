@@ -305,7 +305,8 @@ def test_refuses_a_newer_dashboard_api_a_web_plugin_and_bad_file_records(start):
     net.plugins["@acme/cli-dashboard-bad"]["versions"][0]["files"][0]["path"] = "../../evil.js"
     h = start(net=net)
     assert h.post({"name": "@acme/cli-dashboard-next"}).json() == {"error": "needs dashboard API 2"}
-    assert h.post({"name": "@acme/web-thing"}).json() == {"error": "not a dashboard plugin: @acme/web-thing"}
+    # The marketplace answers 404 for a plugin of another kind
+    assert h.post({"name": "@acme/web-thing"}).json() == {"error": "plugin not found: @acme/web-thing"}
     bad = h.post({"name": "@acme/cli-dashboard-bad"})
     assert bad.status_code == 502
     assert bad.json() == {"error": "invalid marketplace record: files"}
@@ -375,7 +376,7 @@ def test_reads_the_files_from_the_version_record_when_the_details_leave_them_out
     net.files_only_in_version_record = True
     h = start(net=net)
     assert h.post({"name": TICKETS}).status_code == 201
-    assert f"{API}/plugins/{quote(TICKETS, safe='')}/versions/1.0.0" in net.calls
+    assert f"{API}/plugins/{quote(TICKETS, safe='')}/versions/1.0.0?kind=dashboard" in net.calls
     assert os.listdir(os.path.join(h.dir, "@acme+cli-dashboard-tickets", "1.0.0")) == ["extension.js"]
 
 
@@ -695,6 +696,18 @@ def test_command_list_search_install_name_at_version_update_remove(start):
         ("dashboard.plugin.update", "anonymous"),
         ("dashboard.plugin.remove", "anonymous"),
     ]
+
+
+def test_every_marketplace_lookup_names_the_dashboard_kind(start):
+    net = FakeNet()
+    net.files_only_in_version_record = True  # the install reads the version record too
+    net.publish(TICKETS, [{"version": "1.0.0"}, {"version": "1.1.0"}], title="Tickets")
+    h = start(net=net)
+    assert h.post({"name": TICKETS, "version": "1.0.0"}).status_code == 201
+    assert h.put(TICKETS, {}).status_code == 200
+    lookups = [u for u in net.calls if u.startswith(MARKET)]
+    assert any("/versions/" in u for u in lookups)
+    assert lookups and all(parse_qs(urlsplit(u).query).get("kind") == ["dashboard"] for u in lookups), lookups
 
 
 def test_command_install_update_remove_refused_to_anonymous_callers_reads_allowed(start):

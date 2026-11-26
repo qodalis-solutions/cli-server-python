@@ -9,6 +9,8 @@ import hashlib
 import os
 from typing import Any, Optional
 
+from urllib.parse import parse_qs, urlsplit
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -410,6 +412,17 @@ def test_changes_need_plugins_install(start):
     assert (res.status_code, res.json()) == (403, {"error": "missing permission: plugins:install"})
     assert host.install({"name": "hello"}, "installer").status_code == 202
     assert host.remove("hello", "viewer").status_code == 403
+
+
+def test_every_marketplace_lookup_names_the_server_kind(start):
+    host = start()
+    host.net.publish(versions=["1.1.0", "1.2.0"])
+    assert host.install({"name": "hello", "version": "1.1.0"}).status_code == 202
+    assert host.update("hello", {}).status_code == 202
+    assert host.get("/plugins?query=hello").status_code == 200
+    lookups = [u for u in host.net.calls if u.startswith(MARKET)]
+    assert any("/plugins/hello" in u for u in lookups)
+    assert all(parse_qs(urlsplit(u).query).get("kind") == ["server"] for u in lookups), lookups
 
 
 REFUSED_ANONYMOUS = "Error: sign-in required: protect the server (users plugin) or set allow_anonymous_admin=True (plugins:install)"

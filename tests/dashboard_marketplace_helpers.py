@@ -149,7 +149,8 @@ class FakeNet:
         m = re.fullmatch(r"/plugins/(.+?)(?:/versions/([^/]+))?", path)
         if m:
             plugin = self.plugins.get(unquote(m.group(1)))
-            if not plugin:
+            # As the marketplace: a lookup names the plugin's kind, else 404
+            if not plugin or (not self.ignores_kind and query.get("kind") != plugin["kind"]):
                 return response(404, {"error": "plugin not found"})
             if m.group(2):
                 v = next((x for x in plugin["versions"] if x["version"] == unquote(m.group(2))), None)
