@@ -38,7 +38,7 @@ def log_startup_warning(message: str, target: logging.Logger | None = None) -> N
         print(message, file=sys.stderr, flush=True)
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from fastapi import FastAPI, WebSocket
 from starlette.routing import Match, Mount
@@ -85,7 +85,7 @@ from .restart import (
     CliServerRestartServices,
     create_restart_router,
 )
-from .server_plugins import DEFAULT_DATA_DIR, CliServerPlugins, CliServerPluginsHost, CliServerPluginsOptions
+from .server_plugins import CliServerPlugins, CliServerPluginsHost, CliServerPluginsOptions, resolve_data_dir
 from .security import LiveCorsMiddleware, WebSocketOriginMiddleware, get_auth_context
 from .shell_security import CliShellOptions, ShellAccessProvider, remote_address
 from .services import (
@@ -176,9 +176,10 @@ class CliServerOptions:
     #: 75, for Docker, systemd, PM2 or Kubernetes to start it again), ``self`` (graceful shutdown, then the same
     #: command runs again in this process: bare runs and development) or ``handler`` (the host's function).
     restart: CliServerRestartOptions | dict[str, Any] | None = None
-    #: The server's data directory (default ``./qcli-data``, from the working directory): runtime-installed server
-    #: plugins (``server-plugins/``) and their own data (``plugin-data/<id>/``).
-    data_dir: str = DEFAULT_DATA_DIR
+    #: The server's data directory (default: the ``QCLI_DATA_DIR`` environment variable, else ``./qcli-data``, from
+    #: the working directory): runtime-installed server plugins (``server-plugins/``), their own data
+    #: (``plugin-data/<id>/``) and the admin plugin's dashboard plugins (``dashboard-plugins/``).  It must be writable.
+    data_dir: Optional[str] = None
     #: Server plugins installed at runtime from the marketplace (the admin plugin installs them): loaded at the app's
     #: startup from ``<data_dir>/server-plugins`` (``dir`` to keep them elsewhere); ``False`` loads none.
     server_plugins: CliServerPluginsOptions | dict[str, Any] | bool | None = None
@@ -557,7 +558,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         builder.set_config_store(store, provider_id)
 
     builder.use_server_plugins(CliServerPlugins(
-        opts.data_dir or DEFAULT_DATA_DIR, False if opts.server_plugins is False else opts.server_plugins,
+        resolve_data_dir(opts.data_dir), False if opts.server_plugins is False else opts.server_plugins,
     ))
     if opts.configure:
         opts.configure(builder)

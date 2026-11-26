@@ -9,6 +9,7 @@ as required: the loader runs it at the next start.  The same contract and JSON a
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import base64
 import hashlib
 import importlib.metadata as metadata
@@ -26,7 +27,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.parser import Parser
-from typing import Any, Awaitable, Callable, Mapping, Optional
+from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional
 from urllib.parse import quote, urlencode
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -42,6 +43,7 @@ from qodalis_cli_server_abstractions.plugin_entry import (
     CLI_SERVER_PLUGIN_KIND,
 )
 
+from .plugins_folder import DATA_DIR_HINT, plugins_folder_error
 from .dashboard_marketplace import (
     DEFAULT_MARKETPLACE_URL,
     INSTALL_POLICIES,
@@ -159,6 +161,8 @@ class ServerPluginMarketplaceDeps:
     #: Whether callers who are not signed in may install, update and remove (the server's ``allow_anonymous_admin``,
     #: or a protected server); default false.
     anonymous_allowed: Callable[[], bool] = lambda: False
+    #: What to do when the plugins folder cannot be written (default: set ``data_dir`` or ``QCLI_DATA_DIR``).
+    folder_hint: Optional[str] = None
 
 
 def is_valid_server_plugin_name(name: Any) -> bool:
@@ -881,10 +885,22 @@ class ServerPluginMarketplace:
             lock = self._locks[loop] = asyncio.Lock()
         return lock
 
+    @contextlib.asynccontextmanager
+    async def _exclusive(self) -> AsyncIterator[None]:
+        """Runs changes one at a time; a file system error on the plugins folder becomes a 500 naming the folder."""
+        async with self._lock():
+            try:
+                yield
+            except OSError as exc:
+                message = plugins_folder_error(exc, self._deps.plugins.dir, self._deps.folder_hint or DATA_DIR_HINT)
+                if message is None:
+                    raise
+                raise DashboardMarketplaceError(500, message) from None
+
     async def install_plugin(self, name: Any, version: Any, actor: DashboardMarketplaceActor) -> dict[str, Any]:
         """``POST /installed``: installs the Python package of ``name`` (the newest compatible version, or ``version``)."""
         require_signed_in(actor, self._deps.anonymous_allowed, PLUGINS_INSTALL_PERMISSION)
-        async with self._lock():
+        async with self._exclusive():
             plugin, own, target = await self._prepare(name, version)
             existing = self._record_of(plugin["name"])
             if existing is not None:
@@ -903,7 +919,7 @@ class ServerPluginMarketplace:
         """``PUT /installed/{name}``: updates to ``version`` (default: the newest compatible); ``changed: False`` when
         it already is."""
         require_signed_in(actor, self._deps.anonymous_allowed, PLUGINS_INSTALL_PERMISSION)
-        async with self._lock():
+        async with self._exclusive():
             if not is_valid_server_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid plugin name")
             current = self._record_of(name)
@@ -937,7 +953,7 @@ class ServerPluginMarketplace:
     async def remove_plugin(self, name: Any, actor: DashboardMarketplaceActor) -> dict[str, Any]:
         """``DELETE /installed/{name}``: removes the package (its dependencies stay); it runs until a restart."""
         require_signed_in(actor, self._deps.anonymous_allowed, PLUGINS_INSTALL_PERMISSION)
-        async with self._lock():
+        async with self._exclusive():
             if not is_valid_server_plugin_name(name):
                 raise DashboardMarketplaceError(400, "invalid plugin name")
             if not self._plugins.enabled:

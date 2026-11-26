@@ -4,6 +4,11 @@ Notable changes to the Python CLI server packages (`qodalis-cli-server`, `qodali
 `qodalis-cli-server-plugin-*`). Every package shares one version with the .NET and Node servers (`1.0.0b19` is
 PEP 440 for `1.0.0-beta.19`).
 
+## Unreleased
+
+- **The data directory holds the dashboard plugins too** (as the Node server). The admin plugin keeps dashboard plugins in `<data_dir>/dashboard-plugins` (the server's `data_dir`), so one option moves every folder the server writes; an explicit `dir` still wins. New environment variable **`QCLI_DATA_DIR`**: the data directory when `CliServerOptions` gets no `data_dir` (its default is now `None`; `resolve_data_dir`, `QCLI_DATA_DIR_ENV`).
+- **Clear errors when the plugins folder cannot be written.** A file system failure while installing, updating or removing a dashboard or server plugin answered 500 `internal server error`; it now answers 500 `{ "error": "cannot write the plugins folder <folder>: permission denied (EACCES). Set data_dir (or QCLI_DATA_DIR) to a writable folder" }` (only the folder and the error code), and `admin dashboard install` and `admin plugins install` print it. At startup, when the marketplace is on and a plugins folder cannot be created or written, the admin plugin logs one WARNING naming it and the option.
+
 ## 1.0.0b32
 
 - The admin plugin embeds dashboard 1.0.0-beta.30: its version on the Overview, Marketplace filters (server plugins by platform, installed or not), plugins added in code shown as installed, skeletons while pages load, and Qodalis CLI 2.9.0 in its Terminal.

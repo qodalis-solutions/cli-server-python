@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
+import dataclasses
 from dataclasses import dataclass, field
 from collections.abc import Mapping
 from typing import Any, Callable, Awaitable
@@ -39,6 +41,7 @@ from .services.server_plugin_marketplace import (
     ServerPluginMarketplaceOptions,
 )
 from .services.admin_config import AdminConfig
+from .services.plugins_folder import DATA_DIR_HINT, QCLI_DATA_DIR_ENV, unwritable_folders_warning
 from .services.admin_config_providers import AdminAuthConfigProvider, create_logs_config_provider
 from .services.admin_branding import validate_admin_branding
 from .services.admin_theme import validate_admin_theme
@@ -46,6 +49,8 @@ from .services.log_ring_buffer import LogRingBuffer
 from .services.module_registry import ModuleRegistry
 from .services.status_history import StatusHistory
 from .dashboard_resolver import resolve_dashboard_dir
+
+logger = logging.getLogger("qcli-admin")
 
 
 def _package_version() -> str:
@@ -164,7 +169,8 @@ class CliAdminBuilder:
     def set_marketplace(self, options: DashboardMarketplaceOptions | Mapping[str, Any] | bool) -> CliAdminBuilder:
         """Dashboard plugins from the marketplace: ``url`` (default ``https://plugins.qodalis.com``), ``install``
         (``verified``, the default: listed versions of verified publishers only; ``listed``: any listed version;
-        ``off``: browse only), ``dir`` (default ``./qcli-data/dashboard-plugins``, from the working directory),
+        ``off``: browse only), ``dir`` (default ``<data_dir>/dashboard-plugins``: the server's ``data_dir``, else
+        ``QCLI_DATA_DIR``, else ``./qcli-data``),
         and ``fetch`` / ``cdns`` / ``timeout`` for the HTTP client.  A :class:`DashboardMarketplaceOptions` or a
         dict of its fields; ``False`` turns the marketplace off (no routes, installed plugins not loaded),
         ``True`` restores the defaults.  An invalid url or policy raises :class:`ValueError` in :meth:`build`."""
@@ -337,6 +343,13 @@ class CliAdminBuilder:
         # Dashboard plugins from the marketplace: pages added and removed at runtime, served from this server
         server["event_bus"] = deps.event_bus
         marketplace: DashboardMarketplace | None = None
+        # Kept in the server's data directory unless the marketplace names its own folder
+        server_plugins = getattr(deps.builder, "server_plugins", None)
+        data_dir = getattr(server_plugins, "data_dir", None) or os.path.abspath(
+            os.environ.get(QCLI_DATA_DIR_ENV) or "qcli-data"
+        )
+        explicit_dashboard_dir = self._marketplace.dir if self._marketplace is not None else None
+        dashboard_folder_hint = "Set the marketplace's dir to a writable folder" if explicit_dashboard_dir else DATA_DIR_HINT
         add_extension = getattr(deps.builder, "add_dashboard_extension", None)
         remove_extension = getattr(deps.builder, "remove_dashboard_extension", None)
         if self._marketplace is not None and callable(add_extension) and callable(remove_extension):
@@ -361,7 +374,11 @@ class CliAdminBuilder:
                 if callable(ready):
                     await ready()
 
-            marketplace = DashboardMarketplace(self._marketplace, DashboardMarketplaceDeps(
+            marketplace_options = dataclasses.replace(
+                self._marketplace, dir=explicit_dashboard_dir or os.path.join(data_dir, "dashboard-plugins"),
+            )
+            marketplace = DashboardMarketplace(marketplace_options, DashboardMarketplaceDeps(
+                folder_hint=dashboard_folder_hint,
                 extension_ids=lambda: [e.id for e in getattr(deps.builder, "dashboard_extensions", None) or []],
                 extensions=lambda: [
                     e.to_dict() if hasattr(e, "to_dict") else dict(e)
@@ -384,8 +401,11 @@ class CliAdminBuilder:
         # Server plugins from the marketplace: Python packages installed into <data dir>/server-plugins, loaded at the
         # next start (the same marketplace options)
         server_marketplace: ServerPluginMarketplace | None = None
-        server_plugins = getattr(deps.builder, "server_plugins", None)
+        server_folder_hint = DATA_DIR_HINT
         if self._marketplace is not None and server_plugins is not None and hasattr(server_plugins, "records"):
+            plugins_dir = os.path.abspath(server_plugins.dir)
+            if not plugins_dir.startswith(os.path.abspath(server_plugins.data_dir) + os.sep):
+                server_folder_hint = "Set server_plugins.dir to a writable folder"
 
             async def publish_server(event_type: str, data: dict[str, Any]) -> None:
                 bus = server.get("event_bus")
@@ -406,10 +426,21 @@ class CliAdminBuilder:
                 audit=lambda: getattr(deps.builder, "audit_sink", None),
                 publish=publish_server,
                 anonymous_allowed=anonymous_admin_allowed,
+                folder_hint=server_folder_hint,
             ))
             router.include_router(
                 create_server_marketplace_router(server_marketplace, auth_dep), prefix="/server/marketplace",
             )
+
+        # One WARNING at startup when installing would fail: a folder that cannot be created or written
+        writable_folders: list[tuple[str, str]] = []
+        if marketplace is not None and marketplace.install != "off":
+            writable_folders.append((marketplace.dir, dashboard_folder_hint))
+        if server_marketplace is not None and server_marketplace.install != "off" and getattr(server_plugins, "enabled", False):
+            writable_folders.append((server_plugins.dir, server_folder_hint))
+        folder_warning = unwritable_folders_warning(writable_folders)
+        if folder_warning:
+            logger.warning(folder_warning)
 
         plugins_router = create_plugins_router(module_registry, auth_dep, deps.builder, marketplace)
         router.include_router(plugins_router)

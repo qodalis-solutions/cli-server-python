@@ -226,7 +226,7 @@ admin = (
     .set_marketplace(DashboardMarketplaceOptions(
         url="https://plugins.qodalis.com",   # default
         install="verified",                  # default; "listed": any listed version; "off": browse only
-        dir="./qcli-data/dashboard-plugins",  # default, from the working directory
+        dir="./qcli-data/dashboard-plugins",  # default: <data_dir>/dashboard-plugins
     ))
     .build(AdminBuildDeps(registry=..., event_socket_manager=..., builder=...))
 )
@@ -236,13 +236,20 @@ admin = (
 |---|---|---|
 | `url` | `https://plugins.qodalis.com` | The marketplace (its public API at `/api/v1/qcli/marketplace`) |
 | `install` | `verified` | `verified`: listed versions of verified publishers only; `listed`: any listed version; `off`: browse only |
-| `dir` | `./qcli-data/dashboard-plugins` | Where installed plugins are kept |
+| `dir` | `<data_dir>/dashboard-plugins` | Where installed plugins are kept: the server's `data_dir` (`CliServerOptions(data_dir=...)`, else `QCLI_DATA_DIR`, else `./qcli-data`), so one option moves every folder; an explicit `dir` wins |
 | `fetch` | the standard library (`urllib`, in a thread) | The HTTP client for the marketplace and the CDNs: `async fetch(url, headers, timeout) -> MarketplaceResponse(status, body, headers)` (tests pass a fake) |
 | `cdns` | jsDelivr, unpkg | Where bundles are downloaded from, in order |
 | `timeout` | `15` | Timeout of each request, in seconds |
 
 `set_marketplace` also takes a dict of these fields. `set_marketplace(False)` serves none of the routes below, adds no
 `admin dashboard` command and loads no installed plugin. An invalid `url` or `install` raises `ValueError` in `build`.
+
+The folders must be writable. When one cannot be created or written (a container running as a non-root user with the
+default `./qcli-data` in a read-only app folder), the plugin logs one WARNING at startup naming it, and installing,
+updating or removing a dashboard or server plugin answers 500 with the folder and what to set:
+`{ "error": "cannot write the plugins folder /app/qcli-data/dashboard-plugins: permission denied (EACCES). Set data_dir (or QCLI_DATA_DIR) to a writable folder" }`
+(with an explicit `dir`: `Set the marketplace's dir to a writable folder`). `admin dashboard install` and `admin
+plugins install` print it as `Error: ...`. Only the folder and the error code are named.
 
 **Installing** reads the plugin (`GET /plugins/{name}` of the marketplace) and takes the newest listed version this
 dashboard runs (`dashboardApi` 1 or less) unless one is given, checks the trust policy, downloads each file of the

@@ -1368,6 +1368,14 @@ def configure(builder):
 result = create_cli_server(CliServerOptions(data_dir="./qcli-data", configure=configure))
 ```
 
+The data directory (`CliServerOptions(data_dir=...)`; default: the `QCLI_DATA_DIR` environment variable, else
+`./qcli-data`, from the working directory) holds everything the server writes at runtime: `server-plugins/`, the admin
+plugin's `dashboard-plugins/`, `plugin-data/<id>/` and `plugin-settings.json`, so it must be writable. In a container
+that runs as a non-root user, point it at a volume. When the admin marketplace is on and a plugins folder cannot be
+created or written, the server logs one startup WARNING naming it, and installing, updating or removing a plugin answers
+500 with `{ "error": "cannot write the plugins folder <folder>: permission denied (EACCES). Set data_dir (or
+QCLI_DATA_DIR) to a writable folder" }` (the `admin dashboard|plugins install` commands print the same).
+
 `CliServerOptions(data_dir="./qcli-data", server_plugins=None | {"dir": ...} | False)`: `False` ignores the plugins
 installed at runtime (those added in code still load). At startup (the app's lifespan, before it serves; or
 `await result.server_plugins.ready()`), `<data dir>/server-plugins` is added to `sys.path` **after** the server's own
