@@ -123,9 +123,23 @@ def test_an_open_server_without_allow_anonymous_admin_refuses_set_and_reset_and_
     with TestClient(result.app) as client:
         cli = Runner(client, result)
         refusal = "Error: sign-in required: protect the server (users plugin) or set allow_anonymous_admin=True (config:write)"
-        assert cli.text("config set app.main.limit 7") == refusal
-        assert cli.text("config reset app.main.limit") == refusal
-        assert "5" in cli.text("config get app.main.limit")
+        for line in ("config set app.main.limit 7", "config reset app.main.limit"):
+            status, text, body = cli.run(line)
+            # As on Node: HTTP 200, exit code 1, the refusal in the error style
+            assert (status, text, body["exitCode"], body["outputs"][0]["style"]) == (200, refusal, 1, "error")
+        status, text, body = cli.run("config get app.main.limit")
+        assert "5" in text and body["exitCode"] == 0
+        # Other errors keep exit code 0
+        _, text, body = cli.run("config get app.main.nope")
+        assert text.startswith("Error: unknown setting") and body["exitCode"] == 0
+
+
+def test_refusals_exit_with_1_on_execute_stream_too():
+    result = create_cli_server(CliServerOptions(configure=lambda b: b.add_config_provider(app_provider())))
+    with TestClient(result.app) as client:
+        body = {"command": "config", "chainCommands": ["set"], "positionals": ["app.main.limit", "7"], "value": "app.main.limit 7"}
+        stream = client.post(f"{V1}/execute/stream", json=body).text
+        assert "sign-in required" in stream and '"exitCode": 1' in stream
 
 
 class TestConfigCommandOpenServer:

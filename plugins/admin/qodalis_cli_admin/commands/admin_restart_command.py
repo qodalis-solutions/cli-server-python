@@ -12,6 +12,7 @@ from qodalis_cli_server_abstractions import (
     CliCommandExample,
     CliCommandParameterDescriptor,
     CliCommandProcessor,
+    CliCommandRefusal,
     CliProcessCommand,
     ICliCommandProcessor,
 )
@@ -114,7 +115,7 @@ class AdminRestartProcessor(CliCommandProcessor):
         caller = _caller()
         # Checked here, not as required_permissions: ``admin restart status`` needs only admin:access
         if caller is not None and not has_cli_permission(caller.permissions, CLI_SERVER_RESTART_PERMISSION):
-            return f"Error: forbidden: missing permission {CLI_SERVER_RESTART_PERMISSION}"
+            return CliCommandRefusal(f"Error: forbidden: missing permission {CLI_SERVER_RESTART_PERMISSION}")
         if not status["supported"]:
             return "\n".join([f"Error: restart not supported: {status.get('reason')}", *_pending_lines(status)])
         if not _flag(command, "yes", "y"):
@@ -130,7 +131,9 @@ class AdminRestartProcessor(CliCommandProcessor):
                 via="command",
             ))
         except CliServerRestartError as exc:
-            return f"Error: {exc.message}"
+            text = f"Error: {exc.message}"
+            # Sign-in required: exit code 1, as on Node
+            return CliCommandRefusal(text) if exc.status == 403 else text
         applied = f" to apply {len(result['pending'])} pending change(s)" if result["pending"] else ""
         return (
             f"Restarting the server{applied} ({status['mode']} mode). "

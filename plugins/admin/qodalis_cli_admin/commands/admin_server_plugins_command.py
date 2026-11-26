@@ -12,6 +12,7 @@ from qodalis_cli_server_abstractions import (
     CliCommandExample,
     CliCommandParameterDescriptor,
     CliCommandProcessor,
+    CliCommandRefusal,
     CliProcessCommand,
     ICliCommandProcessor,
     get_positionals,
@@ -55,7 +56,9 @@ async def _call(fn: Callable[[], Awaitable[str]]) -> str:
     try:
         return await fn()
     except DashboardMarketplaceError as exc:
-        return f"Error: {exc.message}"
+        text = f"Error: {exc.message}"
+        # Sign-in required / missing permission: exit code 1, as on Node
+        return CliCommandRefusal(text) if exc.status == 403 else text
 
 
 def _spec(text: str) -> tuple[str, Any]:

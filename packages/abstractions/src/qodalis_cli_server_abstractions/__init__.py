@@ -11,6 +11,7 @@ from .cli_command_parameter_descriptor import (
 from .cli_command_processor import (
     CliCommandExample,
     CliCommandProcessor,
+    CliCommandRefusal,
     ICliCommandProcessor,
     command_matches,
 )
@@ -83,6 +84,7 @@ __all__ = [
     "CliCommandAuthor",
     "DEFAULT_LIBRARY_AUTHOR",
     "CliProcessCommand",
+    "CliCommandRefusal",
     "split_shell_words",
     "join_shell_words",
     "get_positionals",
