@@ -1,0 +1,2 @@
+[qodalis_cli.plugins]
+hello = qcli_hello_plugin.plugin:create_plugin

@@ -1,0 +1,6 @@
+Metadata-Version: 2.1
+Name: qcli-hello-plugin
+Version: 1.2.0
+Summary: A tiny server plugin installed at runtime (loader tests)
+Requires-Dist: qodalis-cli-server-abstractions>=1.0.0b7
+Requires-Dist: fastapi>=0.100
