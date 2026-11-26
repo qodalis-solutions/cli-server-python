@@ -88,3 +88,36 @@ def test_legacy_router_rm_root_is_403(root) -> None:
     assert resp.status_code == 403
     assert (root / "a.txt").exists()
     assert client.delete("/api/qcli/fs/rm", params={"path": str(root / "sub")}).status_code == 200
+
+
+# --------------------------------------------------------------------------- folders above the roots
+
+
+def _real(path) -> str:
+    return os.path.realpath(str(path))
+
+
+async def test_a_folder_above_the_roots_lists_the_folders_leading_to_them(tmp_path) -> None:
+    """The dashboard's Files page opens at "/": it lists the way to the roots instead of "Access denied: /"."""
+    (tmp_path / "srv" / "files").mkdir(parents=True)
+    (tmp_path / "srv" / "other").mkdir()
+    (tmp_path / "srv" / "secret.txt").write_text("no")
+    (tmp_path / "data").mkdir()
+    provider = OsFileStorageProvider(OsProviderOptions(allowed_paths=[str(tmp_path / "srv" / "files"), str(tmp_path / "data")]))
+    top = _real(tmp_path).strip(os.sep).split(os.sep)[0]
+    assert [(e.name, e.type, e.size) for e in await provider.list("/")] == [(top, "directory", 0)]
+    assert [e.name for e in await provider.list(str(tmp_path))] == ["data", "srv"]
+    assert [e.name for e in await provider.list(str(tmp_path / "srv"))] == ["files"]
+    assert await provider.list(str(tmp_path / "srv" / "files")) == []
+
+
+async def test_a_folder_above_no_root_and_files_stay_refused(tmp_path) -> None:
+    (tmp_path / "srv" / "files").mkdir(parents=True)
+    (tmp_path / "srv" / "other").mkdir()
+    (tmp_path / "srv" / "secret.txt").write_text("no")
+    provider = OsFileStorageProvider(OsProviderOptions(allowed_paths=[str(tmp_path / "srv" / "files")]))
+    for path in (tmp_path / "srv" / "other", tmp_path / "srv" / "secret.txt"):
+        with pytest.raises(FileStoragePermissionError):
+            await provider.list(str(path))
+    with pytest.raises(FileStoragePermissionError):
+        await provider.read_file(str(tmp_path / "srv" / "secret.txt"))

@@ -623,12 +623,15 @@ class TestFilesystemTools:
             for tool, args in [
                 ("fs_read", {"path": str(tmp_path / "secret.txt")}),
                 ("fs_read", {"path": str(allowed / ".." / "secret.txt")}),
-                ("fs_list", {"path": str(tmp_path)}),
+                ("fs_list", {"path": str(tmp_path / "allowed" / ".." / "elsewhere")}),
                 ("fs_write", {"path": str(tmp_path / "evil.txt"), "content": "x"}),
                 ("fs_delete", {"path": str(tmp_path / "secret.txt")}),
             ]:
                 res = c.call(tool, args)["result"]
                 assert res["isError"] is True, (tool, res)
+            # The folder above the root lists only the way to it, never what else it holds
+            above = c.call("fs_list", {"path": str(tmp_path)})["result"]
+            assert above["isError"] is False and [e["name"] for e in above["structuredContent"]["entries"]] == ["allowed"]
             assert (tmp_path / "secret.txt").read_text() == "outside"
             assert not (tmp_path / "evil.txt").exists()
 
