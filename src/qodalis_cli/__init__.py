@@ -92,6 +92,12 @@ from .restart import (
     detect_supervisor,
 )
 from .config import CliConfigService, CliHostEnvironmentOptions
+from .notifications import (
+    ANONYMOUS_NOTIFICATION_VIEWER,
+    CliNotificationService,
+    CliNotificationsOptions,
+    CliNotificationViewer,
+)
 from .mcp import CliMcpOptions, IMcpToolProvider, McpTool, McpToolRegistry, McpToolResult
 from .shell_security import CliShellOptions, ShellAccessProvider, ShellPrincipal
 from .security import RedactingLogFilter, install_log_redaction, redact
@@ -174,6 +180,10 @@ __all__ = [
     "detect_supervisor",
     "CliConfigService",
     "CliHostEnvironmentOptions",
+    "ANONYMOUS_NOTIFICATION_VIEWER",
+    "CliNotificationService",
+    "CliNotificationsOptions",
+    "CliNotificationViewer",
     "CliServerResult",
     "FileEntry",
     "FileStat",

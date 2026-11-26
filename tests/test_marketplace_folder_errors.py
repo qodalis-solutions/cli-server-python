@@ -48,7 +48,10 @@ class DataDirHost:
     """A server whose admin plugin keeps dashboard plugins in its data directory (no ``dir``)."""
 
     def __init__(self, net: FakeNet, data_dir: Optional[str] = None, dir: Optional[str] = None) -> None:
-        self.result = create_cli_server(CliServerOptions(data_dir=data_dir, allow_anonymous_admin=True))
+        # Notifications in memory: the security warning would create the data directory these tests lock
+        self.result = create_cli_server(CliServerOptions(
+            data_dir=data_dir, allow_anonymous_admin=True, notifications={"file": False},
+        ))
         self.admin = CliAdminBuilder().set_marketplace(
             DashboardMarketplaceOptions(url=MARKET, fetch=net.fetch, dir=dir),
         ).set_credentials("admin", "pass").set_jwt_secret("folder-test-secret-0123456789abcdef").build(AdminBuildDeps(
@@ -182,7 +185,7 @@ def test_an_explicit_dir_names_the_marketplace_dir(tmp_path, lock):
 
 @skip_as_root
 def test_server_plugins_install_answers_500_naming_the_folder_and_the_command_prints_it(tmp_path, lock):
-    host = ServerHost(str(tmp_path / "app" / "data"), anonymous_admin=True)
+    host = ServerHost(str(tmp_path / "app" / "data"), anonymous_admin=True, notifications={"file": False})
     host.net.publish()
     lock(str(tmp_path))
     expected = f"cannot write the plugins folder {host.dir}: permission denied (EACCES). {DATA_HINT}"

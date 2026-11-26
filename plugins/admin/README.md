@@ -525,6 +525,29 @@ catalog, group Server). Errors are `{ "error": "..." }`.
 | PUT | `/installed/{name}` | `{ version? }`: 202 with `previousVersion` (200 `changed: false` when it already is that version) |
 | DELETE | `/installed/{name}` | 202 with the removed plugin |
 
+## Updates
+
+With the marketplace on, the admin plugin checks for updates every 6 hours (a job `updates:check` of the jobs plugin
+when one is mounted, else a task; the first check 60 s after the app started, or once the last result is 6 hours old):
+dashboard and server plugins installed from the marketplace with a newer version (updated from the dashboard),
+plugins the host adds in code whose package has a newer version (with the install command per platform), and a newer
+`qodalis-cli-server` on PyPI. Each update is a notification (`update:*`, permission `updates:read`), resolved once it
+no longer applies or right after the plugin is updated or removed. The last result is kept in
+`<data_dir>/updates.json`; a category that does not answer keeps its last items and says so in `error`.
+
+```python
+CliAdminBuilder().set_update_checks({"interval": 3 * 3600, "initial_delay": 120})  # seconds
+CliAdminBuilder().set_update_checks(False)  # no periodic checks; Check now still works
+```
+
+| Route | Answer |
+|---|---|
+| `GET /api/v1/qcli/updates` | The last result: `{ checkedAt, checking, error?, server, dashboardPlugins, serverPlugins, codePlugins, count }` |
+| `POST /api/v1/qcli/updates/check` | Checks now (a check already running is joined) and answers the new result; 502 `{ error }` when the check fails |
+
+Both need the admin sign-in and, on a protected server, `updates:read` or `plugins:install` (403
+`forbidden: missing permission updates:read`). The MCP tool `updates_list` (`{ check? }`) answers the same.
+
 ## Color scheme
 
 Match the dashboard to your own design with `set_theme()`:

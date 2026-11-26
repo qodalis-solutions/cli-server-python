@@ -143,6 +143,9 @@ class CliPluginContext:
     #: The plugins' settings file (``<data dir>/plugin-settings.json``, a ``JsonFileConfigStore``): for settings that
     #: must not live in the server's config store (the config-redis plugin's own URL).
     settings_file: Any = None
+    #: The server's notifications (``ICliNotifications``): ``notify({"key", "kind", "severity", "title", "message"})``
+    #: tells the dashboard's users, ``resolve(key)`` removes it once the condition ended.  ``None`` on servers before it.
+    notifications: Any = None
 
 
 #: ``create_plugin(context)``: sync or async, returns a plugin result, a module or ``None``.

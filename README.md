@@ -932,6 +932,42 @@ server.restart.on_shutdown("pool", pool.close)  # your own clean-up, in registra
 - **Events** (audience `admin:access`): `server:restart-required` `{ pending }` whenever the list changes,
   `server:restarting` `{ reason, by, pending, mode }` before the shutdown.
 
+## Notifications
+
+The server's system notifications (the admin dashboard's bell and Notifications page): a source publishes with a
+key naming the condition, so publishing it again updates the notification, and resolves it once the condition ended.
+
+```python
+result.notifications.notify({
+    "key": "billing:quota", "kind": "billing", "severity": "warning",  # info, warning or error
+    "title": "Quota at 90%", "message": "Raise the plan before the 1st.",
+    "link": "/config", "requiredPermission": "admin:access",  # optional, as is "data" (8 KB of JSON)
+})
+result.notifications.resolve("billing:quota")
+```
+
+Plugins publish through `context.notifications` (their entry) or `builder.notifications`. A notification whose
+content changed is unread again for everyone. Kept in `<data_dir>/notifications.json` with each user's read and
+dismissed state, at most 500 and 30 days after their last change
+(`CliServerOptions(notifications={"file": False | path, "max_items": 500, "max_age_days": 30})`). A user sees those
+whose `requiredPermission` they hold; on a server without sign-in everyone sees everything with one shared read state.
+
+| Route | Answer |
+|---|---|
+| `GET /api/v1/qcli/notifications?unread=true&severity=warning&limit=50` | `{ items, unreadCount }`, newest first (`unreadCount` ignores the filters) |
+| `POST /api/v1/qcli/notifications/{id}/read` | `{ item, unreadCount }`; 404 for an unknown or hidden one |
+| `POST /api/v1/qcli/notifications/read-all` | `{ marked, unreadCount }` |
+| `DELETE /api/v1/qcli/notifications/{id}` | Dismisses it for the caller: `{ dismissed: true, unreadCount }` |
+| `DELETE /api/v1/qcli/notifications/{id}?scope=all` | Clears it for everyone (`notifications:manage`): `{ cleared: true, unreadCount }` |
+
+Every change is published as `notification:changed` (`action`: `created`, `updated`, `resolved`, `cleared`, `read`,
+`read-all`, `dismissed`; `id`, `key`, `item`), each events socket receiving its own `unreadCount` and `item.read`. The
+terminal has `notifications [list [--unread] [--severity s] | read <id>|--all | clear <id> [--all]]`, MCP the
+`notifications_list` tool. The server's own sources: `server.restart-required` (changes wait for a restart),
+`security.anonymous-admin` (`allow_anonymous_admin` is on), `plugin.failed:<name>` and
+`plugin.needs-configuration:<name>` (resolved at the next start that loads the plugin); the admin plugin adds the
+available updates (`update:*`, permission `updates:read`).
+
 ## Use with your app's sign-in
 
 When your application already signs users in (cookies, JWT, an identity provider), the users plugin can take its users from your app instead of its own logins. The browser terminal, the MCP endpoint and the admin dashboard then all use your session.

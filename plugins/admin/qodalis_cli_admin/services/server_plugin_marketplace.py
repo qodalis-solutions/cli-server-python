@@ -840,6 +840,10 @@ class ServerPluginMarketplace:
 
     # ------------------------------------------------------------------ installed
 
+    def installed_records(self) -> list[dict[str, Any]]:
+        """The installed list (``installed.json``): the update checker compares its versions after a change."""
+        return self._plugins.records()
+
     def _record_of(self, name: Any) -> Optional[dict[str, Any]]:
         return next((r for r in self._plugins.records() if r["name"] == name), None)
 

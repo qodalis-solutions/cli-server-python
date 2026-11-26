@@ -24,6 +24,7 @@ from ..permissions import (
 from ..config.cli_config_registry import CliConfigRegistry
 from ..config.cli_config_service import CliConfigService
 from ..restart.cli_server_restart import CliServerRestart
+from ..notifications.cli_notification_service import CliNotificationService
 from ..server_plugins.cli_server_plugins import CliServerPlugins, resolve_data_dir
 from ..services.cli_command_registry import CliCommandRegistry
 
@@ -96,6 +97,11 @@ class CliBuilder:
         #: it: plugins mark theirs with ``restart.mark_required(id, source, description)``; the config service
         #: marks the settings with ``requires_restart``.
         self.restart = CliServerRestart()
+        #: The server's system notifications (``GET /api/v1/qcli/notifications``, the dashboard's bell, the
+        #: ``notifications`` command): ``notify({"key", "kind", "severity", "title", "message", "link"?,
+        #: "requiredPermission"?, "data"?})`` adds or updates the notification of a key, ``resolve(key)`` removes it once
+        #: the condition ended.  Kept in ``<data_dir>/notifications.json``.
+        self.notifications = CliNotificationService()
         self._server_plugins: Any = CliServerPlugins(resolve_data_dir(), False)
         #: Whether callers who are not signed in may install, update and remove plugins and change settings (the
         #: ``config`` command, ``config_set``, ``admin plugins install``, ``admin dashboard install``): false by

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
 from collections.abc import AsyncIterator
@@ -43,7 +44,11 @@ from typing import Any, Callable, Optional
 from fastapi import FastAPI, WebSocket
 from starlette.routing import Match, Mount
 
-from qodalis_cli_server_abstractions import CliRoutePermission
+from qodalis_cli_server_abstractions import (
+    CLI_NOTIFICATION_CHANGED_EVENT,
+    CLI_SERVER_RESTART_REQUIRED_EVENT,
+    CliRoutePermission,
+)
 from qodalis_cli_server_abstractions.config import create_custom_config_provider
 from qodalis_cli_filesystem.providers.os_provider import OsFileStorageProvider, OsProviderOptions
 
@@ -86,8 +91,21 @@ from .restart import (
     create_restart_router,
 )
 from .server_plugins import CliServerPlugins, CliServerPluginsHost, CliServerPluginsOptions, resolve_data_dir
+from .notifications import (
+    ANONYMOUS_NOTIFICATION_VIEWER,
+    NOTIFICATIONS_FILE,
+    CliNotificationsCommandProcessor,
+    CliNotificationsOptions,
+    CliNotificationViewer,
+    NotificationsMcpToolProvider,
+    create_notifications_router,
+    sync_anonymous_admin_notification,
+    sync_plugin_notifications,
+    sync_restart_notification,
+)
 from .security import LiveCorsMiddleware, WebSocketOriginMiddleware, get_auth_context
 from .shell_security import CliShellOptions, ShellAccessProvider, remote_address
+from .services.cli_command_executor_service import command_auth
 from .services import (
     CliCommandExecutorService,
     CliEventBus,
@@ -190,6 +208,10 @@ class CliServerOptions:
     #: or set allow_anonymous_admin=True", since anyone who reaches the server could run code on it.  Reads stay
     #: open, secrets masked.  Only for a server nobody else can reach; a WARNING is logged at startup when set.
     allow_anonymous_admin: bool = False
+    #: System notifications (``/api/v1/qcli/notifications``, the ``notifications`` command, the dashboard's bell):
+    #: kept in ``<data_dir>/notifications.json`` (``file``; ``False`` keeps them in memory), at most ``max_items``
+    #: (500), ``max_age_days`` (30) after their last change.  A :class:`CliNotificationsOptions` or a dict of its fields.
+    notifications: CliNotificationsOptions | dict[str, Any] | None = None
     configure: Callable[[CliBuilder], None] | None = None
 
 
@@ -246,6 +268,12 @@ class CliServerResult:
         ``clear_required``, ``status()``, ``on_shutdown(name, fn)`` for the host's own clean-up (pools, stores),
         ``attach_server(uvicorn_server)`` when uvicorn runs outside the main thread."""
         return self.builder.restart
+
+    @property
+    def notifications(self) -> Any:
+        """The server's system notifications (same as ``builder.notifications``): ``notify({...})`` adds or updates the
+        notification of a key, ``resolve(key)`` removes it."""
+        return self.builder.notifications
 
     @property
     def server_plugins(self) -> CliServerPlugins:
@@ -392,6 +420,9 @@ class CliServerResult:
         stop = getattr(scheduler, "stop", None)
         if callable(stop):
             self.restart.on_shutdown("job scheduler", stop)
+        # Other plugins schedule their own jobs on it (the admin plugin's update check)
+        if callable(getattr(scheduler, "register", None)) and not services.has("jobs.scheduler"):
+            services.set("jobs.scheduler", scheduler)
         dispose = getattr(plugin, "dispose", None)
         if callable(dispose):
             self.restart.on_shutdown(f"plugin {prefix or type(plugin).__name__}", dispose)
@@ -560,6 +591,38 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     builder.use_server_plugins(CliServerPlugins(
         resolve_data_dir(opts.data_dir), False if opts.server_plugins is False else opts.server_plugins,
     ))
+    # Notifications: set up before the host's code (configure) and the plugins publish
+    notification_options = CliNotificationsOptions.of(opts.notifications)
+    notifications = builder.notifications.configure(
+        file=False if notification_options.file is False else (
+            notification_options.file or os.path.join(builder.server_plugins.data_dir, NOTIFICATIONS_FILE)
+        ),
+        max_items=notification_options.max_items,
+        max_age_days=notification_options.max_age_days,
+        event_bus=lambda: event_bus,
+    )
+
+    def notification_viewer(auth: Any) -> CliNotificationViewer:
+        """Who reads the notifications: the signed-in caller on a protected server, else one shared reader who
+        sees everything."""
+        if auth is None or not event_socket_manager._requires_authentication():
+            return ANONYMOUS_NOTIFICATION_VIEWER
+        user = getattr(auth, "user", None)
+        user_id = getattr(user, "id", None) or getattr(auth, "user_id", None)
+        if not user_id:
+            return ANONYMOUS_NOTIFICATION_VIEWER
+        return CliNotificationViewer(str(user_id), lambda permission: bool(auth.can(permission)))
+
+    def personalize_notification(message: dict[str, Any], principal: Any) -> dict[str, Any]:
+        """Each socket gets its own unread count and read flag."""
+        viewer = notification_viewer(principal)
+        item = message.get("item")
+        if isinstance(item, dict):
+            message["item"] = {**item, "read": notifications.read_flag(message.get("id"), viewer.user_id)}
+        message["unreadCount"] = notifications.unread_count(viewer)
+        return message
+
+    event_socket_manager.set_personalizer(CLI_NOTIFICATION_CHANGED_EVENT, personalize_notification)
     if opts.configure:
         opts.configure(builder)
 
@@ -589,6 +652,11 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         app.include_router(version_router, prefix="/api/qcli")
         # Restart: GET the status (admin:access), POST restarts (server:restart)
         app.include_router(create_restart_router(restart), prefix="/api/v1/qcli/server/restart")
+        # System notifications: every signed-in user, each sees those whose permission they hold
+        app.include_router(
+            create_notifications_router(notifications, lambda request: notification_viewer(get_auth_context(request))),
+            prefix="/api/v1/qcli/notifications",
+        )
 
         if opts.base_path != "/api/v1/qcli":
             app.include_router(router, prefix=opts.base_path)
@@ -696,6 +764,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         registry, executor, skip=lambda root: isinstance(root, CliConfigCommandProcessor),
     ))
     if mcp_options is not None and opts.cli_routes:
+        mcp_tools.add_provider(NotificationsMcpToolProvider(notifications, notification_viewer), builtin=True)
         app.include_router(create_mcp_router(
             mcp_tools,
             mcp_options,
@@ -790,7 +859,20 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
     builder.server_plugins.attach(CliServerPluginsHost(
         builder=builder, config=builder.config, event_bus=event_bus, restart=restart,
         mount=mount_late, after_load=after_plugins_loaded,
+        # Plugins that failed to load or need configuration, once this start loaded them
+        on_ready=lambda states: sync_plugin_notifications(notifications, states),
     ))
+
+    if opts.cli_routes and result.registry.find_processor("notifications") is None:
+        builder.add_processor(CliNotificationsCommandProcessor(
+            notifications, lambda: notification_viewer(command_auth.get()),
+        ))
+    # The server's own sources: the security warning, restart required (now and on every change)
+    sync_anonymous_admin_notification(notifications, bool(opts.allow_anonymous_admin))
+    sync_restart_notification(notifications, restart.pending())
+    event_bus.subscribe(
+        CLI_SERVER_RESTART_REQUIRED_EVENT, lambda _event: sync_restart_notification(notifications, restart.pending()),
+    )
     return result
 
 
