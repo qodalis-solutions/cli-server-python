@@ -65,6 +65,7 @@ for _plugin in (
 
 from qodalis_cli_data_explorer_redis import RedisDataExplorerProvider  # noqa: E402
 from qodalis_cli_data_explorer_redis.redis_provider import (  # noqa: E402
+    _close,
     _ALLOWED_COMMANDS,
     _LIST_COMMANDS,
     _PAIR_LIST_COMMANDS,
@@ -287,6 +288,34 @@ class TestRedisProvider:
         provider = RedisDataExplorerProvider()
         assert callable(getattr(provider, "execute_async", None))
         assert callable(getattr(provider, "get_schema_async", None))
+
+
+class TestRedisClose:
+    """A result is not lost to closing the client: redis 5.0.0 (the oldest the requirement allowed) has no
+    ``aclose``, which raised "'Redis' object has no attribute 'aclose'" after every query."""
+
+    async def test_uses_aclose_when_there(self) -> None:
+        calls: list[str] = []
+
+        class Client:
+            async def aclose(self) -> None:
+                calls.append("aclose")
+
+            async def close(self) -> None:  # pragma: no cover
+                calls.append("close")
+
+        await _close(Client())
+        assert calls == ["aclose"]
+
+    async def test_falls_back_to_close(self) -> None:
+        calls: list[str] = []
+
+        class Client:
+            async def close(self) -> None:
+                calls.append("close")
+
+        await _close(Client())
+        assert calls == ["close"]
 
 
 class TestParseCommandArgs:

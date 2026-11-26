@@ -25,7 +25,7 @@ classifiers = [
 ]
 dependencies = [
     "qodalis-cli-server-abstractions",
-    "redis[hiredis]>=5.0.0",
+    "redis[hiredis]>=5.0.1",
 ]
 
 [project.entry-points."qodalis_cli.plugins"]
