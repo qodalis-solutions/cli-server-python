@@ -221,10 +221,10 @@ class TestHost:
         }]
 
     async def test_through_the_server_options_typed_secrets_never_in_the_response(self, monkeypatch) -> None:
-        monkeypatch.setenv("QCLI_TEST_SECRET_TOKEN", "do-not-show-me")
+        monkeypatch.setenv("QCLI_CFGTEST_SECRET_TOKEN", "do-not-show-me")
         cli = create_cli_server(CliServerOptions(
             base_path="/api/custom", max_table_rows=50,
-            config=CliServerConfigOptions(environment=CliHostEnvironmentOptions(include=["QCLI_TEST_*"])),
+            config=CliServerConfigOptions(environment=CliHostEnvironmentOptions(include=["QCLI_CFGTEST_*"])),
         ))
         view = await cli.config.get("host", ALL)
         options = section(view, "options")
@@ -236,7 +236,7 @@ class TestHost:
         environment = section(view, "environment")["entries"]
         assert len(environment) == 1
         assert {k: environment[0][k] for k in ("key", "value", "isSet", "sensitive")} == {
-            "key": "QCLI_TEST_SECRET_TOKEN", "value": None, "isSet": True, "sensitive": True,
+            "key": "QCLI_CFGTEST_SECRET_TOKEN", "value": None, "isSet": True, "sensitive": True,
         }
         assert "do-not-show-me" not in json.dumps(view)
 
