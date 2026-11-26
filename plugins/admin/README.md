@@ -513,7 +513,7 @@ catalog, group Server). Errors are `{ "error": "..." }`.
 | GET | `/` | `{ marketplaceUrl, install, platform: "python", serverVersion, enabled }` |
 | GET | `/plugins?query=&page=&pageSize=` | The marketplace's server plugins (asked with `kind=server&platform=python&serverVersion=`), each with `platform` (`{ package, latest, installed, compatible, reason? }`), `otherPlatforms`, `autoInstall`, `needsConfiguration`, `updateAvailable`, `allowed`, `blockedReason` |
 | GET | `/plugins/{name}` | One plugin with its platforms and versions (Python versions with `allowed` and `blockedReason`) |
-| GET | `/installed` | The installed plugins: `status` `loaded`, `pending` (runs after a restart), `needs-configuration` (`missing`), `failed` (`error`), `skipped` or `removed` (still running), `loadedVersion`, `updateAvailable` |
+| GET | `/installed` | The installed plugins: `status` `loaded`, `pending` (runs after a restart), `needs-configuration` (`missing`), `failed` (`error`), `skipped` or `removed` (still running), `loadedVersion` (the version this process runs, also while it waits for its settings), `settings` (its settings provider, `config get <id>`, once it registered one), `updateAvailable` |
 | POST | `/installed` | `{ name, version? }`: 202 with the plugin, `restartRequired` and `needsConfiguration` (its settings to fill in after the restart) |
 | PUT | `/installed/{name}` | `{ version? }`: 202 with `previousVersion` (200 `changed: false` when it already is that version) |
 | DELETE | `/installed/{name}` | 202 with the removed plugin |

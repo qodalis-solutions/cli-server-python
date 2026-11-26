@@ -762,23 +762,32 @@ class ServerPluginMarketplace:
         return next((r for r in self._plugins.records() if r["name"] == name), None)
 
     def _loaded_of(self, name: str) -> Any:
-        return next((s for s in self._plugins.states() if s.name == name and s.source == "marketplace" and s.status == "loaded"), None)
+        return next((
+            s for s in self._plugins.states()
+            if s.name == name and s.source == "marketplace" and s.status in ("loaded", "needs-configuration")
+        ), None)
 
     def view(self, record: Mapping[str, Any]) -> dict[str, Any]:
         """One installed plugin with how it runs in this process: ``loaded``, ``pending`` (runs after a restart),
         ``failed``, ``skipped``, ``needs-configuration`` (``missing``) or ``removed``."""
         state = next((s for s in self._plugins.states() if s.name == record["name"] and s.source == "marketplace"), None)
-        loaded = state.version if state is not None and state.status == "loaded" else None
+        # Running: loaded, or waiting for its settings (its version is this process's all the same)
+        running = state is not None and state.status in ("loaded", "needs-configuration")
+        loaded = state.version if running else None
         error = record.get("error")
         missing = None
         if loaded == record["version"]:
-            status = "loaded"
+            status = state.status
+            if status == "needs-configuration":
+                missing = state.missing or record.get("missing") or []
         elif state is not None and state.version == record["version"]:
             status = state.status
             error = state.error or error
-            missing = state.missing
         else:
             status = "pending"
+        # Its settings provider (config get <id>), once it registered one: this process's, else the record's
+        settings = (getattr(state, "settings", None) if state is not None and state.version == record["version"] else None) \
+            or record.get("settings")
         out: dict[str, Any] = {
             "name": record["name"],
             "package": record["package"],
@@ -791,10 +800,12 @@ class ServerPluginMarketplace:
             "status": status,
             "loadedVersion": loaded,
         }
-        if error and status not in ("loaded", "pending"):
+        if error and status not in ("loaded", "pending", "needs-configuration"):
             out["error"] = error
-        if missing:
+        if missing is not None:
             out["missing"] = list(missing)
+        if isinstance(settings, str) and settings:
+            out["settings"] = settings
         return out
 
     async def installed(self, check_updates: bool = False) -> list[dict[str, Any]]:
@@ -803,7 +814,7 @@ class ServerPluginMarketplace:
         records = self._plugins.records()
         views = [self.view(r) for r in records]
         for s in self._plugins.states():
-            if s.source != "marketplace" or s.status != "loaded" or any(r["name"] == s.name for r in records):
+            if s.source != "marketplace" or s.status not in ("loaded", "needs-configuration") or any(r["name"] == s.name for r in records):
                 continue
             views.append({
                 "name": s.name, "package": s.package, "version": s.version, "title": s.name, "icon": None,

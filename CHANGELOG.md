@@ -6,6 +6,7 @@ PEP 440 for `1.0.0-beta.19`).
 
 ## Unreleased
 
+- Server marketplace: the installed list has `settings` (the plugin's settings provider, from this process or `installed.json`) and `loadedVersion` while a plugin waits for its settings (it was null), as on Node; such a plugin removed is listed as still running.
 - Server marketplace: removing a plugin deletes the bytecode Python wrote for its modules (`__pycache__/<module>.*.pyc`, never in `RECORD`), so its package folder goes too (`qodalis_cli_databases/__pycache__` was left behind).
 - Server marketplace: trusted dependencies (no pins) are resolved by the server from PyPI, the whole tree, every package checked against `trusted_dependencies` (an untrusted transitive dependency is refused) and installed with `--require-hashes --no-deps` (pip resolved them before, unchecked); a requirement with a URL is refused, pinned or trusted; conflicts are refused.
 - Server marketplace: the wheel is the one the marketplace lists (`files`: the exact filename, its sha256 equal to PyPI's), else (an older marketplace without `files`) the PyPI wheel of its `integrity`; refused when it lists no wheel for this Python, has no sha256 or disagrees with PyPI. A wheel it did not list was checked against PyPI's hash alone.

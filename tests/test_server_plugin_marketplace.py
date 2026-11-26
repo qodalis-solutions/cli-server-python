@@ -537,6 +537,26 @@ def test_remove_deletes_the_bytecode_python_wrote_for_its_modules(start):
     assert os.listdir(shared_cache) == ["other_module.cpython-314.pyc"]
 
 
+def test_a_plugin_waiting_for_its_settings_is_listed_with_its_version_and_settings_provider(start, monkeypatch):
+    first = start()
+    first.net.publish()
+    assert first.install({"name": "hello"}).status_code == 202
+    assert "settings" not in first.get("/installed").json()[0]  # not loaded yet: no provider
+    forget_fixture_modules()
+    monkeypatch.setenv("QCLI_HELLO_NEEDS_CONFIGURATION", "1")
+    host = start(first.data_dir.rsplit(os.sep, 1)[1], net=first.net, lifespan=True)
+    [plugin] = host.get("/installed").json()
+    assert (plugin["status"], plugin["loadedVersion"], plugin["missing"], plugin["settings"]) == (
+        "needs-configuration", "1.2.0", ["settings.apiKey"], "hello",
+    )
+    assert "error" not in plugin
+    # Removed, it still runs (waiting) until a restart
+    assert host.remove("hello").json()["status"] == "removed"
+    assert [(p["name"], p["status"], p["loadedVersion"]) for p in host.get("/installed").json()] == [
+        ("hello", "removed", "1.2.0"),
+    ]
+
+
 def test_removing_a_loaded_plugin_keeps_it_running_until_a_restart(start, tmp_path):
     first = start()
     first.net.publish()
@@ -545,6 +565,7 @@ def test_removing_a_loaded_plugin_keeps_it_running_until_a_restart(start, tmp_pa
     host = start(first.data_dir.rsplit(os.sep, 1)[1], net=first.net, lifespan=True)
     installed = host.get("/installed").json()
     assert [(p["name"], p["status"], p["loadedVersion"]) for p in installed] == [("hello", "loaded", "1.2.0")]
+    assert installed[0]["settings"] == "hello"
     removed = host.remove("hello").json()
     assert (removed["status"], removed["restartRequired"]) == ("removed", True)
     assert [(p["name"], p["status"]) for p in host.get("/installed").json()] == [("hello", "removed")]
