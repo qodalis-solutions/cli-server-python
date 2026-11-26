@@ -175,6 +175,21 @@ class FakeServerNet:
         self.calls: list[str] = []
         self.marketplace_down = False
 
+    def add_pypi(self, name: str, version: str, requires: Optional[list[str]] = None, wheel: bool = True) -> str:
+        """A release of a dependency on PyPI (a wheel, or only an sdist): its ``Requires-Dist``; the wheel's sha256."""
+        data = f"{name}-{version}".encode()
+        module = name.replace("-", "_")
+        filename = f"{module}-{version}-py3-none-any.whl" if wheel else f"{module}-{version}.tar.gz"
+        self.files[f"{FILES}/{filename}"] = data
+        self.releases[(name, version)] = {
+            "info": {"name": name, "version": version, "requires_dist": requires or None},
+            "urls": [{
+                "filename": filename, "url": f"{FILES}/{filename}", "packagetype": "bdist_wheel" if wheel else "sdist",
+                "digests": {"sha256": sha256_hex(data)},
+            }],
+        }
+        return sha256_hex(data)
+
     def publish(
         self, name: str = "hello", *, versions: Optional[list[str]] = None, package: str = HELLO_PACKAGE,
         verified: bool = True, platforms: Optional[list[str]] = None, server_range: Optional[str] = ">=1.0.0b7",
@@ -246,6 +261,9 @@ class FakeServerNet:
             return response(404, {"error": "not found"})
         if url.startswith(PYPI):
             parts = url[len(PYPI) + len("/pypi/"):].split("/")
+            if len(parts) == 2:  # /pypi/<name>/json: every release's files
+                releases = {v: r["urls"] for (n, v), r in self.releases.items() if n == parts[0]}
+                return response(200, {"info": {"name": parts[0]}, "releases": releases}) if releases else response(404, {"message": "Not Found"})
             release = self.releases.get((parts[0], parts[1]))
             return response(200, release) if release else response(404, {"message": "Not Found"})
         if url in self.files:

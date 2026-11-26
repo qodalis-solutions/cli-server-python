@@ -463,16 +463,23 @@ check fails:
 1. The plugin must be a server plugin with a Python package, allowed by the trust policy, installable at runtime
    (`autoInstall`), its version's server range satisfied (`serverVersion` is sent to the marketplace), and not set up
    by the host (409 `already installed by the host`).
-2. The wheel PyPI lists for the version (a pure-Python wheel first, else the most specific one for this Python) is
-   downloaded; its sha256 must match PyPI's and the marketplace's integrity (`sha256-…`) (502 `integrity mismatch`).
+2. The wheel is one the marketplace lists for the version (`files`: the exact filename, a pure-Python wheel first, else
+   the most specific one for this Python; an older marketplace without `files`: the PyPI wheel of its `integrity`). Its
+   sha256 must match the marketplace's and PyPI's (502 `integrity mismatch`), and a version the marketplace lists no
+   wheel of for this Python is refused (502): PyPI's hash alone is never enough.
 3. The wheel must be that package and version, declare a `qodalis_cli.plugins` entry point and accept this server's
    version in its `Requires-Dist` on `qodalis-cli-server` / `qodalis-cli-server-abstractions` (400 otherwise).
 4. Its **dependencies**: the server's own packages and those the server's environment satisfies are never installed
    (another version of one is refused, 400 `incompatible dependency`). When the version record pins them
    (`dependencies: [{ id, version, integrity, range }]`, sha256), pip installs exactly those with
    `--require-hashes --no-deps` from a generated requirements file; a requirement without a pin is refused. Without
-   pins only those `trusted_dependencies` allows are installed (names, or prefixes `acme-*`), else 400
-   `untrusted dependency: <name>`.
+   pins the server resolves the whole tree itself from PyPI (the newest version with a wheel for this Python, each
+   package's own `Requires-Dist`, extras and markers applied) and every package of it must be one
+   `trusted_dependencies` allows (names, or prefixes `acme-*`), else 400 `untrusted dependency: <name> (needed by
+   …)`; pip then installs exactly that tree with `--require-hashes --no-deps` (PyPI's sha256 of its wheels), so it
+   brings nothing unchecked. A conflict is refused (400 `conflicting dependency`), and so is any requirement with a
+   URL (`name @ https://…`, 400 `direct-URL dependency refused`), pinned or trusted. Only wheels (`--only-binary
+   :all:`).
 5. `pip install --target <staging> --no-deps <wheel>` (and the dependencies) runs in a staging directory; anything pip
    brought that the server's environment has is dropped, the rest moved into `<data dir>/server-plugins` (the wheel
    kept in `wheels/`).

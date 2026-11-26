@@ -423,6 +423,32 @@ def missing_requirements(requires: list[str], plugins_dir: str) -> list[str]:
     return out
 
 
+#: The most packages a plugin's trusted dependencies may bring, resolved.
+_MAX_RESOLVED = 100
+
+
+def _refuse_direct_url(req: Requirement, parent: str) -> None:
+    """A requirement installed from a URL (``name @ https://...``) is never installed: it bypasses the index and the
+    trust checks."""
+    if req.url:
+        raise DashboardMarketplaceError(400, f"direct-URL dependency refused: {req.name} (needed by {parent})")
+
+
+def _requirements_of(requires: list[str], extras: set[str]) -> list[Requirement]:
+    """``Requires-Dist`` that apply here: markers evaluated for no extra and each of ``extras``."""
+    out: list[Requirement] = []
+    for text in requires:
+        try:
+            req = Requirement(text)
+        except InvalidRequirement:
+            continue
+        if req.marker is not None and not any(req.marker.evaluate({"extra": e}) for e in ("", *sorted(extras))):
+            continue
+        req.marker = None
+        out.append(req)
+    return out
+
+
 def is_trusted_dependency(name: str, trusted: list[str]) -> bool:
     """Whether the host's ``trusted_dependencies`` allows a package: a name (``httpx``) or a prefix (``qodalis-*``),
     compared normalized."""
@@ -970,6 +996,7 @@ class ServerPluginMarketplace:
                 req = Requirement(text)
             except InvalidRequirement:
                 continue
+            _refuse_direct_url(req, package)
             if canonicalize_name(req.name) in SERVER_CORE_PACKAGES and server and req.specifier and not req.specifier.contains(server, prereleases=True):
                 raise DashboardMarketplaceError(
                     400, f"incompatible: {package}=={version} needs {req.name}{req.specifier} (this server has {server})",
@@ -979,6 +1006,8 @@ class ServerPluginMarketplace:
         # package of the server's environment.  Decided before anything is stored.
         directory = self._plugins.dir
         plan = self._dependency_plan(info.requires, target, directory)
+        if plan.get("trusted"):
+            plan = {"pinned": await self._resolve_trusted(plan["trusted"], package, directory)}
 
         # Verified: pip installs the wheel (kept) and the missing dependencies into a staging directory
         filename = os.path.basename(str(wheel["filename"]))
@@ -1045,13 +1074,100 @@ class ServerPluginMarketplace:
             raise DashboardMarketplaceError(400, f"untrusted dependency: {', '.join(untrusted)} (the marketplace pins none and the server does not trust it)")
         return {"trusted": missing}
 
+    async def _resolve_trusted(self, missing: list[str], package: str, directory: str) -> list[dict[str, Any]]:
+        """The whole tree of trusted dependencies, resolved here from PyPI (pip installs it with ``--no-deps`` and
+        ``--require-hashes``, so it brings nothing unchecked): for each requirement the newest version with a wheel
+        for this Python, its wheels' sha256 and its own requirements, each one met by the server, the plugins
+        directory or this tree, else trusted and resolved in turn.  Refused: an untrusted or direct-URL requirement,
+        a conflict, more than ``_MAX_RESOLVED`` packages."""
+        chosen: dict[str, dict[str, Any]] = {}
+        queue: list[tuple[Requirement, str]] = [(Requirement(t), package) for t in missing]
+        while queue:
+            req, parent = queue.pop(0)
+            _refuse_direct_url(req, parent)
+            key = canonicalize_name(req.name)
+            have = chosen.get(key)
+            if have is not None:
+                if req.specifier and not req.specifier.contains(have["version"], prereleases=True):
+                    raise DashboardMarketplaceError(
+                        400, f"conflicting dependency: {parent} needs {req.name}{req.specifier}, {have['version']} is chosen",
+                    )
+                for extra in sorted(set(req.extras) - have["extras"]):
+                    have["extras"].add(extra)
+                    queue.extend((r, have["id"]) for r in _requirements_of(have["requires"], {extra}))
+                continue
+            if parent != package and not missing_requirements([str(req)], directory):
+                continue  # met by the server or the plugins directory (an incompatible server package raises)
+            if not is_trusted_dependency(req.name, self.trusted_dependencies):
+                raise DashboardMarketplaceError(
+                    400, f"untrusted dependency: {req.name} (needed by {parent}; the marketplace pins none and the "
+                    "server does not trust it)",
+                )
+            if len(chosen) >= _MAX_RESOLVED:
+                raise DashboardMarketplaceError(400, f"too many dependencies (more than {_MAX_RESOLVED})")
+            entry = await self._resolve_one(req)
+            entry["extras"] = set(req.extras)
+            chosen[key] = entry
+            queue.extend((r, entry["id"]) for r in _requirements_of(entry["requires"], set(req.extras)))
+        return [{"id": e["id"], "version": e["version"], "hashes": e["hashes"]} for e in chosen.values()]
+
+    async def _resolve_one(self, req: Requirement) -> dict[str, Any]:
+        """The newest version of ``req`` with a wheel for this Python: its wheels' sha256 and ``Requires-Dist``."""
+        name = quote(req.name, safe="")
+        project = await self._get_index_json(f"{self.pypi_url}/pypi/{name}/json")
+        releases = project.get("releases") if isinstance(project, dict) else None
+        if not isinstance(releases, dict):
+            raise DashboardMarketplaceError(400, f"dependency not found on PyPI: {req.name}")
+        by_version: dict[Version, tuple[str, Any]] = {}
+        for text, files in releases.items():
+            try:
+                by_version[Version(text)] = (text, files)
+            except (InvalidVersion, TypeError):
+                continue
+        for v in sorted(req.specifier.filter(by_version), reverse=True):
+            text, files = by_version[v]
+            if not isinstance(files, list) or _choose_wheel(files) is None:
+                continue
+            release = await self._get_index_json(f"{self.pypi_url}/pypi/{name}/{quote(text, safe='')}/json")
+            if not isinstance(release, dict):
+                continue
+            urls = [u for u in release.get("urls") or [] if isinstance(u, dict)]
+            wheels = [u for u in urls if u.get("packagetype") == "bdist_wheel" and u.get("yanked") is not True]
+            hashes = [h for h in ((u.get("digests") or {}).get("sha256") for u in wheels) if isinstance(h, str) and re.fullmatch(r"[0-9a-f]{64}", h)]
+            if _choose_wheel(urls) is None or not hashes:
+                continue
+            info = release.get("info") if isinstance(release.get("info"), dict) else {}
+            requires = [t for t in info.get("requires_dist") or [] if isinstance(t, str)]
+            project_name = info.get("name") if isinstance(info.get("name"), str) and _is_package(info.get("name")) else req.name
+            return {"id": project_name, "version": text, "hashes": hashes, "requires": requires}
+        raise DashboardMarketplaceError(
+            400, f"no version of {req.name}{req.specifier} with a wheel for this Python "
+            f"({sys.version_info.major}.{sys.version_info.minor})",
+        )
+
+    async def _get_index_json(self, url: str) -> Any:
+        """A PyPI JSON document, read with the download's larger limit (a project's list of releases can be large)."""
+        try:
+            res = await self._download(url, {"Accept": "application/json"}, max(self._timeout, 60.0))
+        except Exception as exc:  # noqa: BLE001
+            raise DashboardMarketplaceError(502, "package index unreachable") from exc
+        if res.status == 404:
+            return None
+        if not res.ok:
+            raise DashboardMarketplaceError(502, "package index unreachable")
+        try:
+            return res.json()
+        except Exception as exc:  # noqa: BLE001
+            raise DashboardMarketplaceError(502, "package index unreachable") from exc
+
     async def _install_dependencies(self, plan: dict[str, Any], staging: str) -> None:
         if plan.get("pinned"):
             os.makedirs(staging, exist_ok=True)
             requirements = os.path.join(staging, "..", f".requirements-{secrets.token_hex(4)}.txt")
             with open(requirements, "w", encoding="utf-8") as f:
                 for p in plan["pinned"]:
-                    f.write(f"{p['id']}=={p['version']} --hash=sha256:{p['sha256']}\n")
+                    hashes = " ".join(f"--hash=sha256:{h}" for h in p.get("hashes") or [p["sha256"]])
+                    f.write(f"{p['id']}=={p['version']} {hashes}\n")
             try:
                 await self._run_pip(
                     ["install", "--target", staging, "--require-hashes", "--no-deps", *self._pip_flags(), "-r", requirements],
@@ -1062,8 +1178,6 @@ class ServerPluginMarketplace:
                     os.remove(requirements)
                 except OSError:
                     pass
-        elif plan.get("trusted"):
-            await self._run_pip(["install", "--target", staging, *self._pip_flags(), *plan["trusted"]], "pip install of its dependencies")
 
     def _pip_flags(self) -> list[str]:
         return ["--disable-pip-version-check", "--no-input", "--no-compile", "--only-binary", ":all:", "--quiet"]
