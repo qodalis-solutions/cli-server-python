@@ -297,6 +297,47 @@ def _choose_wheel(files: list[Any]) -> Optional[dict[str, Any]]:
     return best[1] if best else None
 
 
+def _marketplace_wheel(
+    release: Mapping[str, Any], target: Mapping[str, Any], package: str, version: str,
+) -> tuple[dict[str, Any], str]:
+    """The wheel to install and its sha256 (SRI): picked from the marketplace's ``files`` (the exact filename, with the
+    marketplace's hash, which PyPI's must equal), else the file of the marketplace's ``integrity`` (an older
+    marketplace).  Refused when the marketplace names no wheel for this Python or PyPI disagrees: never PyPI's hash
+    alone."""
+    urls = [u for u in (release.get("urls") if isinstance(release.get("urls"), list) else []) if isinstance(u, dict)]
+    python = f"{sys.version_info.major}.{sys.version_info.minor}"
+    if _choose_wheel(urls) is None:
+        raise DashboardMarketplaceError(400, f"no wheel of {package}=={version} for this Python ({python})")
+    raw = target.get("files") if isinstance(target.get("files"), list) else []
+    listed = {
+        f["path"]: f["integrity"] for f in raw
+        if isinstance(f, dict) and isinstance(f.get("path"), str) and isinstance(f.get("integrity"), str)
+        and _SHA256.fullmatch(f["integrity"])
+    }
+    if raw:
+        wheel = _choose_wheel([u for u in urls if u.get("filename") in listed])
+        if wheel is None:
+            raise DashboardMarketplaceError(
+                502, f"the marketplace lists no wheel of {package}=={version} for this Python ({python})",
+            )
+        expected = listed[wheel["filename"]]
+    else:
+        expected = target.get("integrity")
+        if not isinstance(expected, str) or not _SHA256.fullmatch(expected):
+            raise DashboardMarketplaceError(502, f"the marketplace has no sha256 of {package}=={version}")
+        wheel = _choose_wheel([
+            u for u in urls if _hex_to_integrity((u.get("digests") or {}).get("sha256")) == expected
+        ])
+        if wheel is None:
+            raise DashboardMarketplaceError(502, "integrity mismatch: the marketplace and PyPI disagree")
+    integrity = _hex_to_integrity((wheel.get("digests") or {}).get("sha256"))
+    if integrity is None:
+        raise DashboardMarketplaceError(502, "the PyPI record has no sha256")
+    if integrity != expected:
+        raise DashboardMarketplaceError(502, "integrity mismatch: the marketplace and PyPI disagree")
+    return wheel, integrity
+
+
 @dataclass
 class WheelInfo:
     name: str
@@ -907,21 +948,10 @@ class ServerPluginMarketplace:
         release = await self._get_json(f"{self.pypi_url}/pypi/{quote(package, safe='')}/{quote(version, safe='')}/json")
         if not isinstance(release, dict):
             raise DashboardMarketplaceError(404, f"not on PyPI: {package}=={version}")
-        wheel = _choose_wheel(release.get("urls") if isinstance(release.get("urls"), list) else [])
-        if wheel is None:
-            raise DashboardMarketplaceError(400, f"no wheel of {package}=={version} for this Python ({sys.version_info.major}.{sys.version_info.minor})")
-        integrity = _hex_to_integrity((wheel.get("digests") or {}).get("sha256"))
+        wheel, integrity = _marketplace_wheel(release, target, package, version)
         url = wheel.get("url")
-        if integrity is None:
-            raise DashboardMarketplaceError(502, "the PyPI record has no sha256")
         if not isinstance(url, str) or not re.match(r"^https?://", url, re.IGNORECASE):
             raise DashboardMarketplaceError(502, "the PyPI record has no wheel url")
-        # The marketplace's hash of the same file (its files list), else of the file it chose
-        files = target.get("files") if isinstance(target.get("files"), list) else []
-        listed = next((f.get("integrity") for f in files if isinstance(f, dict) and f.get("path") == wheel.get("filename")), None)
-        expected = listed if isinstance(listed, str) else target.get("integrity") if not files else None
-        if isinstance(expected, str) and _SHA256.fullmatch(expected) and expected != integrity:
-            raise DashboardMarketplaceError(502, "integrity mismatch: the marketplace and PyPI disagree")
         data = await self._download_wheel(url)
         if sha256_integrity(data) != integrity:
             raise DashboardMarketplaceError(502, f"integrity mismatch: {package}=={version}")
