@@ -1325,6 +1325,84 @@ result.mount_plugin(users_plugin)  # protects every route and socket of the serv
 
 The users plugin README shows the full lifespan wiring, server protection, permissions and [API tokens](plugins/users/README.md#api-tokens).
 
+### Server plugins installed from code or the dashboard
+
+Every official plugin but the admin plugin has an **entry point** (`qodalis_cli.plugins` in its `pyproject.toml`,
+`create_plugin(context)` in its `plugin` module) that reads all its options from its **settings**. The same entry
+serves both ways of installing it, so the dashboard's Config page shows the same settings either way:
+
+- **From the dashboard** (Plugins → Marketplace, or `admin plugins install weather`): the admin plugin's server
+  marketplace downloads the wheel, checks it and installs it into `<data dir>/server-plugins` (see the
+  [admin README](plugins/admin/README.md#server-plugins-from-the-marketplace)); it loads at the next start.
+- **In code**: `builder.add_plugin(entry, options)`. The options are the defaults of the settings of the same keys
+  (origin `code`); a saved setting overrides them (origin `setting`). Options that are not settings (a pool, a store,
+  a function) reach the plugin as `context.options`.
+
+```python
+from qodalis_cli_users import plugin as users
+from qodalis_cli_weather import plugin as weather
+
+def configure(builder):
+    builder.add_plugin(users, {"defaultAdminPassword": os.environ["ROOT_PASSWORD"], "auth_adapter": my_adapter})
+    builder.add_plugin(weather, {"defaultLocation": "Paris"})
+
+result = create_cli_server(CliServerOptions(data_dir="./qcli-data", configure=configure))
+```
+
+`CliServerOptions(data_dir="./qcli-data", server_plugins=None | {"dir": ...} | False)`: `False` ignores the plugins
+installed at runtime (those added in code still load). At startup (the app's lifespan, before it serves; or
+`await result.server_plugins.ready()`), `<data dir>/server-plugins` is added to `sys.path` **after** the server's own
+packages, then every plugin loads in its declared **order** (the entry module's `order`, `CLI_PLUGIN_LOAD_ORDER`:
+`AUTH` 10 for the users plugin, `CONFIG_STORE` 20 for config-redis, `CORE` 30 for databases and the data explorer,
+`DEFAULT` 50, portal 60, `SOURCE` 70 for the data explorer sources; code plugins first on a tie). What an entry returns
+is mounted (a plugin result with `prefix` and `router`) or added (a module).
+
+States (`result.server_plugins.states()`, `GET /api/v1/qcli/plugins/installed` with `source`, `status`, `missing` and
+`settings`, `installed.json` for the installed ones):
+
+| Status | |
+|---|---|
+| `loaded` | Running |
+| `needs-configuration` | Required settings have no value (`missing`): it registered nothing; save them (`config set weather.settings.defaultLocation Paris` or the dashboard), then restart |
+| `failed` | It raised (`error`, kept in `installed.json` until it loads); startup goes on |
+| `skipped` | The host has the same package (set up in code, or installed in the server's environment) |
+
+Settings: a plugin registers them with `await context.settings(title=..., settings=[...])`, a `CliStoredConfigProvider`
+(default id: the plugin's id, section `settings`). While the server keeps its settings in memory, the plugins' are kept
+in `<data dir>/plugin-settings.json` (mode 0600) so they survive the restart they wait for; a store the host set wins.
+A setting marked `required=True` (or `validation.required`) without a value makes the plugin need configuration:
+`return context.needs_configuration(provider.missing_required())`. Config entries carry `origin`
+(`code`, `setting` or `default`) besides `source` (the store kind).
+
+A third-party plugin:
+
+```toml
+[project.entry-points."qodalis_cli.plugins"]
+kanban = "acme_kanban.plugin:create_plugin"
+```
+
+```python
+# acme_kanban/plugin.py
+from qodalis_cli_server_abstractions import CliPluginEntryInfo
+from qodalis_cli_server_abstractions.config import CliConfigSettingDefinition
+
+plugin = CliPluginEntryInfo(id="kanban", package="acme-kanban", title="Kanban", icon="🗂️")
+order = 50
+
+async def create_plugin(context):
+    settings = await context.settings(title="Kanban", settings=[
+        CliConfigSettingDefinition(key="boardUrl", type="url", required=True),
+    ])
+    if settings.missing_required():
+        return context.needs_configuration(settings.missing_required())
+    return KanbanModule(url=lambda: settings.value("settings", "boardUrl"))
+```
+
+The context also has `builder`, `config`, `logger`, `data_dir` (`<data dir>/plugin-data/<id>`), `server_data_dir`,
+`event_bus`, `restart`, `source` (`marketplace` or `code`) and `services` (what plugins share: the `users` plugin,
+`databases`, `public-api`, `data-explorer.policy`, the portal's sections). Python packages carry no `qodalis.config`
+block: the marketplace derives a Python version's settings from the plugin's Node package.
+
 ### Plugin commands
 
 Every plugin README has a `Terminal commands` section. Commands served by this server (registered by `mount_plugin`

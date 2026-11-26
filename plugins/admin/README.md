@@ -440,6 +440,77 @@ the list form `[{ "ecosystem": "pypi", "name": ... }]`), else whether the server
 
 `hasConfig`: the plugin has settings (the section `dashboard-plugins.<id>`).
 
+## Server plugins from the marketplace
+
+Server plugins (`kind: "server"` in the [plugin marketplace](https://plugins.qodalis.com)) have a package per server
+platform; this server installs the **Python** one (`platforms.python`) at runtime, into
+`<data dir>/server-plugins`, and loads it at the next start (see the server's README,
+[Server plugins installed from code or the dashboard](../../README.md#server-plugins-installed-from-code-or-the-dashboard)).
+The same `set_marketplace` options as dashboard plugins, plus:
+
+```python
+CliAdminBuilder().set_marketplace(DashboardMarketplaceOptions(
+    install="verified",                     # verified publishers only (default), "listed", or "off"
+    pypi_url="https://pypi.org",            # the package index (JSON API /pypi/<name>/<version>/json)
+    trusted_dependencies=["httpx", "acme-*"],  # dependencies a plugin may bring when the marketplace pins none
+    pip=None,                               # runs pip (default: sys.executable -m pip; tests pass a fake)
+))
+```
+
+An install (`POST /installed` or `admin plugins install <name>[@version]`), refused before anything is stored when a
+check fails:
+
+1. The plugin must be a server plugin with a Python package, allowed by the trust policy, installable at runtime
+   (`autoInstall`), its version's server range satisfied (`serverVersion` is sent to the marketplace), and not set up
+   by the host (409 `already installed by the host`).
+2. The wheel PyPI lists for the version (a pure-Python wheel first, else the most specific one for this Python) is
+   downloaded; its sha256 must match PyPI's and the marketplace's integrity (`sha256-…`) (502 `integrity mismatch`).
+3. The wheel must be that package and version, declare a `qodalis_cli.plugins` entry point and accept this server's
+   version in its `Requires-Dist` on `qodalis-cli-server` / `qodalis-cli-server-abstractions` (400 otherwise).
+4. Its **dependencies**: the server's own packages and those the server's environment satisfies are never installed
+   (another version of one is refused, 400 `incompatible dependency`). When the version record pins them
+   (`dependencies: [{ id, version, integrity, range }]`, sha256), pip installs exactly those with
+   `--require-hashes --no-deps` from a generated requirements file; a requirement without a pin is refused. Without
+   pins only those `trusted_dependencies` allows are installed (names, or prefixes `acme-*`), else 400
+   `untrusted dependency: <name>`.
+5. `pip install --target <staging> --no-deps <wheel>` (and the dependencies) runs in a staging directory; anything pip
+   brought that the server's environment has is dropped, the rest moved into `<data dir>/server-plugins` (the wheel
+   kept in `wheels/`).
+
+A package the server's environment already has (the filesystem plugin, which the server depends on) is **enabled**
+without a download: recorded with `"bundled": true` and loaded from the environment; it is updated with the server.
+
+Every change is recorded in `installed.json`, marks a restart as required (`plugin:<name>`, cleared when the list is
+back to what runs: [Restart](../../README.md#restart)), is audited as `server.plugin.install|update|remove`
+(`{ name, package, version, previousVersion? }`) and published as `server:plugins-changed` (audience `admin:access`).
+A removal deletes the files listed in the package's `RECORD` (its dependencies stay); the plugin runs until a restart.
+
+`installed.json`:
+
+```json
+{ "plugins": [{
+  "name": "weather", "package": "qodalis-cli-server-plugin-weather", "version": "1.0.0b31",
+  "integrity": "sha256-…", "file": "qodalis_cli_server_plugin_weather-1.0.0b31-py3-none-any.whl",
+  "title": "Weather", "icon": "🌤️", "description": "…", "installedAt": "2026-11-26T10:04:05.123Z", "installedBy": "root",
+  "settings": "weather", "status": "needs-configuration", "missing": ["settings.defaultLocation"], "error": "…"
+}] }
+```
+
+### Server marketplace API
+
+Mounted at `/api/v1/qcli/server/marketplace`. Reading needs `admin:access`; changes need **`plugins:install`** (core
+catalog, group Server). Errors are `{ "error": "..." }`.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/` | `{ marketplaceUrl, install, platform: "python", serverVersion, enabled }` |
+| GET | `/plugins?query=&page=&pageSize=` | The marketplace's server plugins (asked with `kind=server&platform=python&serverVersion=`), each with `platform` (`{ package, latest, installed, compatible, reason? }`), `otherPlatforms`, `autoInstall`, `needsConfiguration`, `updateAvailable`, `allowed`, `blockedReason` |
+| GET | `/plugins/{name}` | One plugin with its platforms and versions (Python versions with `allowed` and `blockedReason`) |
+| GET | `/installed` | The installed plugins: `status` `loaded`, `pending` (runs after a restart), `needs-configuration` (`missing`), `failed` (`error`), `skipped` or `removed` (still running), `loadedVersion`, `updateAvailable` |
+| POST | `/installed` | `{ name, version? }`: 202 with the plugin, `restartRequired` and `needsConfiguration` (its settings to fill in after the restart) |
+| PUT | `/installed/{name}` | `{ version? }`: 202 with `previousVersion` (200 `changed: false` when it already is that version) |
+| DELETE | `/installed/{name}` | 202 with the removed plugin |
+
 ## Color scheme
 
 Match the dashboard to your own design with `set_theme()`:
@@ -649,6 +720,25 @@ Running since 2026-11-25 10:06:12
 Restart mode: exit (exits for docker to start it again)
 No changes are waiting for a restart.
 ```
+
+### `admin plugins search|installed|install|update|remove`
+
+Server plugins from the marketplace (`search` and `installed` need `admin:access`; changes `plugins:install`):
+
+```text
+> admin plugins install weather
+Installed weather: qodalis-cli-server-plugin-weather==1.0.0b31.
+Restart the server to apply it: admin restart (or the dashboard).
+
+> admin plugins installed
+1 server plugin(s) from https://plugins.qodalis.com (install: verified)
+Plugin   Package                            Version   Status           Installed            By
+weather  qodalis-cli-server-plugin-weather  1.0.0b31  pending restart  2026-11-26 10:04:05  root
+```
+
+`admin plugins search <query>` lists the plugin, this server's package, its version, platforms, publisher and whether
+it can be installed (`blocked: <reason>`, or the settings to set after the install); `update <name>[@version]`,
+`remove <name>`. Lists take `--json`.
 
 ## License
 
