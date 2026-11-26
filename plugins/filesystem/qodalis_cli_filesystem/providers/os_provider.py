@@ -46,7 +46,13 @@ class OsFileStorageProvider(IFileStorageProvider):
         return "os"
 
     async def list(self, path: str) -> list[FileEntry]:
-        resolved = self._validate(path)
+        try:
+            resolved = self._validate(path)
+        except FileStoragePermissionError:
+            above = self._folders_toward_roots(path)
+            if above is None:
+                raise
+            return above
 
         if not os.path.exists(resolved):
             raise FileStorageNotFoundError(path)
@@ -209,6 +215,27 @@ class OsFileStorageProvider(IFileStorageProvider):
         """
         if resolved in self._allowed_paths:
             raise FileStoragePermissionError(path)
+
+    def _folders_toward_roots(self, path: str) -> list[FileEntry] | None:
+        """A folder above allowed roots (``/`` with the root ``/srv/files``): only the next folders leading to them
+        (``srv``), so a client opening at ``/`` finds its way; ``None`` for a path above no root."""
+        resolved = os.path.realpath(path)
+        prefix = resolved.rstrip(os.sep) + os.sep
+        names = sorted({
+            allowed[len(prefix):].split(os.sep, 1)[0]
+            for allowed in self._allowed_paths
+            if allowed.startswith(prefix) and len(allowed) > len(prefix)
+        })
+        if not names:
+            return None
+        entries: list[FileEntry] = []
+        for name in names:
+            try:
+                modified = datetime.fromtimestamp(os.stat(os.path.join(resolved, name)).st_mtime, tz=timezone.utc).isoformat()
+            except OSError:
+                modified = ""
+            entries.append(FileEntry(name=name, type="directory", size=0, modified=modified))
+        return entries
 
     def _validate(self, path: str) -> str:
         """Resolve *path* and check it against the allowed whitelist.
