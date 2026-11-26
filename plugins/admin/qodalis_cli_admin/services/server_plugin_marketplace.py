@@ -694,8 +694,19 @@ class ServerPluginMarketplace:
         needs = _needs_configuration_of(item, own) or (_needs_configuration_of({}, None, listed_own[0]) if listed_own else [])
         if needs:
             out["needsConfiguration"] = needs
+        code = self._added_in_code(own["package"]) if record is None and own is not None else None
+        code_version = getattr(code, "version", None) if code is not None else None
+        installed: Optional[dict[str, Any]] = (
+            {"version": record["version"], "source": "marketplace"} if record
+            else {"version": code_version if isinstance(code_version, str) and _is_version(code_version) else None, "source": "code"}
+            if code is not None else None
+        )
+        out["installed"] = installed
         latest = platform.get("latest") if platform else None
-        out["updateAvailable"] = bool(record and isinstance(latest, str) and _is_version(latest) and compare_server_plugin_versions(latest, record["version"]) > 0)
+        out["updateAvailable"] = bool(
+            installed and installed["version"] and isinstance(latest, str) and _is_version(latest)
+            and compare_server_plugin_versions(latest, installed["version"]) > 0
+        )
         out["allowed"] = blocked is None
         if blocked:
             out["blockedReason"] = blocked
@@ -962,11 +973,22 @@ class ServerPluginMarketplace:
             raise DashboardMarketplaceError(
                 400, f"incompatible: {own['package']}=={target['version']} needs server {rng} (this server has {server})",
             )
-        wanted = canonicalize_name(own["package"])
-        for p in self._deps.installed_plugins():
-            if canonicalize_name(str(getattr(p, "id", ""))) == wanted and getattr(p, "source", None) != "marketplace":
-                raise DashboardMarketplaceError(409, f"already installed by the host: {own['package']}")
+        host = self._added_in_code(own["package"])
+        if host is not None:
+            version = getattr(host, "version", None)
+            raise DashboardMarketplaceError(409, f"already added in code: {own['package']}{'@' + version if version else ''}")
         return plugin, own, target
+
+    def _added_in_code(self, package: str) -> Any:
+        """The package as the host adds it in its code (listed among the installed plugins, not from the marketplace)."""
+        wanted = canonicalize_name(package)
+        return next(
+            (
+                p for p in self._deps.installed_plugins()
+                if canonicalize_name(str(getattr(p, "id", ""))) == wanted and getattr(p, "source", None) != "marketplace"
+            ),
+            None,
+        )
 
     def _bundled(self, package: str) -> Any:
         """The package as the server's environment has it (it comes with the server, e.g. the filesystem plugin), or

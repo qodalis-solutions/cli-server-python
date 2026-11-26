@@ -183,6 +183,9 @@ class DashboardMarketplaceDeps:
     #: Resolves once the config providers have their stores (``builder.config.ready``): awaited before the settings
     #: are read or written, so they go to the store the server resolved for ``dashboard-plugins``.
     config_ready: Optional[Callable[[], Awaitable[None]]] = None
+    #: The registered extensions now, in their JSON shape (``id``, ``version``, ``package``), for the pages the host
+    #: adds in code; default: :attr:`extension_ids` only.
+    extensions: Optional[Callable[[], list[Mapping[str, Any]]]] = None
     #: Whether callers who are not signed in may install, update and remove (the server's ``allow_anonymous_admin``,
     #: or a protected server); default false.
     anonymous_allowed: Callable[[], bool] = lambda: False
@@ -462,8 +465,31 @@ class DashboardMarketplace:
             versions.append({**v, "allowed": not reason, **({"blockedReason": reason} if reason else {})})
         return {**plugin, "versions": versions, **self._annotate(plugin)}
 
+    def added_in_code(self, name: Any, extension_id: Any = None) -> Optional[Mapping[str, Any]]:
+        """The page the host adds in code for the package ``name``: one whose ``package`` is ``name``, else (a page
+        without one) the page of an official module's id (``@qodalis/cli-dashboard-module-<id>``). Marketplace
+        installs are not code."""
+        if not isinstance(name, str):
+            return None
+        listed = self._deps.extensions() if self._deps.extensions else [{"id": i} for i in self._deps.extension_ids()]
+        pages = [e for e in listed if e.get("id") not in self._plugins]
+        by_package = next((e for e in pages if e.get("package") == name), None)
+        if by_package is not None:
+            return by_package
+        if not _OFFICIAL_MODULE.fullmatch(name):
+            return None
+        extension_id = dashboard_plugin_id(name, extension_id)
+        return next((e for e in pages if not e.get("package") and e.get("id") == extension_id), None)
+
     def _annotate(self, item: Mapping[str, Any]) -> dict[str, Any]:
-        installed = self._record_of(item.get("name"))
+        record = self._record_of(item.get("name"))
+        ext = item.get("extension") if isinstance(item.get("extension"), Mapping) else {}
+        code = None if record else self.added_in_code(item.get("name"), ext.get("id"))
+        installed: Optional[dict[str, Any]] = (
+            {"version": record["version"], "source": "marketplace"} if record
+            else {"version": code.get("version") if isinstance(code.get("version"), str) else None, "source": "code"} if code
+            else None
+        )
         if isinstance(item.get("versions"), list):
             fitting = _latest_fitting(item)
             latest = fitting.get("version") if fitting else None
@@ -475,9 +501,10 @@ class DashboardMarketplace:
         blocked = self._blocked_reason(item, api)
         server_package = python_server_package(item.get("serverPackages"))
         out: dict[str, Any] = {
-            "installed": {"version": installed["version"]} if installed else None,
+            "installed": installed,
             "updateAvailable": bool(
-                installed and is_valid_dashboard_plugin_version(latest)
+                installed and installed["version"] and is_valid_dashboard_plugin_version(latest)
+                and is_valid_dashboard_plugin_version(installed["version"])
                 and compare_dashboard_plugin_versions(latest, installed["version"]) > 0
             ),
             "allowed": not blocked,
@@ -589,6 +616,10 @@ class DashboardMarketplace:
             existing = self._record_of(name)
             if existing:
                 raise DashboardMarketplaceError(409, f"already installed: {name}@{existing['version']}")
+            code = self.added_in_code(name)
+            if code is not None:
+                at = f"@{code['version']}" if code.get("version") else ""
+                raise DashboardMarketplaceError(409, f"already added in code: {name}{at}")
             plugin, target = await self._resolve(name, version)
             settings, warning = _settings_of(name, target)
             _check_config_values(settings, values)
@@ -878,7 +909,9 @@ class DashboardMarketplace:
 
     def _register(self, record: dict[str, Any]) -> None:
         """Adds the plugin's page and serves its files.  Raises ``ValueError`` when the id is taken."""
-        extension: dict[str, Any] = {"id": record["id"], "title": record["title"], "version": record["version"]}
+        extension: dict[str, Any] = {
+            "id": record["id"], "title": record["title"], "version": record["version"], "package": record["name"],
+        }
         if record.get("icon"):
             extension["icon"] = record["icon"]
         page = dashboard_module_page(

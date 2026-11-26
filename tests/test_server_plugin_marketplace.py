@@ -487,7 +487,25 @@ def test_a_package_the_host_set_up_is_refused(start):
     host = start()
     host.result.builder.add_installed_plugin("qcli-hello-plugin")
     host.net.publish()
-    assert host.install({"name": "hello"}).json() == {"error": f"already installed by the host: {HELLO_PACKAGE}"}
+    assert host.install({"name": "hello"}).json() == {"error": f"already added in code: {HELLO_PACKAGE}"}
+
+
+def test_a_plugin_added_in_code_is_installed_with_source_code_and_install_is_refused(start):
+    from qodalis_cli.models.cli_installed_plugin import CliInstalledPlugin
+
+    host = start()
+    host.result.builder.add_installed_plugin(CliInstalledPlugin(id=HELLO_PACKAGE, name="Hello", version="1.1.0", source="code"))
+    host.net.publish(versions=["1.1.0", "1.2.0"])
+    host.net.publish("other", package="qcli-other-plugin")
+    items = {i["name"]: i for i in host.get("/plugins").json()["items"]}
+    assert items["hello"]["installed"] == {"version": "1.1.0", "source": "code"}
+    assert items["hello"]["updateAvailable"] is True and items["hello"]["platform"]["installed"] is None
+    assert items["other"]["installed"] is None
+    assert host.get("/plugins/hello").json()["installed"] == {"version": "1.1.0", "source": "code"}
+    res = host.install({"name": "hello"})
+    assert res.status_code == 409
+    assert res.json() == {"error": f"already added in code: {HELLO_PACKAGE}@1.1.0"}
+    assert not os.path.isfile(os.path.join(host.dir, "installed.json"))
 
 
 # --------------------------------------------------------------------------- update and remove
@@ -497,6 +515,9 @@ def test_update_replaces_the_files_and_remove_deletes_them_clearing_the_restart(
     host = start()
     host.net.publish(versions=["1.1.0", "1.2.0"])
     assert host.install({"name": "hello", "version": "1.1.0"}).status_code == 202
+    # installed from the marketplace: source marketplace, updatable here
+    listed = next(i for i in host.get("/plugins").json()["items"] if i["name"] == "hello")
+    assert listed["installed"] == {"version": "1.1.0", "source": "marketplace"} and listed["updateAvailable"] is True
     res = host.update("hello", {})
     assert res.status_code == 202
     assert (res.json()["version"], res.json()["previousVersion"], res.json()["changed"]) == ("1.2.0", "1.1.0", True)

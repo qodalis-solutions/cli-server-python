@@ -18,6 +18,7 @@ _NOT_IN_EMOJI = re.compile(r"[\s<>\"'/\\]")
 _HTTP_URL = re.compile(r"^https?://[^/]", re.IGNORECASE)
 _WIDGET = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _SEARCH = re.compile(r"^/[^\s\x00-\x1f\x7f]{0,99}$")
+_PACKAGE = re.compile(r"^(?:@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$")
 
 
 def _invalid(reason: str) -> ValueError:
@@ -94,7 +95,7 @@ class CliDashboardExtension:
     permission: str | None = None
     #: Stylesheets (same rules as ``entry``), at most 5.
     styles: tuple[str, ...] | None = field(default=None)
-    #: Shown in the page's error panel.
+    #: Shown in the page's error panel, and as the version added in code on the dashboard's Marketplace tab.
     version: str | None = None
     #: Slots the module fills besides its page (``overview``: cards on the dashboard's Overview; ``palette``:
     #: entries in its command palette), at most 5.
@@ -102,6 +103,9 @@ class CliDashboardExtension:
     #: A path below the page ending where the search text goes (``/?q=``): the command palette offers
     #: "Search <title> for ..." and opens it.
     search: str | None = None
+    #: The npm package the page comes from (``@qodalis/cli-dashboard-module-jobs``): the dashboard's Marketplace
+    #: tab shows that package as added in code, and the server refuses to install it from the marketplace.
+    package: str | None = None
 
     @classmethod
     def of(cls, value: CliDashboardExtension | Mapping[str, Any]) -> CliDashboardExtension:
@@ -125,6 +129,7 @@ class CliDashboardExtension:
             version=value.get("version"),
             widgets=tuple(widgets) if isinstance(widgets, (list, tuple)) else widgets,
             search=value.get("search"),
+            package=value.get("package"),
         )
 
     def validated(self) -> CliDashboardExtension:
@@ -174,6 +179,10 @@ class CliDashboardExtension:
             widgets = tuple(dict.fromkeys(self.widgets)) or None
         if self.search is not None and (not isinstance(self.search, str) or not _SEARCH.match(self.search)):
             raise _invalid(f"{ext_id}: search must be a path starting with /")
+        if self.package is not None and (
+            not isinstance(self.package, str) or len(self.package) > 214 or not _PACKAGE.match(self.package)
+        ):
+            raise _invalid(f"{ext_id}: package must be an npm package name")
         return CliDashboardExtension(
             id=ext_id,
             title=self.title,
@@ -187,6 +196,7 @@ class CliDashboardExtension:
             version=self.version,
             widgets=widgets,
             search=self.search,
+            package=self.package,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -207,4 +217,6 @@ class CliDashboardExtension:
             out["widgets"] = list(self.widgets)
         if self.search is not None:
             out["search"] = self.search
+        if self.package is not None:
+            out["package"] = self.package
         return out

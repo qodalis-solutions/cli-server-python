@@ -531,6 +531,10 @@ class AdminDashboardSearchProcessor(CliCommandProcessor):
                 return f'No dashboard plugins match "{query}".' if query else "The marketplace lists no dashboard plugins."
 
             def status(p: dict[str, Any]) -> str:
+                if p.get("installed") and p["installed"].get("source") == "code":
+                    v = p["installed"].get("version")
+                    more = ", newer version in the marketplace" if p.get("updateAvailable") else ""
+                    return f"added in code{' ' + v if v else ''}{more}"
                 if p.get("installed"):
                     v = p["installed"]["version"]
                     return f"installed {v}, update available" if p.get("updateAvailable") else f"installed {v}"
