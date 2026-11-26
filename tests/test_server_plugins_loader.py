@@ -437,6 +437,29 @@ def test_a_data_explorer_source_added_at_runtime_follows_the_data_explorer_rules
         assert sources.status_code == 200 and [s["name"] for s in sources.json()] == ["sql"]
 
 
+def test_the_data_explorer_alone_serves_its_api_and_page_without_sources(tmp_path):
+    """Installed without a source (the marketplace's ``data-explorer``), its API answers an empty list instead of the
+    framework's 404, which the dashboard's page reads as "server plugin not installed"."""
+    from qodalis_cli_data_explorer import plugin as data_explorer
+
+    page = tmp_path / "page"
+    page.mkdir()
+    (page / "extension.js").write_text("export default {};")
+    (page / "extension.css").write_text("")
+    result = server(tmp_path, lambda b: b.add_plugin(data_explorer), dashboard_pages={"data-explorer": str(page)})
+    with TestClient(result.app) as client:
+        assert states(result)["data-explorer"]["status"] == "loaded"
+        sources = client.get("/api/qcli/data-explorer/sources")
+        assert sources.status_code == 200 and sources.json() == []
+        assert "data-explorer" in [e.id for e in result.builder.dashboard_extensions]
+
+
+def test_without_the_data_explorer_its_api_is_missing(tmp_path):
+    result = server(tmp_path)
+    with TestClient(result.app) as client:
+        assert client.get("/api/qcli/data-explorer/sources").status_code == 404
+
+
 def test_sources_with_a_connection_need_configuration_until_it_is_set(tmp_path):
     from qodalis_cli_data_explorer_postgres import plugin as postgres
 
@@ -466,6 +489,20 @@ def test_users_then_public_api_then_portal_build_on_each_other(tmp_path):
         # The users plugin protects the server from the first request
         assert client.get(f"{V1}/commands").status_code == 401
         assert result.builder.plugin_services.get("public-api") is not None
+
+
+def test_public_api_loads_on_a_host_that_mounts_the_users_plugin_in_code(tmp_path):
+    """As production hosts do (users mounted in code, public-api installed from the marketplace): the app has started
+    when the plugin loads, so its rate-limit headers middleware cannot go through ``add_middleware``."""
+    from qodalis_cli_public_api import plugin as public_api
+    from qodalis_cli_users import CliUsersBuilder
+
+    result = server(tmp_path, lambda b: b.add_plugin(public_api))
+    users = CliUsersBuilder().set_default_admin_password("rootpass1").build()
+    result.mount_plugin(users)
+    with TestClient(result.app) as client:
+        assert states(result)["public-api"]["status"] == "loaded", states(result)["public-api"]
+        assert client.get(f"{V1}/commands").status_code == 401
 
 
 def test_public_api_and_portal_need_configuration_alone(tmp_path):

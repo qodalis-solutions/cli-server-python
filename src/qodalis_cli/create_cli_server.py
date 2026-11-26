@@ -641,7 +641,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
 
     def wire_data_explorer() -> None:
         registrations = builder.data_explorer_registrations
-        if not registrations:
+        if not builder.data_explorer_enabled:
             return
         if wired["de_registry"] is not None:
             # Sources added later (a plugin loaded at runtime) join the served registry
@@ -752,7 +752,7 @@ def create_cli_server(options: CliServerOptions | None = None) -> CliServerResul
         page = filesystem_page(opts.dashboard_pages.get("filesystem"))
         if page is not None:
             result.add_dashboard_page(page)
-    if builder.data_explorer_registrations:
+    if builder.data_explorer_enabled:
         page = data_explorer_page(opts.dashboard_pages.get("data-explorer"))
         if page is not None:
             result.add_dashboard_page(page)
