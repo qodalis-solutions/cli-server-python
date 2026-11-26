@@ -51,13 +51,14 @@ class Host:
     def __init__(
         self, data_dir: str, *, net: Optional[FakeServerNet] = None, install: Optional[str] = None,
         users: Optional[dict[str, list[str]]] = None, server_plugins: Any = None, lifespan: bool = False,
-        trusted: Optional[list[str]] = None, anonymous_admin: bool = False,
+        trusted: Optional[list[str]] = None, anonymous_admin: bool = False, notifications: Any = None,
     ) -> None:
         self.net = net or FakeServerNet()
         self.pip = FakePip()
         self.data_dir = data_dir
         self.result = create_cli_server(CliServerOptions(
             data_dir=data_dir, server_plugins=server_plugins, allow_anonymous_admin=anonymous_admin,
+            notifications=notifications,
         ))
         self.audit: list[Any] = []
         self.events: list[Any] = []

@@ -609,6 +609,7 @@ def test_refuses_an_invalid_marketplace_url_or_policy_when_built():
 
 def test_the_default_directory_is_qcli_data_dashboard_plugins_below_the_working_directory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("QCLI_DATA_DIR", raising=False)
     result = create_cli_server()
     admin = CliAdminBuilder().set_credentials("admin", "pass").build(
         AdminBuildDeps(registry=result.registry, event_socket_manager=result.event_socket_manager, builder=result.builder),

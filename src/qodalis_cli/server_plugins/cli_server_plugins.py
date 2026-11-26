@@ -101,6 +101,8 @@ class CliServerPluginsHost:
     mount: Callable[[Any], None]
     #: Wires what the plugins set on the builder (filesystem storage, data explorer sources).
     after_load: Callable[[], None]
+    #: Called once this start loaded its plugins, with their states (the server's plugin notifications).
+    on_ready: Optional[Callable[[list[CliServerPluginState]], None]] = None
 
 
 class _Skipped(Exception):
@@ -229,6 +231,11 @@ class CliServerPlugins:
             await self._load_all(self._host)
         except Exception as exc:  # noqa: BLE001
             logger.error("loading the server plugins failed: %s", exc)
+        if self._host.on_ready is not None:
+            try:
+                self._host.on_ready(self.states())
+            except Exception as exc:  # noqa: BLE001
+                logger.error("reporting the server plugins' states failed: %s", exc)
         return self.states()
 
     def _add_to_path(self) -> None:
@@ -453,6 +460,7 @@ class CliServerPlugins:
             server_data_dir=self.data_dir, event_bus=host.event_bus, restart=host.restart, settings=settings,
             needs_configuration=needs_configuration, options=dict(options), source=candidate.source,
             services=self._services, settings_file=self.settings_file(),
+            notifications=getattr(host.builder, "notifications", None),
         )
         try:
             try:

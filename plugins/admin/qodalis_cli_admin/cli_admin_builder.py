@@ -27,6 +27,7 @@ from .controllers.logs_controller import create_logs_router
 from .controllers.ws_clients_controller import create_ws_clients_router
 from .controllers.dashboard_marketplace_controller import create_dashboard_marketplace_router
 from .controllers.server_marketplace_controller import create_server_marketplace_router
+from .controllers.updates_controller import create_updates_router
 from .services.dashboard_marketplace import (
     DASHBOARD_INSTALL_PERMISSION,
     DashboardMarketplace,
@@ -35,11 +36,16 @@ from .services.dashboard_marketplace import (
     DashboardMarketplaceOptions,
 )
 from .services.server_plugin_marketplace import (
+    DEFAULT_PYPI_URL,
     PLUGINS_INSTALL_PERMISSION,
+    SERVER_CORE_PACKAGE,
     ServerPluginMarketplace,
     ServerPluginMarketplaceDeps,
     ServerPluginMarketplaceOptions,
+    default_wheel_fetch,
 )
+from .services.update_checker import UPDATES_FILE, UpdateChecker, UpdateCheckerDeps, UpdateCheckOptions
+from .services.updates_mcp import UpdatesMcpToolProvider
 from .services.admin_config import AdminConfig
 from .services.plugins_folder import DATA_DIR_HINT, QCLI_DATA_DIR_ENV, unwritable_folders_warning
 from .services.admin_config_providers import AdminAuthConfigProvider, create_logs_config_provider
@@ -122,6 +128,12 @@ class CliAdminPlugin:
     server_marketplace: ServerPluginMarketplace | None = None
     #: Serves the marketplace plugins' files at ``/qcli/modules/<id>/`` (mounted by ``mount_plugin``).
     asset_routes: list[Any] = field(default_factory=list)
+    #: The update checker (``GET /api/v1/qcli/updates``, ``POST /updates/check``): every 6 hours, a job of the jobs
+    #: plugin when one is mounted; started with the app once the plugins are loaded.  ``None`` when the marketplace
+    #: is off.
+    updates: UpdateChecker | None = None
+    #: The ``updates_list`` MCP tool (registered by ``mount_plugin``).
+    mcp_providers: list[Any] = field(default_factory=list)
     #: Holds the server options read by ``GET /auth/mode`` (see on_mount).
     _server: dict = field(default_factory=dict, repr=False)
 
@@ -148,6 +160,10 @@ class CliAdminPlugin:
             # Sample while the app runs; cancelled on shutdown.
             router.lifespan_context = self.status_history.wrap_lifespan(router.lifespan_context)
             self._server["sampling"] = True
+        if self.updates is not None and router is not None and not self._server.get("updates"):
+            # The periodic update check, once the app started (the plugins loaded, the jobs plugin mounted)
+            router.lifespan_context = _with_update_checks(self.updates, router.lifespan_context)
+            self._server["updates"] = True
 
 
 class CliAdminBuilder:
@@ -165,6 +181,22 @@ class CliAdminBuilder:
         self._sign_in_url: str | None = None
         self._config_store: Any = None
         self._marketplace: DashboardMarketplaceOptions | None = DashboardMarketplaceOptions()
+        self._updates = UpdateCheckOptions()
+
+    def set_update_checks(self, options: UpdateCheckOptions | Mapping[str, Any] | bool) -> CliAdminBuilder:
+        """The periodic check for updates (marketplace plugins, plugins added in code, the server package):
+        ``enabled`` (default true), ``interval`` (seconds, default 6 hours), ``initial_delay`` (seconds after a start,
+        default 60).  ``False`` turns the periodic check off; "Check now" (``POST /api/v1/qcli/updates/check``) still
+        works.  An :class:`UpdateCheckOptions` or a dict of its fields."""
+        if options is False:
+            self._updates = UpdateCheckOptions(enabled=False)
+        elif options is True:
+            self._updates = UpdateCheckOptions()
+        elif isinstance(options, UpdateCheckOptions):
+            self._updates = options
+        else:
+            self._updates = UpdateCheckOptions(**dict(options))
+        return self
 
     def set_marketplace(self, options: DashboardMarketplaceOptions | Mapping[str, Any] | bool) -> CliAdminBuilder:
         """Dashboard plugins from the marketplace: ``url`` (default ``https://plugins.qodalis.com``), ``install``
@@ -342,6 +374,15 @@ class CliAdminBuilder:
 
         # Dashboard plugins from the marketplace: pages added and removed at runtime, served from this server
         server["event_bus"] = deps.event_bus
+        updates_ref: list[UpdateChecker] = []
+
+        def refresh_updates() -> None:
+            """After an install, update or removal: the updates that no longer apply are dropped."""
+            for checker in updates_ref:
+                try:
+                    checker.refresh_installed()
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("refreshing the updates failed: %s", exc)
         marketplace: DashboardMarketplace | None = None
         # Kept in the server's data directory unless the marketplace names its own folder
         server_plugins = getattr(deps.builder, "server_plugins", None)
@@ -360,6 +401,7 @@ class CliAdminBuilder:
                     from qodalis_cli_server_abstractions import CliEventAudience
 
                     await bus.publish(event_type, data, CliEventAudience(permission="admin:access"))
+                refresh_updates()
 
             async def publish_config_changed(data: dict[str, Any]) -> None:
                 bus = server.get("event_bus")
@@ -413,6 +455,7 @@ class CliAdminBuilder:
                     from qodalis_cli_server_abstractions import CliEventAudience
 
                     await bus.publish(event_type, data, CliEventAudience(permission="admin:access"))
+                refresh_updates()
 
             m = self._marketplace
             server_marketplace = ServerPluginMarketplace(ServerPluginMarketplaceOptions(
@@ -431,6 +474,40 @@ class CliAdminBuilder:
             router.include_router(
                 create_server_marketplace_router(server_marketplace, auth_dep), prefix="/server/marketplace",
             )
+
+        # Updates: the marketplace's newer versions and the server package's, checked every 6 hours and on demand
+        updates: UpdateChecker | None = None
+        if self._marketplace is not None and (marketplace is not None or server_marketplace is not None):
+            m = self._marketplace
+
+            def server_version() -> str | None:
+                if server_marketplace is not None:
+                    return server_marketplace.server_version
+                if m.server_version:
+                    return m.server_version
+                core = next(
+                    (p for p in getattr(deps.builder, "installed_plugins", None) or [] if p.id == SERVER_CORE_PACKAGE),
+                    None,
+                )
+                return getattr(core, "version", None)
+
+            def job_scheduler() -> Any:
+                services = getattr(deps.builder, "plugin_services", None)
+                return services.get("jobs.scheduler") if services is not None and services.has("jobs.scheduler") else None
+
+            updates = UpdateChecker(UpdateCheckerDeps(
+                server_version=server_version,
+                fetch=m.download or m.fetch or default_wheel_fetch,
+                dashboard=marketplace,
+                server=server_marketplace,
+                pypi_url=(m.pypi_url or DEFAULT_PYPI_URL).strip().rstrip("/"),
+                timeout=m.timeout,
+                notifications=lambda: getattr(deps.builder, "notifications", None),
+                scheduler=job_scheduler,
+                file=os.path.join(data_dir, UPDATES_FILE),
+            ), self._updates)
+            updates_ref.append(updates)
+            router.include_router(create_updates_router(updates, auth_dep), prefix="/updates")
 
         # One WARNING at startup when installing would fail: a folder that cannot be created or written
         writable_folders: list[tuple[str, str]] = []
@@ -521,5 +598,24 @@ class CliAdminBuilder:
             marketplace=marketplace,
             server_marketplace=server_marketplace,
             asset_routes=[DashboardMarketplaceAssetRoute(marketplace)] if marketplace is not None else [],
+            updates=updates,
+            mcp_providers=[UpdatesMcpToolProvider(updates)] if updates is not None else [],
             _server=server,
         )
+
+
+def _with_update_checks(checker: UpdateChecker, lifespan: Callable[[Any], Any]) -> Callable[[Any], Any]:
+    """The app's lifespan with the periodic update check running inside it (started once the server's own startup,
+    which loads the plugins, is done)."""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def wrapped(app: Any) -> Any:
+        async with lifespan(app) as state:
+            checker.start()
+            try:
+                yield state
+            finally:
+                await checker.stop()
+
+    return wrapped

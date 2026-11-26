@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 #: Events waiting for one socket; beyond this a slow client loses new events.
 MAX_PENDING_EVENTS = 1000
 
+#: Rewrites an event's message for one socket (its principal, ``None`` on a server without sign-in), e.g. the
+#: caller's own unread count of ``notification:changed``.  Returning ``None`` skips that socket.
+CliEventPersonalizer = Callable[[dict[str, Any], Any], "dict[str, Any] | None"]
+
 
 class CliEventSocketManager(SessionBoundSockets):
     """Manages WebSocket connections for broadcasting server events to clients.
@@ -44,6 +48,7 @@ class CliEventSocketManager(SessionBoundSockets):
         self._outboxes: dict[WebSocket, asyncio.Queue[str]] = {}
         self._senders: dict[WebSocket, asyncio.Task[None]] = {}
         self._authentication_required: Callable[[], bool] | None = None
+        self._personalizers: dict[str, CliEventPersonalizer] = {}
         self._next_client_id = 1
 
     def set_authentication_required(self, check: Callable[[], bool] | None) -> None:
@@ -66,14 +71,36 @@ class CliEventSocketManager(SessionBoundSockets):
         audience; returns the unsubscribe function."""
         return bus.subscribe("*", self.publish_event)
 
+    def set_personalizer(self, type: str, personalizer: CliEventPersonalizer | None) -> None:  # noqa: A002
+        """Personalizes every message of ``type`` per socket (one per type; the server's
+        ``notification:changed``): ``personalizer(message, principal)`` returns the socket's own message, or
+        ``None`` to skip it.  The principal is ``None`` on a server without sign-in."""
+        if personalizer is None:
+            self._personalizers.pop(type, None)
+        else:
+            self._personalizers[type] = personalizer
+
     async def publish_event(self, event: CliEvent) -> None:
         """Queue ``event`` (flat JSON) for the sockets of its audience; the
         sends happen in each socket's sender task."""
-        message = json.dumps(event.to_message(), default=str)
+        raw = event.to_message()
+        personalize = self._personalizers.get(event.type)
+        message = None if personalize is not None else json.dumps(raw, default=str)
         requires_auth = self._requires_authentication()
         for client in list(self._clients):
-            if self._receives(self._principals.get(client), event.audience, requires_auth):
-                self._enqueue(client, message)
+            principal = self._principals.get(client)
+            if not self._receives(principal, event.audience, requires_auth):
+                continue
+            if personalize is None:
+                self._enqueue(client, message)  # type: ignore[arg-type]
+                continue
+            try:
+                own = personalize(dict(raw), principal if requires_auth else None)
+            except Exception:  # noqa: BLE001 - the shared message then
+                logger.debug("Event personalizer failed", exc_info=True)
+                own = raw
+            if own is not None:
+                self._enqueue(client, json.dumps(own, default=str))
 
     def _enqueue(self, websocket: WebSocket, message: str) -> None:
         outbox = self._outboxes.get(websocket)

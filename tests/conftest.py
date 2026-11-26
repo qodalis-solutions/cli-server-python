@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import faulthandler
+import os
 import sys
 import threading
 import traceback
@@ -13,6 +14,26 @@ import pytest
 from qodalis_cli.abstractions import CliProcessCommand, ICliCommandProcessor
 from qodalis_cli.services import CliCommandRegistry, CliCommandExecutorService
 from qodalis_cli_server_abstractions import ICliStreamCommandProcessor
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _session_data_dir(tmp_path_factory):
+    """Servers made by module or class fixtures (set up before the per-test folder below) keep their data in a
+    temporary folder too."""
+    previous = os.environ.get("QCLI_DATA_DIR")
+    os.environ["QCLI_DATA_DIR"] = str(tmp_path_factory.mktemp("qcli-data-session"))
+    yield
+    if previous is None:
+        os.environ.pop("QCLI_DATA_DIR", None)
+    else:
+        os.environ["QCLI_DATA_DIR"] = previous
+
+
+@pytest.fixture(autouse=True)
+def _isolated_data_dir(tmp_path_factory, monkeypatch):
+    """Every test's server keeps its data (notifications.json, updates.json, plugin data) in a folder of its own,
+    never in ``./qcli-data`` of the working directory, unless the test sets ``QCLI_DATA_DIR`` or ``data_dir``."""
+    monkeypatch.setenv("QCLI_DATA_DIR", str(tmp_path_factory.mktemp("qcli-data")))
 
 
 # ---------------------------------------------------------------------------

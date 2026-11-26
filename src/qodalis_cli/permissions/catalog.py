@@ -138,6 +138,8 @@ CORE_PERMISSIONS: tuple[CliPermission, ...] = (
     _core("dashboard:install", "Server", "Install, update and remove dashboard plugins from the marketplace"),
     _core("plugins:install", "Server", "Install, update and remove server plugins from the marketplace"),
     _core("server:restart", "Server", "Restart the server"),
+    _core("updates:read", "Server", "See the available updates and check for them"),
+    _core("notifications:manage", "Server", "Clear system notifications for every user"),
     _core("config:read", "Config", "See the server's configuration (secrets stay hidden)"),
     _core("config:write", "Config", "Change the server's configuration"),
     _core("audit:read", "Audit", "Read the audit log"),

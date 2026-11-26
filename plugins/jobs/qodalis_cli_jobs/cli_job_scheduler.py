@@ -305,6 +305,14 @@ class CliJobScheduler:
             status="active" if options.enabled else "stopped",
         )
         self._registrations[job_id] = reg
+        # Registered after start (a plugin loaded later): scheduled at once, as start() would have
+        if self._running and reg.status == "active":
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                logger.warning("Job '%s' registered outside the event loop after start: not scheduled", job_id)
+            else:
+                self._schedule_next(reg)
         return job_id
 
     async def start(self) -> None:

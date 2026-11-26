@@ -77,6 +77,21 @@ from .services.server_plugin_marketplace import (
     satisfies_server_range,
     sha256_integrity,
 )
+from .services.update_checker import (
+    UPDATES_FILE,
+    UPDATES_LINK,
+    UPDATES_READ_PERMISSION,
+    UPDATE_CHECK_INITIAL_DELAY,
+    UPDATE_CHECK_INTERVAL,
+    UPDATE_CHECK_JOB_ID,
+    UpdateChecker,
+    UpdateCheckerDeps,
+    UpdateCheckOptions,
+    install_commands,
+    update_notification_key,
+)
+from .services.updates_mcp import UpdatesMcpToolProvider
+from .controllers.updates_controller import can_read_updates, create_updates_router
 from .services.dashboard_plugin_config import (
     DASHBOARD_PLUGINS_CONFIG_PROVIDER_ID,
     DASHBOARD_PLUGIN_CONFIG_KEY,
@@ -91,6 +106,20 @@ from .services.dashboard_plugin_config import (
 )
 
 __all__ = [
+    "UPDATES_FILE",
+    "UPDATES_LINK",
+    "UPDATES_READ_PERMISSION",
+    "UPDATE_CHECK_INITIAL_DELAY",
+    "UPDATE_CHECK_INTERVAL",
+    "UPDATE_CHECK_JOB_ID",
+    "UpdateChecker",
+    "UpdateCheckerDeps",
+    "UpdateCheckOptions",
+    "UpdatesMcpToolProvider",
+    "can_read_updates",
+    "create_updates_router",
+    "install_commands",
+    "update_notification_key",
     "DASHBOARD_PLUGINS_CONFIG_PROVIDER_ID",
     "DASHBOARD_PLUGIN_CONFIG_KEY",
     "DASHBOARD_PLUGIN_CONFIG_MAX_BYTES",
